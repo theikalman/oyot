@@ -26,10 +26,14 @@ function createAppStore() {
             documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d),
             currentDocument: s.currentDocument?.id === updatedDoc.id ? updatedDoc : s.currentDocument
         })),
-        addDocument: (doc: Document) => update(s => ({
-            ...s,
-            documents: [...s.documents, doc].sort((a, b) => a.title.localeCompare(b.title))
-        })),
+        addDocument: (doc: Document) => update(s => {
+            const exists = s.documents.some(d => d.id === doc.id);
+            if (exists) return s;
+            return {
+                ...s,
+                documents: [...s.documents, doc].sort((a, b) => a.title.localeCompare(b.title))
+            };
+        }),
         removeDocument: (docId: string) => update(s => ({
             ...s,
             documents: s.documents.filter(d => d.id !== docId),

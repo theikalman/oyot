@@ -456,6 +456,45 @@ fn get_journals(workspace_path: String) -> Result<Vec<JournalEntry>, String> {
 }
 
 #[tauri::command]
+fn get_or_create_today_journal(workspace_path: String) -> Result<Document, String> {
+    let db_path = get_db_path(&workspace_path);
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    let today_title = get_today_date();
+
+    let result: Option<Document> = conn.query_row(
+        "SELECT id, type, title, content_json, created_at, updated_at FROM documents WHERE type = 'journal' AND title = ?",
+        params![&today_title],
+        |row| Ok(Document {
+            id: row.get(0)?,
+            doc_type: row.get(1)?,
+            title: row.get(2)?,
+            content_json: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+        })
+    ).ok();
+
+    if let Some(doc) = result {
+        return Ok(doc);
+    }
+
+    let empty_content = r#"{"type":"doc","content":[]}"#;
+    let doc_id = format_journal_date(&today_title).unwrap_or_else(|| today_title.clone());
+    conn.execute(
+        "INSERT INTO documents (id, type, title, content_json) VALUES (?, 'journal', ?, ?)",
+        params![&doc_id, &today_title, empty_content],
+    ).map_err(|e| e.to_string())?;
+
+    get_document(workspace_path, doc_id)
+}
+
+fn get_today_date() -> String {
+    let now = chrono::Local::now();
+    now.format("%Y-%m-%d").to_string()
+}
+
+#[tauri::command]
 fn get_todos(workspace_path: String) -> Result<Vec<Todo>, String> {
     let db_path = get_db_path(&workspace_path);
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
@@ -496,7 +535,8 @@ pub fn run() {
             search_documents,
             get_backlinks,
             get_journals,
-            get_todos
+            get_todos,
+            get_or_create_today_journal
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
