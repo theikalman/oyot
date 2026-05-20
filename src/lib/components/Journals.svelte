@@ -2,8 +2,11 @@
     import { invoke } from "@tauri-apps/api/core";
     import { workspacePath } from "../stores/app";
     import type { JournalEntry } from "../types";
+    import { parseMarkdown } from "../utils/markdown";
 
-    let journals = $state<JournalEntry[]>([]);
+    type RenderedJournal = JournalEntry & { renderedContent: string };
+
+    let journals = $state<RenderedJournal[]>([]);
     let loading = $state(true);
     let error = $state<string | null>(null);
 
@@ -15,7 +18,13 @@
         }
 
         try {
-            journals = await invoke("get_journals", { workspacePath: path });
+            const entries: JournalEntry[] = await invoke("get_journals", { workspacePath: path });
+            journals = await Promise.all(
+                entries.map(async (j) => ({
+                    ...j,
+                    renderedContent: await parseMarkdown(j.content),
+                }))
+            );
         } catch (e) {
             error = e instanceof Error ? e.message : String(e);
         } finally {
@@ -45,7 +54,7 @@
                 <div class="journal-entry">
                     <div class="journal-date">{journal.date}</div>
                     <div class="journal-content">
-                        {journal.content}
+                        {@html journal.renderedContent}
                     </div>
                 </div>
             {/each}
@@ -91,10 +100,24 @@
     }
 
     .journal-content {
-        white-space: pre-wrap;
         font-size: 14px;
         line-height: 1.6;
         color: #555;
+    }
+
+    .journal-content :global(ul) {
+        list-style: none;
+        padding-left: 1.5em;
+    }
+
+    .journal-content :global(li) {
+        position: relative;
+    }
+
+    .journal-content :global(input[type="checkbox"]) {
+        position: absolute;
+        left: -1.5em;
+        top: 0.25em;
     }
 
     .loading-message,
