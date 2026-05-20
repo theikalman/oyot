@@ -18,6 +18,7 @@
     let searchInput = $state('');
     let showModal = $state(false);
     let newDocTitle = $state('');
+    let collapsed = $state(false);
 
     function filterDocs(): Document[] {
         const docList = $documents;
@@ -55,45 +56,52 @@
     }
 </script>
 
-<aside class="sidebar">
+<aside class="sidebar" class:collapsed>
     <div class="sidebar-header">
-        <input
-            type="text"
-            placeholder="Search documents..."
-            bind:value={searchInput}
-            class="search-input"
-        />
+        {#if !collapsed}
+            <input
+                type="text"
+                placeholder="Search documents..."
+                bind:value={searchInput}
+                class="search-input"
+            />
+        {/if}
+        <button class="toggle-btn" onclick={() => collapsed = !collapsed} title={collapsed ? 'Expand' : 'Collapse'}>
+            {collapsed ? '▶' : '◀'}
+        </button>
     </div>
 
-    <div class="sidebar-section">
-        <h3>
-            Documents
-            <button class="add-doc-btn" onclick={() => showModal = true}>+</button>
-        </h3>
-        <ul class="doc-list">
-            {#each filterDocs() as doc}
-                <li>
-                    <button class="doc-btn" onclick={() => handleDocClick(doc)}>
-                        <span class="doc-type">{doc.doc_type === 'journal' ? '📅' : '📝'}</span>
-                        {doc.title}
-                    </button>
-                </li>
-            {/each}
-        </ul>
-    </div>
+    {#if !collapsed}
+        <div class="sidebar-section">
+            <h3>
+                Documents
+                <button class="add-doc-btn" onclick={() => showModal = true}>+</button>
+            </h3>
+            <ul class="doc-list">
+                {#each filterDocs() as doc}
+                    <li>
+                        <button class="doc-btn" onclick={() => handleDocClick(doc)}>
+                            <span class="doc-type">{doc.doc_type === 'journal' ? '📅' : '📝'}</span>
+                            {doc.title}
+                        </button>
+                    </li>
+                {/each}
+            </ul>
+        </div>
 
-    <div class="sidebar-section">
-        <h3>Links</h3>
-        <ul class="link-list">
-            {#each $allLinks as link}
-                <li>
-                    <button class="link-btn" onclick={() => handleLinkClick(link)}>
-                        [[{link}]]
-                    </button>
-                </li>
-            {/each}
-        </ul>
-    </div>
+        <div class="sidebar-section">
+            <h3>Links</h3>
+            <ul class="link-list">
+                {#each $allLinks as link}
+                    <li>
+                        <button class="link-btn" onclick={() => handleLinkClick(link)}>
+                            [[{link}]]
+                        </button>
+                    </li>
+                {/each}
+            </ul>
+        </div>
+    {/if}
 </aside>
 
 {#if showModal}
@@ -123,11 +131,44 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        transition: width 0.2s ease, min-width 0.2s ease;
+    }
+
+    .sidebar.collapsed {
+        width: 40px;
+        min-width: 40px;
     }
 
     .sidebar-header {
         padding: 12px;
         border-bottom: 1px solid #e0e0e0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sidebar.collapsed .sidebar-header {
+        justify-content: center;
+        padding: 12px 8px;
+    }
+
+    .toggle-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        padding: 4px 8px;
+        color: #666;
+        border-radius: 4px;
+    }
+
+    .toggle-btn:hover {
+        background: #e9ecef;
+        color: #333;
+    }
+
+    .sidebar.collapsed .search-input {
+        display: none;
     }
 
     .search-input {
