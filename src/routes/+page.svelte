@@ -2,7 +2,7 @@
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { appStore, workspacePath, isLoading, currentDocument } from "../lib/stores/app";
-    import type { IndexData } from "../lib/types";
+    import type { IndexData, Document } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Editor from "../lib/components/Editor.svelte";
 
@@ -23,6 +23,10 @@
                 appStore.setLinks(indexData.links);
                 appStore.setAllLinks(indexData.all_links);
                 appStore.setTodos(indexData.todos);
+
+                const todayJournal: Document = await invoke("get_or_create_today_journal", { workspacePath: selected });
+                appStore.addDocument(todayJournal);
+                appStore.setCurrentDocument(todayJournal);
             } catch (error) {
                 console.error("Failed to initialize database:", error);
             } finally {

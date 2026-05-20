@@ -134,7 +134,6 @@
 
 <div class="editor-container">
     <div class="editor-header">
-        <button class="back-btn" onclick={handleBack}>← Back to Index</button>
         {#if current}
             <h1>{current.title}</h1>
         {/if}
