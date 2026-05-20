@@ -90,8 +90,8 @@
 </aside>
 
 {#if showModal}
-    <div class="modal-overlay" onclick={closeModal}>
-        <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-overlay" role="presentation" onclick={closeModal}>
+        <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && closeModal()}>
             <h3>New Document</h3>
             <input
                 type="text"
