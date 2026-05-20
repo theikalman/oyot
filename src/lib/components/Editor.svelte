@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from "@tauri-apps/api/core";
-    import { appStore, currentDocument, workspacePath } from '../stores/app';
+    import { appStore, currentDocument, workspacePath, documents } from '../stores/app';
     import type { Document } from '../types';
     import { Editor } from '@tiptap/core';
     import type { Editor as EditorType } from '@tiptap/core';
@@ -101,7 +101,7 @@
                 title: current.title,
                 contentJson: content
             });
-            appStore.updateDocumentInList(updatedDoc);
+            appStore.updateDocumentInListOnly(updatedDoc);
         } catch (error) {
             console.error('Failed to save:', error);
         } finally {
