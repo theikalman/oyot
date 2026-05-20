@@ -26,6 +26,10 @@ function createAppStore() {
             documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d),
             currentDocument: s.currentDocument?.id === updatedDoc.id ? updatedDoc : s.currentDocument
         })),
+        updateDocumentInListOnly: (updatedDoc: Document) => update(s => ({
+            ...s,
+            documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d)
+        })),
         addDocument: (doc: Document) => update(s => {
             const exists = s.documents.some(d => d.id === doc.id);
             if (exists) return s;
