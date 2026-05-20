@@ -15,7 +15,7 @@
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
 
-    let editorElement: HTMLDivElement;
+    let editorElement = $state<HTMLDivElement>();
     let editor: EditorType | null = null;
     let isSaving = $state(false);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -216,18 +216,6 @@
         display: flex;
         align-items: center;
         gap: 16px;
-    }
-
-    .back-btn {
-        padding: 8px 16px;
-        background: #f0f0f0;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-    }
-
-    .back-btn:hover {
-        background: #e0e0e0;
     }
 
     .editor-header h1 {
