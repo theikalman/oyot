@@ -1,42 +1,47 @@
 import { writable, derived } from 'svelte/store';
-import type { FileEntry, LinkReference, SearchResult, ViewMode } from '../types';
+import type { Document, DocumentLink, Todo } from '../types';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
         workspacePath: null as string | null,
-        files: [] as FileEntry[],
-        backlinks: [] as LinkReference[],
+        documents: [] as Document[],
+        links: [] as DocumentLink[],
         allLinks: [] as string[],
-        currentFile: null as FileEntry | null,
-        viewMode: 'journals' as ViewMode,
-        searchQuery: '',
-        searchResults: [] as SearchResult[],
-        indexType: 'files' as 'files' | 'links' | 'search' | 'todos',
+        todos: [] as Todo[],
+        currentDocument: null as Document | null,
         isLoading: false
     });
 
     return {
         subscribe,
         setWorkspacePath: (path: string) => update(s => ({ ...s, workspacePath: path })),
-        setFiles: (files: FileEntry[]) => update(s => ({ ...s, files })),
-        setBacklinks: (backlinks: LinkReference[]) => update(s => ({ ...s, backlinks })),
+        setDocuments: (documents: Document[]) => update(s => ({ ...s, documents })),
+        setLinks: (links: DocumentLink[]) => update(s => ({ ...s, links })),
         setAllLinks: (links: string[]) => update(s => ({ ...s, allLinks: links })),
-        setCurrentFile: (file: FileEntry | null) => update(s => ({ ...s, currentFile: file, viewMode: 'reading' })),
-        setViewMode: (mode: ViewMode) => update(s => ({ ...s, viewMode: mode })),
-        setSearchQuery: (query: string) => update(s => ({ ...s, searchQuery: query })),
-        setSearchResults: (results: SearchResult[]) => update(s => ({ ...s, searchResults: results, indexType: 'search' })),
-        setIndexType: (type: 'files' | 'links' | 'search' | 'todos') => update(s => ({ ...s, indexType: type })),
+        setTodos: (todos: Todo[]) => update(s => ({ ...s, todos })),
+        setCurrentDocument: (doc: Document | null) => update(s => ({ ...s, currentDocument: doc })),
         setLoading: (loading: boolean) => update(s => ({ ...s, isLoading: loading })),
+        updateDocumentInList: (updatedDoc: Document) => update(s => ({
+            ...s,
+            documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d),
+            currentDocument: s.currentDocument?.id === updatedDoc.id ? updatedDoc : s.currentDocument
+        })),
+        addDocument: (doc: Document) => update(s => ({
+            ...s,
+            documents: [...s.documents, doc].sort((a, b) => a.title.localeCompare(b.title))
+        })),
+        removeDocument: (docId: string) => update(s => ({
+            ...s,
+            documents: s.documents.filter(d => d.id !== docId),
+            currentDocument: s.currentDocument?.id === docId ? null : s.currentDocument
+        })),
         reset: () => set({
             workspacePath: null,
-            files: [],
-            backlinks: [],
+            documents: [],
+            links: [],
             allLinks: [],
-            currentFile: null,
-            viewMode: 'journals',
-            searchQuery: '',
-            searchResults: [],
-            indexType: 'files',
+            todos: [],
+            currentDocument: null,
             isLoading: false
         })
     };
@@ -44,10 +49,10 @@ function createAppStore() {
 
 export const appStore = createAppStore();
 
-export const currentFile = derived(appStore, $s => $s.currentFile);
-export const files = derived(appStore, $s => $s.files);
+export const currentDocument = derived(appStore, $s => $s.currentDocument);
+export const documents = derived(appStore, $s => $s.documents);
 export const allLinks = derived(appStore, $s => $s.allLinks);
-export const backlinks = derived(appStore, $s => $s.backlinks);
-export const viewMode = derived(appStore, $s => $s.viewMode);
+export const links = derived(appStore, $s => $s.links);
+export const todos = derived(appStore, $s => $s.todos);
 export const workspacePath = derived(appStore, $s => $s.workspacePath);
 export const isLoading = derived(appStore, $s => $s.isLoading);
