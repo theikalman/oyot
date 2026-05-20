@@ -244,10 +244,6 @@
         flex-wrap: wrap;
     }
 
-    .toolbar.visible {
-        display: flex;
-    }
-
     .toolbar button {
         padding: 6px 10px;
         background: white;
