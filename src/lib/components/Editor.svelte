@@ -298,13 +298,29 @@
         padding-left: 0;
     }
 
-    .editor-content :global(li[data-type="taskItem"]) {
+    .editor-content :global(ul[data-type="taskList"] > li) {
         display: flex;
         align-items: flex-start;
         gap: 8px;
     }
 
-    .editor-content :global(li[data-type="taskItem"] input[type="checkbox"]) {
+    .editor-content :global(ul[data-type="taskList"] > li > label) {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .editor-content :global(ul[data-type="taskList"] > li > div) {
+        flex: 1;
+    }
+
+    .editor-content :global(ul[data-type="taskList"] > li > div > p) {
+        margin: 0;
+        display: inline;
+    }
+
+    .editor-content :global(ul[data-type="taskList"] input[type="checkbox"]) {
         margin-top: 4px;
     }
 
