@@ -4,12 +4,11 @@ A lightweight personal knowledge management app inspired by LogSeq, built with T
 
 ## Features
 
+- **Rich Text Editor**: Create and edit notes with Tiptap editor
+- **Task Lists**: Track TODO items with checkbox support
+- **Tables**: Create and manage tabular data in notes
+- **File Management**: Browse and manage your markdown files
 - **Wiki-style Linking**: Link between files using `[[File Title Here]]` syntax
-- **Reading Mode**: View markdown files with rendered HTML
-- **Index Views**: Browse and search through your knowledge base
-  - All Files
-  - All Links (with backlink tracking)
-  - TODO items across all files
 
 ## Prerequisites
 
@@ -39,7 +38,7 @@ A lightweight personal knowledge management app inspired by LogSeq, built with T
 
 Run the development server:
 ```bash
-./run-dev.sh
+make dev
 ```
 Or manually:
 ```bash
@@ -49,8 +48,24 @@ npm run tauri dev
 ## Build
 
 ```bash
+make build
+```
+Or manually:
+```bash
 npm run tauri build
 ```
+
+## Available Commands
+
+Run `make help` for a list of all available commands:
+- `make install` - Install npm dependencies
+- `make dev` - Run development server
+- `make build` - Build the application
+- `make run` - Build and run the application
+- `make clean` - Clean build artifacts
+- `make check` - Run TypeScript and Rust checks
+- `make fmt` - Format code
+- `make clippy` - Run Rust linter
 
 ## Project Structure
 
@@ -58,20 +73,21 @@ npm run tauri build
 oyot/
 ├── src/                    # SvelteKit frontend
 │   ├── lib/
-│   │   ├── components/    # UI components (Sidebar, Reader, Index)
-│   │   ├── stores/        # Svelte stores for state management
-│   │   ├── types.ts       # TypeScript type definitions
-│   │   └── utils/         # Utility functions (markdown parsing)
-│   └── routes/            # SvelteKit routes
-├── src-tauri/             # Rust backend
-│   ├── src/lib.rs         # Tauri commands (file scanning, search)
-│   ├── Cargo.toml         # Rust dependencies
-│   └── tauri.conf.json    # Tauri configuration
-└── package.json           # Node dependencies
+│   │   ├── components/      # UI components (Editor, Sidebar)
+│   │   ├── stores/         # Svelte stores for state management
+│   │   └── types.ts        # TypeScript type definitions
+│   └── routes/             # SvelteKit routes
+├── src-tauri/              # Rust backend
+│   ├── src/                # Tauri commands and backend logic
+│   ├── Cargo.toml          # Rust dependencies
+│   └── tauri.conf.json     # Tauri configuration
+├── package.json            # Node dependencies
+└── Makefile                # Build commands
 ```
 
 ## Tech Stack
 
-- **Frontend**: SvelteKit, TypeScript, unified/remark (markdown parsing)
+- **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap (rich text editing)
 - **Backend**: Rust, Tauri 2.0
-- **Rust Crates**: walkdir, regex, ignore, glob
+- **Database**: SQLite (rusqlite)
+- **Rust Crates**: walkdir, regex, ignore, glob, serde, chrono
