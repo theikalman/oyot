@@ -40,14 +40,6 @@
         }
     }
 
-    function goToIndex() {
-        appStore.setViewMode('index');
-    }
-
-    function goToJournals() {
-        appStore.setViewMode('journals');
-    }
-
     let currentViewMode = $derived($viewMode);
 </script>
 
@@ -64,14 +56,6 @@
         <div class="workspace">
             <Sidebar onSelectFile={handleSelectFile} />
             <div class="main-content">
-                <div class="view-header">
-                    <button class="view-btn" class:active={currentViewMode === 'journals'} onclick={goToJournals}>
-                        Journals
-                    </button>
-                    <button class="view-btn" class:active={currentViewMode === 'index'} onclick={goToIndex}>
-                        Index
-                    </button>
-                </div>
                 {#if currentViewMode === 'reading'}
                     <Reader />
                 {:else if currentViewMode === 'journals'}
@@ -153,32 +137,6 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
-    }
-
-    .view-header {
-        display: flex;
-        gap: 8px;
-        padding: 12px 24px;
-        border-bottom: 1px solid #e0e0e0;
-    }
-
-    .view-btn {
-        padding: 8px 16px;
-        background: transparent;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-    }
-
-    .view-btn:hover {
-        background: #f5f5f5;
-    }
-
-    .view-btn.active {
-        background: #0066cc;
-        color: white;
-        border-color: #0066cc;
     }
 
     .loading-overlay {

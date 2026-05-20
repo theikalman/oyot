@@ -1,8 +1,11 @@
 <script lang="ts">
-    import { appStore, files, allLinks } from '../stores/app';
+    import { appStore, files, allLinks, viewMode } from '../stores/app';
     import type { FileEntry } from '../types';
 
     let { onSelectFile }: { onSelectFile: (path: string) => void } = $props();
+
+    let currentViewMode = $derived($viewMode);
+    let indexType = $derived($appStore.indexType);
 
     function handleFileClick(path: string) {
         const fileList = $files;
@@ -20,7 +23,21 @@
         }
     }
 
+    function goToJournals() {
+        appStore.setViewMode('journals');
+    }
+
+    function goToIndex() {
+        appStore.setViewMode('index');
+        appStore.setIndexType('files');
+    }
+
+    function setIndexType(type: 'files' | 'links' | 'search' | 'todos') {
+        appStore.setIndexType(type);
+    }
+
     let searchInput = $state('');
+    let indexExpanded = $state(true);
 
     function filterFiles(): FileEntry[] {
         const fileList = $files;
@@ -31,6 +48,30 @@
 </script>
 
 <aside class="sidebar">
+    <div class="sidebar-nav">
+        <button class="nav-btn" class:active={currentViewMode === 'journals'} onclick={goToJournals}>
+            Journal
+        </button>
+        <div class="nav-item">
+            <button class="nav-btn has-children" class:active={currentViewMode === 'index'} onclick={goToIndex}>
+                Index
+            </button>
+            {#if currentViewMode === 'index'}
+                <div class="nav-children">
+                    <button class="nav-child-btn" class:active={indexType === 'files'} onclick={() => setIndexType('files')}>
+                        Files
+                    </button>
+                    <button class="nav-child-btn" class:active={indexType === 'links'} onclick={() => setIndexType('links')}>
+                        Links
+                    </button>
+                    <button class="nav-child-btn" class:active={indexType === 'todos'} onclick={() => setIndexType('todos')}>
+                        TODO
+                    </button>
+                </div>
+            {/if}
+        </div>
+    </div>
+
     <div class="sidebar-header">
         <input
             type="text"
@@ -132,5 +173,71 @@
     .link-btn {
         color: #0066cc;
         font-family: monospace;
+    }
+
+    .sidebar-nav {
+        padding: 8px;
+        border-bottom: 1px solid #e0e0e0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .nav-item {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .nav-btn {
+        width: 100%;
+        text-align: left;
+        padding: 8px 12px;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 14px;
+        color: #333;
+    }
+
+    .nav-btn:hover {
+        background: #e9ecef;
+    }
+
+    .nav-btn.active {
+        background: #0066cc;
+        color: white;
+    }
+
+    .nav-btn.has-children::after {
+        content: '▸';
+        float: right;
+        font-size: 10px;
+        line-height: 20px;
+    }
+
+    .nav-children {
+        padding-left: 16px;
+    }
+
+    .nav-child-btn {
+        width: 100%;
+        text-align: left;
+        padding: 6px 12px;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 13px;
+        color: #666;
+    }
+
+    .nav-child-btn:hover {
+        background: #e9ecef;
+    }
+
+    .nav-child-btn.active {
+        color: #0066cc;
+        font-weight: 500;
     }
 </style>

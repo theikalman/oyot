@@ -9,10 +9,6 @@
         appStore.setCurrentFile(file);
     }
 
-    function handleSearchSubmit(event: Event) {
-        event.preventDefault();
-    }
-
     function getTodosForFiles(): { file: FileEntry; todos: { line: number; text: string }[] }[] {
         const fileList = $files;
         return fileList.map(f => ({
@@ -23,27 +19,9 @@
 
     let allTodos = $derived(getTodosForFiles());
     let indexType = $derived($appStore.indexType);
-
-    function setIndexType(type: 'files' | 'links' | 'search' | 'todos') {
-        appStore.setIndexType(type);
-    }
 </script>
 
 <div class="index">
-    <div class="index-header">
-        <div class="index-tabs">
-            <button class="tab" class:active={indexType === 'files'} onclick={() => setIndexType('files')}>
-                Files
-            </button>
-            <button class="tab" class:active={indexType === 'links'} onclick={() => setIndexType('links')}>
-                Links
-            </button>
-            <button class="tab" class:active={indexType === 'todos'} onclick={() => setIndexType('todos')}>
-                TODO
-            </button>
-        </div>
-    </div>
-
     <div class="index-content">
         {#if indexType === 'files'}
             <div class="index-section">
@@ -105,35 +83,6 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
-    }
-
-    .index-header {
-        padding: 16px 24px;
-        border-bottom: 1px solid #e0e0e0;
-    }
-
-    .index-tabs {
-        display: flex;
-        gap: 8px;
-    }
-
-    .tab {
-        padding: 8px 16px;
-        background: transparent;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-    }
-
-    .tab:hover {
-        background: #f5f5f5;
-    }
-
-    .tab.active {
-        background: #0066cc;
-        color: white;
-        border-color: #0066cc;
     }
 
     .index-content {
