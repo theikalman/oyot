@@ -19,9 +19,12 @@
     let editor: EditorType | null = null;
     let isSaving = $state(false);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+    let previousDocId = $state<string | null>(null);
+    let hasUnsavedChanges = $state(false);
 
     let wsPath = $derived($workspacePath);
     let current = $derived($currentDocument);
+    let docs = $derived($documents);
 
     function createInitialContent(title: string): any {
         return {
@@ -77,6 +80,7 @@
             content: initialContent,
             editable: true,
             onUpdate: ({ editor }) => {
+                hasUnsavedChanges = true;
                 if (saveTimeout) {
                     clearTimeout(saveTimeout);
                 }
@@ -114,12 +118,32 @@
     }
 
     $effect(() => {
-        if (current && editorElement) {
-            initEditor(current.content_json, current.title);
-        } else if (editor) {
-            editor.destroy();
-            editor = null;
+        if (!current || !editorElement) {
+            if (editor) {
+                editor.destroy();
+                editor = null;
+            }
+            return;
         }
+
+        if (previousDocId && previousDocId !== current.id && hasUnsavedChanges && wsPath && editor) {
+            const prevDoc = docs.find((d: Document) => d.id === previousDocId);
+            if (prevDoc) {
+                const content = JSON.stringify(editor.getJSON());
+                invoke('update_document', {
+                    workspacePath: wsPath,
+                    docId: prevDoc.id,
+                    title: prevDoc.title,
+                    contentJson: content
+                }).then(() => {
+                    appStore.updateDocumentInListOnly({ ...prevDoc, content_json: content });
+                }).catch(err => console.error('Failed to save previous document:', err));
+            }
+        }
+
+        previousDocId = current.id;
+        hasUnsavedChanges = false;
+        initEditor(current.content_json, current.title);
     });
 
     onDestroy(() => {
