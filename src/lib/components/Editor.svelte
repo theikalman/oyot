@@ -312,7 +312,7 @@
         flex-shrink: 0;
     }
 
-.editor-content :global(ul[data-type="taskList"] > li > div) {
+    .editor-content :global(ul[data-type="taskList"] > li > div) {
         flex: 1;
     }
 
@@ -322,7 +322,7 @@
         line-height: 1.4;
     }
 
-.editor-content :global(ul[data-type="taskList"] input[type="checkbox"]) {
+    .editor-content :global(ul[data-type="taskList"] input[type="checkbox"]) {
         margin-top: 4px;
         width: 18px;
         height: 18px;
