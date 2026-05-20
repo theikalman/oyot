@@ -300,28 +300,34 @@
 
     .editor-content :global(ul[data-type="taskList"] > li) {
         display: flex;
-        align-items: flex-start;
-        gap: 8px;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 0;
     }
 
     .editor-content :global(ul[data-type="taskList"] > li > label) {
         display: flex;
         align-items: flex-start;
-        gap: 8px;
+        gap: 2px;
         flex-shrink: 0;
     }
 
-    .editor-content :global(ul[data-type="taskList"] > li > div) {
+.editor-content :global(ul[data-type="taskList"] > li > div) {
         flex: 1;
     }
 
     .editor-content :global(ul[data-type="taskList"] > li > div > p) {
         margin: 0;
         display: inline;
+        line-height: 1.4;
     }
 
-    .editor-content :global(ul[data-type="taskList"] input[type="checkbox"]) {
+.editor-content :global(ul[data-type="taskList"] input[type="checkbox"]) {
         margin-top: 4px;
+        width: 18px;
+        height: 18px;
+        accent-color: #0066cc;
+        cursor: pointer;
     }
 
     .editor-content :global(table) {
