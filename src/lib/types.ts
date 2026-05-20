@@ -22,7 +22,12 @@ export interface IndexData {
     all_links: string[];
 }
 
-export type ViewMode = 'reading' | 'index';
+export type ViewMode = 'reading' | 'index' | 'journals';
+
+export interface JournalEntry {
+    date: string;
+    content: string;
+}
 
 export interface AppState {
     workspacePath: string | null;

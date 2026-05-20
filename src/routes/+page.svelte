@@ -2,10 +2,11 @@
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { appStore, viewMode, workspacePath, isLoading } from "../lib/stores/app";
-    import type { IndexData, FileEntry } from "../lib/types";
+    import type { IndexData, FileEntry, ViewMode } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Reader from "../lib/components/Reader.svelte";
     import Index from "../lib/components/Index.svelte";
+    import Journals from "../lib/components/Journals.svelte";
 
     async function openWorkspace() {
         const selected = await open({
@@ -17,6 +18,7 @@
         if (selected && typeof selected === "string") {
             appStore.setLoading(true);
             try {
+                await invoke("create_default_folders", { dirPath: selected });
                 const indexData: IndexData = await invoke("scan_directory", { dirPath: selected });
                 appStore.setWorkspacePath(selected);
                 appStore.setFiles(indexData.files);
@@ -37,6 +39,16 @@
             appStore.setCurrentFile(file);
         }
     }
+
+    function goToIndex() {
+        appStore.setViewMode('index');
+    }
+
+    function goToJournals() {
+        appStore.setViewMode('journals');
+    }
+
+    let currentViewMode = $derived($viewMode);
 </script>
 
 <main class="app">
@@ -52,8 +64,18 @@
         <div class="workspace">
             <Sidebar onSelectFile={handleSelectFile} />
             <div class="main-content">
-                {#if $viewMode === 'reading'}
+                <div class="view-header">
+                    <button class="view-btn" class:active={currentViewMode === 'journals'} onclick={goToJournals}>
+                        Journals
+                    </button>
+                    <button class="view-btn" class:active={currentViewMode === 'index'} onclick={goToIndex}>
+                        Index
+                    </button>
+                </div>
+                {#if currentViewMode === 'reading'}
                     <Reader />
+                {:else if currentViewMode === 'journals'}
+                    <Journals />
                 {:else}
                     <Index onSelectFile={handleSelectFile} />
                 {/if}
@@ -131,6 +153,32 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+    }
+
+    .view-header {
+        display: flex;
+        gap: 8px;
+        padding: 12px 24px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .view-btn {
+        padding: 8px 16px;
+        background: transparent;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .view-btn:hover {
+        background: #f5f5f5;
+    }
+
+    .view-btn.active {
+        background: #0066cc;
+        color: white;
+        border-color: #0066cc;
     }
 
     .loading-overlay {

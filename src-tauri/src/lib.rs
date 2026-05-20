@@ -32,6 +32,12 @@ pub struct IndexData {
     pub all_links: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct JournalEntry {
+    pub date: String,
+    pub content: String,
+}
+
 fn extract_title(content: &str, path: &str) -> String {
     for line in content.lines() {
         let trimmed = line.trim();
@@ -51,6 +57,22 @@ fn extract_wikilinks(content: &str) -> Vec<String> {
     re.captures_iter(content)
         .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
         .collect()
+}
+
+fn format_journal_date(filename: &str) -> Option<String> {
+    let stem = filename.strip_suffix(".md")?;
+    let parts: Vec<&str> = stem.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let year: u32 = parts[0].parse().ok()?;
+    let month: u32 = parts[1].parse().ok()?;
+    let day: u32 = parts[2].parse().ok()?;
+
+    let month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month_name = month_names.get(month as usize)?;
+
+    Some(format!("{} {} {}", day, month_name, year))
 }
 
 #[tauri::command]
@@ -153,6 +175,24 @@ fn search_content(dir_path: String, query: String) -> Result<Vec<SearchResult>, 
 }
 
 #[tauri::command]
+fn create_default_folders(dir_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&dir_path);
+    if !path.exists() {
+        return Err("Directory does not exist".to_string());
+    }
+
+    let folders = ["journals", "assets", "oyot"];
+    for folder in folders {
+        let folder_path = path.join(folder);
+        if !folder_path.exists() {
+            std::fs::create_dir(&folder_path).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_backlinks(dir_path: String, target_title: String) -> Result<Vec<FileEntry>, String> {
     let index = scan_directory(dir_path)?;
     let mut backlinks: Vec<FileEntry> = Vec::new();
@@ -168,6 +208,51 @@ fn get_backlinks(dir_path: String, target_title: String) -> Result<Vec<FileEntry
     Ok(backlinks)
 }
 
+#[tauri::command]
+fn get_journals(workspace_path: String) -> Result<Vec<JournalEntry>, String> {
+    let journals_path = PathBuf::from(&workspace_path).join("journals");
+
+    if !journals_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries: Vec<(String, String)> = Vec::new();
+
+    let walker = WalkDir::new(&journals_path)
+        .max_depth(1)
+        .into_iter()
+        .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.'));
+
+    for entry in walker.filter_map(|e| e.ok()) {
+        let file_path = entry.path();
+        if file_path.is_file() {
+            if let Some(ext) = file_path.extension() {
+                if ext == "md" {
+                    let filename = file_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+
+                    if let Some(date) = format_journal_date(filename) {
+                        if let Ok(content) = std::fs::read_to_string(file_path) {
+                            entries.push((date, content));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let journals: Vec<JournalEntry> = entries
+        .into_iter()
+        .map(|(date, content)| JournalEntry { date, content })
+        .collect();
+
+    Ok(journals)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -178,7 +263,9 @@ pub fn run() {
             scan_directory,
             get_file_content,
             search_content,
-            get_backlinks
+            get_backlinks,
+            create_default_folders,
+            get_journals
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
