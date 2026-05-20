@@ -1,6 +1,7 @@
 <script lang="ts">
-    import { appStore, documents, allLinks } from '../stores/app';
+    import { appStore, documents, allLinks, workspacePath } from '../stores/app';
     import type { Document } from '../types';
+    import { invoke } from "@tauri-apps/api/core";
 
     function handleDocClick(doc: Document) {
         appStore.setCurrentDocument(doc);
@@ -25,21 +26,27 @@
         return docList.filter((d: Document) => d.title.toLowerCase().includes(query));
     }
 
-    function createDocument() {
-        if (!newDocTitle.trim()) return;
+    let wsPath = $derived($workspacePath);
+
+    async function createDocument() {
+        if (!newDocTitle.trim() || !wsPath) return;
         
-        const newDoc: Document = {
-            id: crypto.randomUUID(),
-            doc_type: 'note',
-            title: newDocTitle.trim(),
-            content_json: '{}'
-        };
-        
-        appStore.addDocument(newDoc);
-        appStore.setCurrentDocument(newDoc);
-        
-        newDocTitle = '';
-        showModal = false;
+        try {
+            const newDoc: Document = await invoke('create_document', {
+                workspacePath: wsPath,
+                docType: 'note',
+                title: newDocTitle.trim(),
+                contentJson: '{}'
+            });
+            
+            appStore.addDocument(newDoc);
+            appStore.setCurrentDocument(newDoc);
+            
+            newDocTitle = '';
+            showModal = false;
+        } catch (error) {
+            console.error('Failed to create document:', error);
+        }
     }
 
     function closeModal() {
