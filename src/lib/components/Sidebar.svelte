@@ -15,12 +15,36 @@
     }
 
     let searchInput = $state('');
+    let showModal = $state(false);
+    let newDocTitle = $state('');
 
     function filterDocs(): Document[] {
         const docList = $documents;
         if (!searchInput.trim()) return docList;
         const query = searchInput.toLowerCase();
         return docList.filter((d: Document) => d.title.toLowerCase().includes(query));
+    }
+
+    function createDocument() {
+        if (!newDocTitle.trim()) return;
+        
+        const newDoc: Document = {
+            id: crypto.randomUUID(),
+            doc_type: 'note',
+            title: newDocTitle.trim(),
+            content_json: '{}'
+        };
+        
+        appStore.addDocument(newDoc);
+        appStore.setCurrentDocument(newDoc);
+        
+        newDocTitle = '';
+        showModal = false;
+    }
+
+    function closeModal() {
+        newDocTitle = '';
+        showModal = false;
     }
 </script>
 
@@ -35,7 +59,10 @@
     </div>
 
     <div class="sidebar-section">
-        <h3>Documents</h3>
+        <h3>
+            Documents
+            <button class="add-doc-btn" onclick={() => showModal = true}>+</button>
+        </h3>
         <ul class="doc-list">
             {#each filterDocs() as doc}
                 <li>
@@ -61,6 +88,24 @@
         </ul>
     </div>
 </aside>
+
+{#if showModal}
+    <div class="modal-overlay" onclick={closeModal}>
+        <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+            <h3>New Document</h3>
+            <input
+                type="text"
+                bind:value={newDocTitle}
+                placeholder="Enter file name..."
+                class="modal-input"
+                onkeydown={(e) => e.key === 'Enter' && createDocument()}
+            />
+            <div class="modal-actions">
+                <button class="modal-btn" onclick={createDocument}>OK</button>
+            </div>
+        </div>
+    </div>
+{/if}
 
 <style>
     .sidebar {
@@ -131,5 +176,81 @@
 
     .doc-type {
         margin-right: 6px;
+    }
+
+    .sidebar-section h3 {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .add-doc-btn {
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0 4px;
+        line-height: 1;
+    }
+
+    .add-doc-btn:hover {
+        color: #333;
+    }
+
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-content {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        min-width: 300px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    .modal-content h3 {
+        margin: 0 0 12px 0;
+        font-size: 16px;
+        color: #333;
+    }
+
+    .modal-input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    .modal-actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .modal-btn {
+        padding: 6px 16px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .modal-btn:hover {
+        background: #0056b3;
     }
 </style>
