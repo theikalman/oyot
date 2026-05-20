@@ -14,6 +14,9 @@
     import TableCell from '@tiptap/extension-table-cell';
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
+    import { SlashCommand } from '../tiptap/SlashCommand';
+    import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
+    import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, commandRegistry } from '../tiptap';
 
     let editorElement = $state<HTMLDivElement>();
     let editor: EditorType | null = null;
@@ -25,6 +28,25 @@
     let wsPath = $derived($workspacePath);
     let current = $derived($currentDocument);
     let docs = $derived($documents);
+
+    function handleOpenDocument(event: Event) {
+        const customEvent = event as CustomEvent<{ id: string }>;
+        const docId = customEvent.detail?.id;
+        if (docId) {
+            const doc = docs.find((d: Document) => d.id === docId);
+            if (doc) {
+                appStore.setCurrentDocument(doc);
+            }
+        }
+    }
+
+    onMount(() => {
+        window.addEventListener('openDocument', handleOpenDocument);
+    });
+
+    onDestroy(() => {
+        window.removeEventListener('openDocument', handleOpenDocument);
+    });
 
     function createInitialContent(title: string): any {
         return {
@@ -75,7 +97,9 @@
                 TableRow,
                 TableHeader,
                 TableCell,
-                Typography
+                Typography,
+                DocumentLinkNode,
+                SlashCommand,
             ],
             content: initialContent,
             editable: true,
@@ -91,6 +115,11 @@
                 }, 1000);
             }
         });
+
+        registerDocumentLinkCommand(editor);
+        registerDateCommand(editor);
+        registerTodoCommand(editor);
+        console.log('Commands registered, registry has:', commandRegistry.getAllCommands().length);
     }
 
     async function saveContent() {
@@ -316,6 +345,32 @@
     .editor-content :global(pre) { background: #f4f4f4; padding: 16px; border-radius: 6px; overflow-x: auto; }
     .editor-content :global(blockquote) { border-left: 4px solid #ddd; margin: 1em 0; padding-left: 1em; color: #666; }
     .editor-content :global(a) { color: #0066cc; text-decoration: underline; }
+
+    .editor-content :global(.document-link) {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background-color: #e8f0fe;
+        color: #1a73e8;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        text-decoration: none;
+        transition: background-color 0.2s;
+    }
+
+    .editor-content :global(.document-link:hover) {
+        background-color: #d2e3fc;
+    }
+
+    .editor-content :global(.document-link-icon) {
+        font-size: 12px;
+    }
+
+    .editor-content :global(.document-link-title) {
+        font-weight: 500;
+    }
 
     .editor-content :global(ul[data-type="taskList"]) {
         list-style: none;
