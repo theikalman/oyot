@@ -1,43 +1,59 @@
-export interface FileEntry {
-    path: string;
+export interface Document {
+    id: string;
+    doc_type: 'journal' | 'note';
     title: string;
-    content: string;
+    content_json: string;
+    created_at?: string;
+    updated_at?: string;
 }
 
-export interface LinkReference {
-    source: string;
-    target: string;
+export interface DocumentLink {
+    source_id: string;
+    target_id: string;
+}
+
+export interface Todo {
+    id: string;
+    document_id: string;
+    text: string;
+    is_completed: boolean;
+    created_at?: string;
 }
 
 export interface SearchResult {
-    path: string;
+    id: string;
     title: string;
     line_number: number;
     line_content: string;
 }
 
 export interface IndexData {
-    files: FileEntry[];
-    backlinks: LinkReference[];
+    documents: Document[];
+    links: DocumentLink[];
     all_links: string[];
+    todos: Todo[];
 }
 
 export type ViewMode = 'reading' | 'index' | 'journals';
 
 export interface JournalEntry {
-    date: string;
-    content: string;
+    id: string;
+    doc_type: string;
+    title: string;
+    content_json: string;
+    created_at?: string;
 }
 
 export interface AppState {
     workspacePath: string | null;
-    files: FileEntry[];
-    backlinks: LinkReference[];
+    documents: Document[];
+    links: DocumentLink[];
     allLinks: string[];
-    currentFile: FileEntry | null;
+    todos: Todo[];
+    currentDocument: Document | null;
     viewMode: ViewMode;
     searchQuery: string;
     searchResults: SearchResult[];
-    indexType: 'files' | 'links' | 'search' | 'todos';
+    indexType: 'notes' | 'links' | 'todos';
     isLoading: boolean;
 }

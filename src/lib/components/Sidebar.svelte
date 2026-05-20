@@ -1,93 +1,47 @@
 <script lang="ts">
-    import { appStore, files, allLinks, viewMode } from '../stores/app';
-    import type { FileEntry } from '../types';
+    import { appStore, documents, allLinks } from '../stores/app';
+    import type { Document } from '../types';
 
-    let { onSelectFile }: { onSelectFile: (path: string) => void } = $props();
-
-    let currentViewMode = $derived($viewMode);
-    let indexType = $derived($appStore.indexType);
-
-    function handleFileClick(path: string) {
-        const fileList = $files;
-        const file = fileList.find((f: FileEntry) => f.path === path);
-        if (file) {
-            appStore.setCurrentFile(file);
-        }
+    function handleDocClick(doc: Document) {
+        appStore.setCurrentDocument(doc);
     }
 
     function handleLinkClick(title: string) {
-        const fileList = $files;
-        const file = fileList.find((f: FileEntry) => f.title.toLowerCase() === title.toLowerCase());
-        if (file) {
-            appStore.setCurrentFile(file);
+        const docList = $documents;
+        const doc = docList.find((d: Document) => d.title.toLowerCase() === title.toLowerCase());
+        if (doc) {
+            appStore.setCurrentDocument(doc);
         }
     }
 
-    function goToJournals() {
-        appStore.setViewMode('journals');
-    }
-
-    function goToIndex() {
-        appStore.setViewMode('index');
-        appStore.setIndexType('files');
-    }
-
-    function setIndexType(type: 'files' | 'links' | 'search' | 'todos') {
-        appStore.setIndexType(type);
-    }
-
     let searchInput = $state('');
-    let indexExpanded = $state(true);
 
-    function filterFiles(): FileEntry[] {
-        const fileList = $files;
-        if (!searchInput.trim()) return fileList;
+    function filterDocs(): Document[] {
+        const docList = $documents;
+        if (!searchInput.trim()) return docList;
         const query = searchInput.toLowerCase();
-        return fileList.filter((f: FileEntry) => f.title.toLowerCase().includes(query));
+        return docList.filter((d: Document) => d.title.toLowerCase().includes(query));
     }
 </script>
 
 <aside class="sidebar">
-    <div class="sidebar-nav">
-        <button class="nav-btn" class:active={currentViewMode === 'journals'} onclick={goToJournals}>
-            Journal
-        </button>
-        <div class="nav-item">
-            <button class="nav-btn has-children" class:active={currentViewMode === 'index'} onclick={goToIndex}>
-                Index
-            </button>
-            {#if currentViewMode === 'index'}
-                <div class="nav-children">
-                    <button class="nav-child-btn" class:active={indexType === 'files'} onclick={() => setIndexType('files')}>
-                        Files
-                    </button>
-                    <button class="nav-child-btn" class:active={indexType === 'links'} onclick={() => setIndexType('links')}>
-                        Links
-                    </button>
-                    <button class="nav-child-btn" class:active={indexType === 'todos'} onclick={() => setIndexType('todos')}>
-                        TODO
-                    </button>
-                </div>
-            {/if}
-        </div>
-    </div>
-
     <div class="sidebar-header">
         <input
             type="text"
-            placeholder="Search files..."
+            placeholder="Search documents..."
             bind:value={searchInput}
             class="search-input"
         />
     </div>
 
     <div class="sidebar-section">
-        <h3>Files</h3>
-        <ul class="file-list">
-            {#each filterFiles() as file}
+        <h3>Documents</h3>
+        <ul class="doc-list">
+            {#each filterDocs() as doc}
                 <li>
-                    <button class="file-btn" onclick={() => handleFileClick(file.path)}>
-                        {file.title}
+                    <button class="doc-btn" onclick={() => handleDocClick(doc)}>
+                        <span class="doc-type">{doc.doc_type === 'journal' ? '📅' : '📝'}</span>
+                        {doc.title}
                     </button>
                 </li>
             {/each}
@@ -144,17 +98,17 @@
         margin: 0 0 8px 0;
     }
 
-    .file-list, .link-list {
+    .doc-list, .link-list {
         list-style: none;
         padding: 0;
         margin: 0;
     }
 
-    .file-list li, .link-list li {
+    .doc-list li, .link-list li {
         margin-bottom: 4px;
     }
 
-    .file-btn, .link-btn {
+    .doc-btn, .link-btn {
         width: 100%;
         text-align: left;
         padding: 6px 8px;
@@ -166,7 +120,7 @@
         color: #333;
     }
 
-    .file-btn:hover, .link-btn:hover {
+    .doc-btn:hover, .link-btn:hover {
         background: #e9ecef;
     }
 
@@ -175,69 +129,7 @@
         font-family: monospace;
     }
 
-    .sidebar-nav {
-        padding: 8px;
-        border-bottom: 1px solid #e0e0e0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-    }
-
-    .nav-item {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .nav-btn {
-        width: 100%;
-        text-align: left;
-        padding: 8px 12px;
-        border: none;
-        background: transparent;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 14px;
-        color: #333;
-    }
-
-    .nav-btn:hover {
-        background: #e9ecef;
-    }
-
-    .nav-btn.active {
-        background: #0066cc;
-        color: white;
-    }
-
-    .nav-btn.has-children::after {
-        content: '▸';
-        float: right;
-        font-size: 10px;
-        line-height: 20px;
-    }
-
-    .nav-children {
-        padding-left: 16px;
-    }
-
-    .nav-child-btn {
-        width: 100%;
-        text-align: left;
-        padding: 6px 12px;
-        border: none;
-        background: transparent;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 13px;
-        color: #666;
-    }
-
-    .nav-child-btn:hover {
-        background: #e9ecef;
-    }
-
-    .nav-child-btn.active {
-        color: #0066cc;
-        font-weight: 500;
+    .doc-type {
+        margin-right: 6px;
     }
 </style>

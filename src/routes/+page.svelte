@@ -1,12 +1,10 @@
 <script lang="ts">
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
-    import { appStore, viewMode, workspacePath, isLoading } from "../lib/stores/app";
-    import type { IndexData, FileEntry, ViewMode } from "../lib/types";
+    import { appStore, workspacePath, isLoading, currentDocument } from "../lib/stores/app";
+    import type { IndexData } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
-    import Reader from "../lib/components/Reader.svelte";
-    import Index from "../lib/components/Index.svelte";
-    import Journals from "../lib/components/Journals.svelte";
+    import Editor from "../lib/components/Editor.svelte";
 
     async function openWorkspace() {
         const selected = await open({
@@ -18,29 +16,22 @@
         if (selected && typeof selected === "string") {
             appStore.setLoading(true);
             try {
-                await invoke("create_default_folders", { dirPath: selected });
-                const indexData: IndexData = await invoke("scan_directory", { dirPath: selected });
+                await invoke("init_database", { workspacePath: selected });
+                const indexData: IndexData = await invoke("get_all_documents", { workspacePath: selected });
                 appStore.setWorkspacePath(selected);
-                appStore.setFiles(indexData.files);
-                appStore.setBacklinks(indexData.backlinks);
+                appStore.setDocuments(indexData.documents);
+                appStore.setLinks(indexData.links);
                 appStore.setAllLinks(indexData.all_links);
+                appStore.setTodos(indexData.todos);
             } catch (error) {
-                console.error("Failed to scan directory:", error);
+                console.error("Failed to initialize database:", error);
             } finally {
                 appStore.setLoading(false);
             }
         }
     }
 
-    function handleSelectFile(path: string) {
-        const files = $appStore.files;
-        const file = files.find((f: FileEntry) => f.path === path);
-        if (file) {
-            appStore.setCurrentFile(file);
-        }
-    }
-
-    let currentViewMode = $derived($viewMode);
+    let activeDocument = $derived($currentDocument);
 </script>
 
 <main class="app">
@@ -54,14 +45,14 @@
         </div>
     {:else}
         <div class="workspace">
-            <Sidebar onSelectFile={handleSelectFile} />
+            <Sidebar />
             <div class="main-content">
-                {#if currentViewMode === 'reading'}
-                    <Reader />
-                {:else if currentViewMode === 'journals'}
-                    <Journals />
+                {#if activeDocument}
+                    <Editor />
                 {:else}
-                    <Index onSelectFile={handleSelectFile} />
+                    <div class="empty-state">
+                        <p>Select a document to edit</p>
+                    </div>
                 {/if}
             </div>
         </div>
@@ -137,6 +128,14 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+    }
+
+    .empty-state {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #999;
     }
 
     .loading-overlay {
