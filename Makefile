@@ -24,7 +24,7 @@ build:
 	npm run tauri build
 
 run:
-	npm run tauri build && npm run tauri run
+	npm run tauri build && open src-tauri/target/release/bundle/macos/oyot.app
 
 clean:
 	rm -rf src-tauri/target
