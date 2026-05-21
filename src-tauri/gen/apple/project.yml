@@ -10,7 +10,7 @@ configs:
 settingGroups:
   app:
     base:
-      PRODUCT_NAME: oyot
+      PRODUCT_NAME: Oyot
       PRODUCT_BUNDLE_IDENTIFIER: com.ajiyakin.oyot
 targetTemplates:
   app:
