@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { appStore, documents, allLinks, workspacePath, theme } from '../stores/app';
+    import { appStore, documents, workspacePath, theme } from '../stores/app';
     import type { Document, Theme } from '../types';
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
@@ -8,14 +8,6 @@
 
     function handleDocClick(doc: Document) {
         appStore.setCurrentDocument(doc);
-    }
-
-    function handleLinkClick(title: string) {
-        const docList = $documents;
-        const doc = docList.find((d: Document) => d.title.toLowerCase() === title.toLowerCase());
-        if (doc) {
-            appStore.setCurrentDocument(doc);
-        }
     }
 
     let searchInput = $state('');
@@ -34,9 +26,23 @@
 
     let wsPath = $derived($workspacePath);
     let currentTheme = $derived($theme);
+    let journals = $derived($documents.filter((d: Document) => d.doc_type === 'journal'));
+    let notes = $derived($documents.filter((d: Document) => d.doc_type === 'note'));
 
     function workspaceName(path: string): string {
         return path.split("/").filter(Boolean).pop() ?? path;
+    }
+
+    function filterJournals(): Document[] {
+        if (!searchInput.trim()) return journals;
+        const query = searchInput.toLowerCase();
+        return journals.filter((d: Document) => d.title.toLowerCase().includes(query));
+    }
+
+    function filterNotes(): Document[] {
+        if (!searchInput.trim()) return notes;
+        const query = searchInput.toLowerCase();
+        return notes.filter((d: Document) => d.title.toLowerCase().includes(query));
     }
 
     async function createDocument() {
@@ -118,15 +124,12 @@
     {#if !collapsed}
         <div class="sidebar-content">
             <div class="sidebar-section">
-                <h3>
-                    Documents
-                    <button class="add-doc-btn" onclick={() => showModal = true}>+</button>
-                </h3>
+                <h3>Journals</h3>
                 <ul class="doc-list">
-                    {#each filterDocs() as doc}
+                    {#each filterJournals() as doc}
                         <li>
                             <button class="doc-btn" onclick={() => handleDocClick(doc)}>
-                                <span class="doc-type">{doc.doc_type === 'journal' ? '📅' : '📝'}</span>
+                                <span class="doc-type">📅</span>
                                 {doc.title}
                             </button>
                         </li>
@@ -135,12 +138,16 @@
             </div>
 
             <div class="sidebar-section">
-                <h3>Links</h3>
-                <ul class="link-list">
-                    {#each $allLinks as link}
+                <h3>
+                    Notes
+                    <button class="add-doc-btn" onclick={() => showModal = true}>+</button>
+                </h3>
+                <ul class="doc-list">
+                    {#each filterNotes() as doc}
                         <li>
-                            <button class="link-btn" onclick={() => handleLinkClick(link)}>
-                                [[{link}]]
+                            <button class="doc-btn" onclick={() => handleDocClick(doc)}>
+                                <span class="doc-type">📝</span>
+                                {doc.title}
                             </button>
                         </li>
                     {/each}
@@ -166,7 +173,7 @@
 {#if showModal}
     <div class="modal-overlay" role="presentation" onclick={closeModal}>
         <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && closeModal()}>
-            <h3>New Document</h3>
+            <h3>New Note</h3>
             <input
                 type="text"
                 bind:value={newDocTitle}
@@ -300,17 +307,17 @@
         justify-content: space-between;
     }
 
-    .doc-list, .link-list {
+    .doc-list {
         list-style: none;
         padding: 0;
         margin: 0;
     }
 
-    .doc-list li, .link-list li {
+    .doc-list li {
         margin-bottom: 4px;
     }
 
-    .doc-btn, .link-btn {
+    .doc-btn {
         width: 100%;
         text-align: left;
         padding: 6px 8px;
@@ -322,13 +329,8 @@
         color: var(--text-primary);
     }
 
-    .doc-btn:hover, .link-btn:hover {
+    .doc-btn:hover {
         background: var(--bg-hover);
-    }
-
-    .link-btn {
-        color: var(--accent-color);
-        font-family: monospace;
     }
 
     .doc-type {
