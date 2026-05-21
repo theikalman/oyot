@@ -49,10 +49,10 @@
     .suggestion-popup {
         position: fixed;
         z-index: 1000;
-        background: white;
-        border: 1px solid #e0e0e0;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
         border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
         min-width: 280px;
         max-width: 400px;
         max-height: 320px;
@@ -77,11 +77,11 @@
 
     .suggestion-item:hover,
     .suggestion-item.selected {
-        background-color: #f0f7ff;
+        background-color: var(--bg-hover);
     }
 
     .suggestion-item.selected {
-        background-color: #e8f0fe;
+        background-color: var(--accent-bg);
     }
 
     .item-icon {
@@ -99,7 +99,7 @@
     .item-title {
         font-size: 14px;
         font-weight: 500;
-        color: #333;
+        color: var(--text-primary);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -107,7 +107,7 @@
 
     .item-description {
         font-size: 12px;
-        color: #666;
+        color: var(--text-secondary);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -116,7 +116,7 @@
     .suggestion-empty {
         padding: 16px;
         text-align: center;
-        color: #666;
+        color: var(--text-secondary);
         font-size: 14px;
     }
 </style>;

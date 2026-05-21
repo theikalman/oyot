@@ -581,20 +581,28 @@ fn get_todos(workspace_path: String) -> Result<Vec<Todo>, String> {
 
 const MAX_RECENT_WORKSPACES: usize = 5;
 
-#[tauri::command]
-fn get_recent_workspaces(app: tauri::AppHandle) -> Vec<String> {
+fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     let config_path = match app.path().app_data_dir().ok() {
         Some(dir) => dir.join("config.json"),
-        None => return vec![],
+        None => return serde_json::Value::Object(Default::default()),
     };
     let content = match std::fs::read_to_string(config_path).ok() {
         Some(c) => c,
-        None => return vec![],
+        None => return serde_json::Value::Object(Default::default()),
     };
-    let json: serde_json::Value = match serde_json::from_str(&content).ok() {
-        Some(j) => j,
-        None => return vec![],
-    };
+    serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
+}
+
+fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    let config_path = app_data_dir.join("config.json");
+    std::fs::write(config_path, json.to_string()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_recent_workspaces(app: tauri::AppHandle) -> Vec<String> {
+    let json = read_config(&app);
     json.get("recent_workspaces")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -607,19 +615,44 @@ fn get_recent_workspaces(app: tauri::AppHandle) -> Vec<String> {
 
 #[tauri::command]
 fn save_recent_workspace(app: tauri::AppHandle, workspace_path: String) -> Result<(), String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
-    let config_path = app_data_dir.join("config.json");
+    let mut json = read_config(&app);
 
     // Read existing list, deduplicate, prepend new path, cap at MAX
-    let mut recents = get_recent_workspaces(app);
+    let mut recents: Vec<String> = json
+        .get("recent_workspaces")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     recents.retain(|p| p != &workspace_path);
     recents.insert(0, workspace_path);
     recents.truncate(MAX_RECENT_WORKSPACES);
 
-    let json = serde_json::json!({ "recent_workspaces": recents });
-    std::fs::write(config_path, json.to_string()).map_err(|e| e.to_string())?;
-    Ok(())
+    json["recent_workspaces"] = serde_json::json!(recents);
+    write_config(&app, json)
+}
+
+#[tauri::command]
+fn get_theme(app: tauri::AppHandle) -> String {
+    let json = read_config(&app);
+    json.get("theme")
+        .and_then(|v| v.as_str())
+        .filter(|s| *s == "light" || *s == "dark")
+        .unwrap_or("light")
+        .to_string()
+}
+
+#[tauri::command]
+fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
+    if theme != "light" && theme != "dark" {
+        return Err(format!("Invalid theme: {}", theme));
+    }
+    let mut json = read_config(&app);
+    json["theme"] = serde_json::json!(theme);
+    write_config(&app, json)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -641,7 +674,9 @@ pub fn run() {
             get_todos,
             get_or_create_today_journal,
             get_recent_workspaces,
-            save_recent_workspace
+            save_recent_workspace,
+            get_theme,
+            save_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

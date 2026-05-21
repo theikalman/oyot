@@ -2,8 +2,8 @@
     import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
-    import { appStore, workspacePath, isLoading, currentDocument } from "../lib/stores/app";
-    import type { IndexData, Document } from "../lib/types";
+    import { appStore, workspacePath, isLoading, currentDocument, theme } from "../lib/stores/app";
+    import type { IndexData, Document, Theme } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Editor from "../lib/components/Editor.svelte";
 
@@ -46,6 +46,16 @@
     }
 
     onMount(async () => {
+        // Load saved theme and apply it
+        try {
+            const savedTheme: Theme = await invoke("get_theme");
+            appStore.setTheme(savedTheme);
+            document.body.dataset.theme = savedTheme;
+        } catch (error) {
+            console.error("Failed to load theme:", error);
+            document.body.dataset.theme = "light";
+        }
+
         try {
             const recents: string[] = await invoke("get_recent_workspaces");
             recentWorkspaces = recents;
@@ -55,6 +65,11 @@
         } catch (error) {
             console.error("Failed to restore last workspace:", error);
         }
+    });
+
+    // Reactively apply theme to <body> whenever the store changes
+    $effect(() => {
+        document.body.dataset.theme = $theme;
     });
 
     let activeDocument = $derived($currentDocument);
@@ -110,6 +125,48 @@
 </main>
 
 <style>
+    /* ── CSS custom properties (light theme defaults) ── */
+    :global(:root) {
+        --bg-primary: #ffffff;
+        --bg-secondary: #f8f9fa;
+        --bg-hover: #e9ecef;
+        --bg-accent: #eef4ff;
+        --text-primary: #333333;
+        --text-secondary: #666666;
+        --text-muted: #999999;
+        --border-color: #e0e0e0;
+        --border-light: #dddddd;
+        --accent-color: #0066cc;
+        --accent-hover: #0055aa;
+        --accent-bg: #e8f0fe;
+        --accent-bg-hover: #d2e3fc;
+        --btn-primary-bg: #007bff;
+        --btn-primary-hover: #0056b3;
+        --code-bg: #f4f4f4;
+        --loading-overlay-bg: rgba(255, 255, 255, 0.9);
+    }
+
+    /* ── Dark theme overrides ── */
+    :global([data-theme="dark"]) {
+        --bg-primary: #1e1e1e;
+        --bg-secondary: #252526;
+        --bg-hover: #2d2d2d;
+        --bg-accent: #1c3358;
+        --text-primary: #e0e0e0;
+        --text-secondary: #aaaaaa;
+        --text-muted: #666666;
+        --border-color: #3d3d3d;
+        --border-light: #444444;
+        --accent-color: #4da3ff;
+        --accent-hover: #73b6ff;
+        --accent-bg: #1c3358;
+        --accent-bg-hover: #26456e;
+        --btn-primary-bg: #0078d4;
+        --btn-primary-hover: #006cbf;
+        --code-bg: #2d2d2d;
+        --loading-overlay-bg: rgba(30, 30, 30, 0.9);
+    }
+
     :global(*) {
         box-sizing: border-box;
     }
@@ -117,6 +174,8 @@
     :global(body) {
         margin: 0;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
     }
 
     .app {
@@ -139,17 +198,17 @@
     .welcome h1 {
         margin: 0 0 16px 0;
         font-size: 32px;
-        color: #333;
+        color: var(--text-primary);
     }
 
     .welcome > p {
         margin: 0 0 32px 0;
-        color: #666;
+        color: var(--text-secondary);
     }
 
     .open-workspace-btn {
         padding: 12px 24px;
-        background: #0066cc;
+        background: var(--accent-color);
         color: white;
         border: none;
         border-radius: 6px;
@@ -158,7 +217,7 @@
     }
 
     .open-workspace-btn:hover {
-        background: #0055aa;
+        background: var(--accent-hover);
     }
 
     /* ── Recent list on welcome screen ── */
@@ -172,7 +231,7 @@
     .recent-label {
         font-size: 12px;
         text-transform: uppercase;
-        color: #999;
+        color: var(--text-muted);
         margin: 0 0 8px 0;
         letter-spacing: 0.05em;
     }
@@ -183,27 +242,27 @@
         width: 100%;
         padding: 10px 12px;
         margin-bottom: 4px;
-        background: #f8f9fa;
-        border: 1px solid #e0e0e0;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
         border-radius: 6px;
         cursor: pointer;
         text-align: left;
     }
 
     .recent-item:hover {
-        background: #e9f0fb;
-        border-color: #0066cc;
+        background: var(--bg-accent);
+        border-color: var(--accent-color);
     }
 
     .recent-name {
         font-size: 14px;
         font-weight: 600;
-        color: #333;
+        color: var(--text-primary);
     }
 
     .recent-path {
         font-size: 11px;
-        color: #999;
+        color: var(--text-muted);
         margin-top: 2px;
         white-space: nowrap;
         overflow: hidden;
@@ -212,16 +271,16 @@
 
     .browse-btn {
         padding: 8px 16px;
-        background: #f0f0f0;
-        color: #333;
-        border: 1px solid #ccc;
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        border: 1px solid var(--border-light);
         border-radius: 6px;
         font-size: 14px;
         cursor: pointer;
     }
 
     .browse-btn:hover {
-        background: #e0e0e0;
+        background: var(--border-color);
     }
 
     /* ── Workspace layout ── */
@@ -236,6 +295,7 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        background: var(--bg-primary);
     }
 
     .empty-state {
@@ -243,7 +303,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #999;
+        color: var(--text-muted);
     }
 
     /* ── Loading overlay ── */
@@ -253,7 +313,7 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(255, 255, 255, 0.9);
+        background: var(--loading-overlay-bg);
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -264,8 +324,8 @@
     .loading-spinner {
         width: 40px;
         height: 40px;
-        border: 4px solid #f3f3f3;
-        border-top: 4px solid #0066cc;
+        border: 4px solid var(--border-color);
+        border-top: 4px solid var(--accent-color);
         border-radius: 50%;
         animation: spin 1s linear infinite;
     }
@@ -277,6 +337,6 @@
 
     .loading-overlay p {
         margin-top: 16px;
-        color: #666;
+        color: var(--text-secondary);
     }
 </style>

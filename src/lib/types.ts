@@ -34,6 +34,8 @@ export interface IndexData {
     todos: Todo[];
 }
 
+export type Theme = 'light' | 'dark';
+
 export type ViewMode = 'reading' | 'index' | 'journals';
 
 export interface JournalEntry {
