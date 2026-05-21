@@ -1,7 +1,8 @@
 use regex::Regex;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Document {
@@ -68,7 +69,8 @@ fn init_db_tables(conn: &Connection) -> Result<(), String> {
             updated_at TEXT DEFAULT (datetime('now'))
         )",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS document_links (
@@ -79,7 +81,8 @@ fn init_db_tables(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (target_id) REFERENCES documents(id) ON DELETE CASCADE
         )",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS todos (
@@ -91,17 +94,20 @@ fn init_db_tables(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         )",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todos_document ON todos(document_id)",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_links_target ON document_links(target_id)",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -124,29 +130,32 @@ fn extract_todos_from_content(content_json: &str) -> Vec<(String, String, bool)>
 fn extract_todos_from_json(node: &serde_json::Value, todos: &mut Vec<(String, String, bool)>) {
     if let Some(node_type) = node.get("type").and_then(|v| v.as_str()) {
         if node_type == "taskItem" {
-            let id = node.get("attrs")
+            let id = node
+                .get("attrs")
                 .and_then(|a| a.get("id"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| uuid_v4());
-            
-            let text = node.get("content")
+
+            let text = node
+                .get("content")
                 .and_then(|c| c.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|n| n.get("text"))
                 .and_then(|t| t.as_str())
                 .unwrap_or("")
                 .to_string();
-            
-            let completed = node.get("attrs")
+
+            let completed = node
+                .get("attrs")
                 .and_then(|a| a.get("checked"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            
+
             todos.push((id, text, completed));
         }
     }
-    
+
     if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
         for child in content {
             extract_todos_from_json(child, todos);
@@ -163,9 +172,16 @@ fn uuid_v4() -> String {
     format!("{:x}", timestamp)
 }
 
-fn update_document_links(conn: &Connection, doc_id: &str, content_json: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM document_links WHERE source_id = ?", params![doc_id])
-        .map_err(|e| e.to_string())?;
+fn update_document_links(
+    conn: &Connection,
+    doc_id: &str,
+    content_json: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM document_links WHERE source_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     let links = extract_wikilinks(content_json);
     for link in links {
@@ -174,7 +190,8 @@ fn update_document_links(conn: &Connection, doc_id: &str, content_json: &str) ->
             conn.execute(
                 "INSERT INTO document_links (source_id, target_id) VALUES (?, ?)",
                 params![doc_id, tid],
-            ).map_err(|e| e.to_string())?;
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
 
@@ -185,11 +202,16 @@ fn find_document_by_title(conn: &Connection, title: &str) -> Option<String> {
     conn.query_row(
         "SELECT id FROM documents WHERE LOWER(title) = LOWER(?)",
         params![title],
-        |row| row.get(0)
-    ).ok()
+        |row| row.get(0),
+    )
+    .ok()
 }
 
-fn update_document_todos(conn: &Connection, doc_id: &str, content_json: &str) -> Result<(), String> {
+fn update_document_todos(
+    conn: &Connection,
+    doc_id: &str,
+    content_json: &str,
+) -> Result<(), String> {
     conn.execute("DELETE FROM todos WHERE document_id = ?", params![doc_id])
         .map_err(|e| e.to_string())?;
 
@@ -198,7 +220,8 @@ fn update_document_todos(conn: &Connection, doc_id: &str, content_json: &str) ->
         conn.execute(
             "INSERT INTO todos (id, document_id, text, is_completed) VALUES (?, ?, ?, ?)",
             params![id, doc_id, text, completed as i32],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -213,7 +236,9 @@ fn format_journal_date(date_str: &str) -> Option<String> {
     let month: u32 = parts[1].parse().ok()?;
     let day: u32 = parts[2].parse().ok()?;
 
-    let month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month_names = [
+        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let month_name = month_names.get(month as usize)?;
 
     Some(format!("{} {} {}", day, month_name, year))
@@ -236,48 +261,59 @@ fn get_all_documents(workspace_path: String) -> Result<IndexData, String> {
         "SELECT id, type, title, content_json, created_at, updated_at FROM documents ORDER BY updated_at DESC"
     ).map_err(|e| e.to_string())?;
 
-    let documents: Vec<Document> = stmt.query_map([], |row| {
-        Ok(Document {
-            id: row.get(0)?,
-            doc_type: row.get(1)?,
-            title: row.get(2)?,
-            content_json: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
+    let documents: Vec<Document> = stmt
+        .query_map([], |row| {
+            Ok(Document {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                title: row.get(2)?,
+                content_json: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    let mut stmt = conn.prepare("SELECT source_id, target_id FROM document_links")
+    let mut stmt = conn
+        .prepare("SELECT source_id, target_id FROM document_links")
         .map_err(|e| e.to_string())?;
 
-    let links: Vec<DocumentLink> = stmt.query_map([], |row| {
-        Ok(DocumentLink {
-            source_id: row.get(0)?,
-            target_id: row.get(1)?,
+    let links: Vec<DocumentLink> = stmt
+        .query_map([], |row| {
+            Ok(DocumentLink {
+                source_id: row.get(0)?,
+                target_id: row.get(1)?,
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    let mut stmt = conn.prepare("SELECT id, document_id, text, is_completed, created_at FROM todos ORDER BY created_at")
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, document_id, text, is_completed, created_at FROM todos ORDER BY created_at",
+        )
         .map_err(|e| e.to_string())?;
 
-    let todos: Vec<Todo> = stmt.query_map([], |row| {
-        let is_completed: i32 = row.get(3)?;
-        Ok(Todo {
-            id: row.get(0)?,
-            document_id: row.get(1)?,
-            text: row.get(2)?,
-            is_completed: is_completed != 0,
-            created_at: row.get(4)?,
+    let todos: Vec<Todo> = stmt
+        .query_map([], |row| {
+            let is_completed: i32 = row.get(3)?;
+            Ok(Todo {
+                id: row.get(0)?,
+                document_id: row.get(1)?,
+                text: row.get(2)?,
+                is_completed: is_completed != 0,
+                created_at: row.get(4)?,
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    let all_links: Vec<String> = documents.iter()
+    let all_links: Vec<String> = documents
+        .iter()
         .filter(|d| d.doc_type == "note")
         .map(|d| d.title.clone())
         .collect();
@@ -312,7 +348,12 @@ fn get_document(workspace_path: String, doc_id: String) -> Result<Document, Stri
 }
 
 #[tauri::command]
-fn create_document(workspace_path: String, doc_type: String, title: String, content_json: String) -> Result<Document, String> {
+fn create_document(
+    workspace_path: String,
+    doc_type: String,
+    title: String,
+    content_json: String,
+) -> Result<Document, String> {
     let db_path = get_db_path(&workspace_path);
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
@@ -325,7 +366,8 @@ fn create_document(workspace_path: String, doc_type: String, title: String, cont
     conn.execute(
         "INSERT INTO documents (id, type, title, content_json) VALUES (?, ?, ?, ?)",
         params![doc_id, doc_type, title, content_json],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     update_document_links(&conn, &doc_id, &content_json)?;
     update_document_todos(&conn, &doc_id, &content_json)?;
@@ -334,7 +376,12 @@ fn create_document(workspace_path: String, doc_type: String, title: String, cont
 }
 
 #[tauri::command]
-fn update_document(workspace_path: String, doc_id: String, title: String, content_json: String) -> Result<Document, String> {
+fn update_document(
+    workspace_path: String,
+    doc_id: String,
+    title: String,
+    content_json: String,
+) -> Result<Document, String> {
     let db_path = get_db_path(&workspace_path);
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
@@ -371,11 +418,13 @@ fn search_documents(workspace_path: String, query: String) -> Result<Vec<SearchR
         "SELECT id, title, content_json FROM documents WHERE LOWER(title) LIKE ? OR LOWER(content_json) LIKE ?"
     ).map_err(|e| e.to_string())?;
 
-    let docs: Vec<(String, String, String)> = stmt.query_map(params![&search_pattern, &search_pattern], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+    let docs: Vec<(String, String, String)> = stmt
+        .query_map(params![&search_pattern, &search_pattern], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     let query_lower = query.to_lowercase();
     let mut results: Vec<SearchResult> = Vec::new();
@@ -408,25 +457,29 @@ fn get_backlinks(workspace_path: String, target_title: String) -> Result<Vec<Doc
 
     let target_id = target_id.unwrap();
 
-    let mut stmt = conn.prepare(
-        "SELECT d.id, d.type, d.title, d.content_json, d.created_at, d.updated_at 
+    let mut stmt = conn
+        .prepare(
+            "SELECT d.id, d.type, d.title, d.content_json, d.created_at, d.updated_at 
          FROM documents d
          JOIN document_links l ON d.id = l.source_id 
-         WHERE l.target_id = ?"
-    ).map_err(|e| e.to_string())?;
+         WHERE l.target_id = ?",
+        )
+        .map_err(|e| e.to_string())?;
 
-    let backlinks: Vec<Document> = stmt.query_map(params![target_id], |row| {
-        Ok(Document {
-            id: row.get(0)?,
-            doc_type: row.get(1)?,
-            title: row.get(2)?,
-            content_json: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
+    let backlinks: Vec<Document> = stmt
+        .query_map(params![target_id], |row| {
+            Ok(Document {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                title: row.get(2)?,
+                content_json: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     Ok(backlinks)
 }
@@ -440,17 +493,19 @@ fn get_journals(workspace_path: String) -> Result<Vec<JournalEntry>, String> {
         "SELECT id, type, title, content_json, created_at FROM documents WHERE type = 'journal' ORDER BY created_at DESC"
     ).map_err(|e| e.to_string())?;
 
-    let journals: Vec<JournalEntry> = stmt.query_map([], |row| {
-        Ok(JournalEntry {
-            id: row.get(0)?,
-            doc_type: row.get(1)?,
-            title: row.get(2)?,
-            content_json: row.get(3)?,
-            created_at: row.get(4)?,
+    let journals: Vec<JournalEntry> = stmt
+        .query_map([], |row| {
+            Ok(JournalEntry {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                title: row.get(2)?,
+                content_json: row.get(3)?,
+                created_at: row.get(4)?,
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     Ok(journals)
 }
@@ -484,7 +539,8 @@ fn get_or_create_today_journal(workspace_path: String) -> Result<Document, Strin
     conn.execute(
         "INSERT INTO documents (id, type, title, content_json) VALUES (?, 'journal', ?, ?)",
         params![&doc_id, &today_title, empty_content],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     get_document(workspace_path, doc_id)
 }
@@ -499,24 +555,71 @@ fn get_todos(workspace_path: String) -> Result<Vec<Todo>, String> {
     let db_path = get_db_path(&workspace_path);
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, document_id, text, is_completed, created_at FROM todos ORDER BY created_at"
-    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, document_id, text, is_completed, created_at FROM todos ORDER BY created_at",
+        )
+        .map_err(|e| e.to_string())?;
 
-    let todos: Vec<Todo> = stmt.query_map([], |row| {
-        let is_completed: i32 = row.get(3)?;
-        Ok(Todo {
-            id: row.get(0)?,
-            document_id: row.get(1)?,
-            text: row.get(2)?,
-            is_completed: is_completed != 0,
-            created_at: row.get(4)?,
+    let todos: Vec<Todo> = stmt
+        .query_map([], |row| {
+            let is_completed: i32 = row.get(3)?;
+            Ok(Todo {
+                id: row.get(0)?,
+                document_id: row.get(1)?,
+                text: row.get(2)?,
+                is_completed: is_completed != 0,
+                created_at: row.get(4)?,
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     Ok(todos)
+}
+
+const MAX_RECENT_WORKSPACES: usize = 5;
+
+#[tauri::command]
+fn get_recent_workspaces(app: tauri::AppHandle) -> Vec<String> {
+    let config_path = match app.path().app_data_dir().ok() {
+        Some(dir) => dir.join("config.json"),
+        None => return vec![],
+    };
+    let content = match std::fs::read_to_string(config_path).ok() {
+        Some(c) => c,
+        None => return vec![],
+    };
+    let json: serde_json::Value = match serde_json::from_str(&content).ok() {
+        Some(j) => j,
+        None => return vec![],
+    };
+    json.get("recent_workspaces")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn save_recent_workspace(app: tauri::AppHandle, workspace_path: String) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    let config_path = app_data_dir.join("config.json");
+
+    // Read existing list, deduplicate, prepend new path, cap at MAX
+    let mut recents = get_recent_workspaces(app);
+    recents.retain(|p| p != &workspace_path);
+    recents.insert(0, workspace_path);
+    recents.truncate(MAX_RECENT_WORKSPACES);
+
+    let json = serde_json::json!({ "recent_workspaces": recents });
+    std::fs::write(config_path, json.to_string()).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -536,7 +639,9 @@ pub fn run() {
             get_backlinks,
             get_journals,
             get_todos,
-            get_or_create_today_journal
+            get_or_create_today_journal,
+            get_recent_workspaces,
+            save_recent_workspace
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
