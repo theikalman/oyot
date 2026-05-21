@@ -1,10 +1,37 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { appStore, workspacePath, isLoading, currentDocument } from "../lib/stores/app";
     import type { IndexData, Document } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Editor from "../lib/components/Editor.svelte";
+
+    let recentWorkspaces = $state<string[]>([]);
+
+    async function initWorkspace(path: string) {
+        appStore.setLoading(true);
+        try {
+            await invoke("init_database", { workspacePath: path });
+            const indexData: IndexData = await invoke("get_all_documents", { workspacePath: path });
+            appStore.setWorkspacePath(path);
+            appStore.setDocuments(indexData.documents);
+            appStore.setLinks(indexData.links);
+            appStore.setAllLinks(indexData.all_links);
+            appStore.setTodos(indexData.todos);
+
+            const todayJournal: Document = await invoke("get_or_create_today_journal", { workspacePath: path });
+            appStore.addDocument(todayJournal);
+            appStore.setCurrentDocument(todayJournal);
+
+            await invoke("save_recent_workspace", { workspacePath: path });
+            recentWorkspaces = await invoke("get_recent_workspaces");
+        } catch (error) {
+            console.error("Failed to initialize workspace:", error);
+        } finally {
+            appStore.setLoading(false);
+        }
+    }
 
     async function openWorkspace() {
         const selected = await open({
@@ -14,28 +41,27 @@
         });
 
         if (selected && typeof selected === "string") {
-            appStore.setLoading(true);
-            try {
-                await invoke("init_database", { workspacePath: selected });
-                const indexData: IndexData = await invoke("get_all_documents", { workspacePath: selected });
-                appStore.setWorkspacePath(selected);
-                appStore.setDocuments(indexData.documents);
-                appStore.setLinks(indexData.links);
-                appStore.setAllLinks(indexData.all_links);
-                appStore.setTodos(indexData.todos);
-
-                const todayJournal: Document = await invoke("get_or_create_today_journal", { workspacePath: selected });
-                appStore.addDocument(todayJournal);
-                appStore.setCurrentDocument(todayJournal);
-            } catch (error) {
-                console.error("Failed to initialize database:", error);
-            } finally {
-                appStore.setLoading(false);
-            }
+            await initWorkspace(selected);
         }
     }
 
+    onMount(async () => {
+        try {
+            const recents: string[] = await invoke("get_recent_workspaces");
+            recentWorkspaces = recents;
+            if (recents.length > 0) {
+                await initWorkspace(recents[0]);
+            }
+        } catch (error) {
+            console.error("Failed to restore last workspace:", error);
+        }
+    });
+
     let activeDocument = $derived($currentDocument);
+
+    function workspaceName(path: string): string {
+        return path.split("/").filter(Boolean).pop() ?? path;
+    }
 </script>
 
 <main class="app">
@@ -43,13 +69,26 @@
         <div class="welcome">
             <h1>Welcome to Oyot</h1>
             <p>A lightweight personal knowledge management system</p>
-            <button class="open-workspace-btn" onclick={openWorkspace}>
-                Open Workspace
-            </button>
+            {#if recentWorkspaces.length > 0}
+                <div class="recent-list">
+                    <p class="recent-label">Recent workspaces</p>
+                    {#each recentWorkspaces as path}
+                        <button class="recent-item" onclick={() => initWorkspace(path)}>
+                            <span class="recent-name">{workspaceName(path)}</span>
+                            <span class="recent-path">{path}</span>
+                        </button>
+                    {/each}
+                </div>
+                <button class="browse-btn" onclick={openWorkspace}>Browse...</button>
+            {:else}
+                <button class="open-workspace-btn" onclick={openWorkspace}>
+                    Open Workspace
+                </button>
+            {/if}
         </div>
     {:else}
         <div class="workspace">
-            <Sidebar />
+            <Sidebar onSwitchWorkspace={initWorkspace} />
             <div class="main-content">
                 {#if activeDocument}
                     <Editor />
@@ -86,6 +125,7 @@
         flex-direction: column;
     }
 
+    /* ── Welcome screen ── */
     .welcome {
         flex: 1;
         display: flex;
@@ -102,7 +142,7 @@
         color: #333;
     }
 
-    .welcome p {
+    .welcome > p {
         margin: 0 0 32px 0;
         color: #666;
     }
@@ -121,6 +161,70 @@
         background: #0055aa;
     }
 
+    /* ── Recent list on welcome screen ── */
+    .recent-list {
+        width: 100%;
+        max-width: 420px;
+        margin-bottom: 16px;
+        text-align: left;
+    }
+
+    .recent-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        color: #999;
+        margin: 0 0 8px 0;
+        letter-spacing: 0.05em;
+    }
+
+    .recent-item {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        padding: 10px 12px;
+        margin-bottom: 4px;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        cursor: pointer;
+        text-align: left;
+    }
+
+    .recent-item:hover {
+        background: #e9f0fb;
+        border-color: #0066cc;
+    }
+
+    .recent-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .recent-path {
+        font-size: 11px;
+        color: #999;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .browse-btn {
+        padding: 8px 16px;
+        background: #f0f0f0;
+        color: #333;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+    }
+
+    .browse-btn:hover {
+        background: #e0e0e0;
+    }
+
+    /* ── Workspace layout ── */
     .workspace {
         flex: 1;
         display: flex;
@@ -142,6 +246,7 @@
         color: #999;
     }
 
+    /* ── Loading overlay ── */
     .loading-overlay {
         position: fixed;
         top: 0;
