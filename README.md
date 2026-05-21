@@ -4,11 +4,9 @@ A lightweight personal knowledge management app inspired by LogSeq, built with T
 
 ## Features
 
-- **Rich Text Editor**: Create and edit notes with Tiptap editor
-- **Task Lists**: Track TODO items with checkbox support
-- **Tables**: Create and manage tabular data in notes
-- **File Management**: Browse and manage your markdown files
-- **Wiki-style Linking**: Link between files using `[[File Title Here]]` syntax
+- **Simple**: Open the app, write. That is all, no need to organize anything manually.
+- **Task Lists**: List out all of your TODO list in one place even if you write it anywhere in your notes.
+- **Document Linking**: Track and index your linked notes. Easy to follow how your notes are tied to each other.
 
 ## Prerequisites
 
