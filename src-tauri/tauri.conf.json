@@ -35,14 +35,6 @@
     ],
     "iOS": {
       "developmentTeam": "${APPLE_DEVELOPMENT_TEAM}"
-    },
-    "android": {
-      "signingArguments": [
-        "--ks", "${ANDROID_SIGNING_KEY_PATH}",
-        "--ks-key-alias", "${KEY_ALIAS}",
-        "--ks-pass", "pass:${KEY_STORE_PASSWORD}",
-        "--key-pass", "pass:${KEY_PASSWORD}"
-      ]
     }
   }
 }

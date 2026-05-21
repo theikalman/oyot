@@ -84,18 +84,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Decode Android signing keystore
+      - name: Setup Android signing
         run: |
+          cd src-tauri/gen/android
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.KEY_STORE_PASSWORD }}" >> keystore.properties
           echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-          ANDROID_SIGNING_KEY_PATH: $RUNNER_TEMP/keystore.jks
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload Android APK to release
         uses: softprops/action-gh-release@v2
