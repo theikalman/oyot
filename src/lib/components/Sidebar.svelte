@@ -129,7 +129,7 @@
                     {#each filterJournals() as doc}
                         <li>
                             <button class="doc-btn" onclick={() => handleDocClick(doc)}>
-                                <span class="doc-type">📅</span>
+                                <span class="doc-type">•</span>
                                 {doc.title}
                             </button>
                         </li>
@@ -146,7 +146,7 @@
                     {#each filterNotes() as doc}
                         <li>
                             <button class="doc-btn" onclick={() => handleDocClick(doc)}>
-                                <span class="doc-type">📝</span>
+                                <span class="doc-type">•</span>
                                 {doc.title}
                             </button>
                         </li>
