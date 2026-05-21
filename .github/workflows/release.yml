@@ -8,6 +8,8 @@ on:
 
 jobs:
   desktop:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +56,8 @@ jobs:
           prerelease: false
 
   android:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,6 +106,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   ios:
+    permissions:
+      contents: write
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
