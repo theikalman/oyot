@@ -349,8 +349,9 @@
     .editor-content :global(h2) { font-size: 1.5em; margin: 0.83em 0; color: var(--text-primary); }
     .editor-content :global(h3) { font-size: 1.17em; margin: 1em 0; color: var(--text-primary); }
     .editor-content :global(p) { margin: 1em 0; }
-    .editor-content :global(ul), .editor-content :global(ol) { margin: 1em 0; padding-left: 2em; line-height: 1.0; }
-    .editor-content :global(ul li), .editor-content :global(ol li) { line-height: 1.0; }
+    .editor-content :global(ul), .editor-content :global(ol) { margin: 0.3em 0 !important; padding-left: 2em; line-height: 1.7 !important; }
+    .editor-content :global(ul li), .editor-content :global(ol li) { line-height: 1.7 !important; margin: 0 !important; }
+    .editor-content :global(ul li p), .editor-content :global(ol li p) { margin: 0 !important; line-height: 1.7 !important; }
     .editor-content :global(code) { background: var(--code-bg); color: var(--text-primary); padding: 2px 4px; border-radius: 3px; }
     .editor-content :global(pre) { background: var(--code-bg); color: var(--text-primary); padding: 16px; border-radius: 6px; overflow-x: auto; }
     .editor-content :global(blockquote) { border-left: 4px solid var(--border-light); margin: 1em 0; padding-left: 1em; color: var(--text-secondary); }
