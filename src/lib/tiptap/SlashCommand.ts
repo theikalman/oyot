@@ -4,6 +4,7 @@ import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type CommandSuggestion } from './CommandRegistry';
 import SlashSuggestionPopup from '../components/SlashSuggestionPopup.svelte';
 import { mount } from 'svelte';
+import { writable, type Writable } from 'svelte/store';
 
 interface PopupState {
     items: CommandSuggestion[];
@@ -44,6 +45,7 @@ export const SlashCommand = Extension.create({
                 render: () => {
                     let popup: HTMLElement | null = null;
                     let state: PopupState = { items: [], selectedIndex: 0 };
+                    let selectedIndexStore: Writable<number> = writable(0);
                     let savedEditor: Editor | null = null;
                     let savedRange: Range | null = null;
 
@@ -68,6 +70,7 @@ export const SlashCommand = Extension.create({
                         onStart: (props: SuggestionProps<CommandSuggestion>) => {
                             state.items = props.items as CommandSuggestion[];
                             state.selectedIndex = 0;
+                            selectedIndexStore.set(0);
                             savedEditor = props.editor;
                             savedRange = props.range;
 
@@ -90,7 +93,7 @@ export const SlashCommand = Extension.create({
                                             title: item.title,
                                             icon: item.icon
                                         })),
-                                        selectedIndex: state.selectedIndex,
+                                        selectedIndexStore,
                                         command: (item: { id: string; title: string; icon?: string }) => {
                                             const cmd = commandRegistry.getCommand(item.id);
                                             if (cmd && props.range) {
@@ -114,6 +117,7 @@ export const SlashCommand = Extension.create({
                         onUpdate: (props: SuggestionProps<CommandSuggestion>) => {
                             state.items = props.items as CommandSuggestion[];
                             state.selectedIndex = 0;
+                            selectedIndexStore.set(0);
                             savedEditor = props.editor;
                             savedRange = props.range;
 
@@ -136,7 +140,7 @@ export const SlashCommand = Extension.create({
                                             title: item.title,
                                             icon: item.icon
                                         })),
-                                        selectedIndex: state.selectedIndex,
+                                        selectedIndexStore,
                                         command: (item: { id: string; title: string; icon?: string }) => {
                                             const cmd = commandRegistry.getCommand(item.id);
                                             if (cmd && props.range) {
@@ -160,11 +164,13 @@ export const SlashCommand = Extension.create({
                         onKeyDown: (props: SuggestionKeyDownProps) => {
                             if (props.event.key === 'ArrowUp') {
                                 state.selectedIndex = (state.selectedIndex - 1 + state.items.length) % state.items.length;
+                                selectedIndexStore.set(state.selectedIndex);
                                 return true;
                             }
 
                             if (props.event.key === 'ArrowDown') {
                                 state.selectedIndex = (state.selectedIndex + 1) % state.items.length;
+                                selectedIndexStore.set(state.selectedIndex);
                                 return true;
                             }
 
@@ -192,6 +198,7 @@ export const SlashCommand = Extension.create({
                             }
                             popup = null;
                             state = { items: [], selectedIndex: 0 };
+                            selectedIndexStore.set(0);
                             savedEditor = null;
                             savedRange = null;
                         }
