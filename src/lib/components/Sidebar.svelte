@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { appStore, documents, allLinks, workspacePath } from '../stores/app';
-    import type { Document } from '../types';
+    import { appStore, documents, allLinks, workspacePath, theme } from '../stores/app';
+    import type { Document, Theme } from '../types';
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
 
@@ -33,6 +33,7 @@
     }
 
     let wsPath = $derived($workspacePath);
+    let currentTheme = $derived($theme);
 
     function workspaceName(path: string): string {
         return path.split("/").filter(Boolean).pop() ?? path;
@@ -85,6 +86,16 @@
         if (selected && typeof selected === "string") {
             appStore.reset();
             await onSwitchWorkspace(selected);
+        }
+    }
+
+    async function toggleTheme() {
+        const next: Theme = currentTheme === 'light' ? 'dark' : 'light';
+        appStore.setTheme(next);
+        try {
+            await invoke('save_theme', { theme: next });
+        } catch (error) {
+            console.error('Failed to save theme:', error);
         }
     }
 </script>
@@ -140,6 +151,13 @@
         <div class="sidebar-footer">
             <button class="switch-workspace-btn" onclick={openSwitchPicker}>
                 Switch Workspace
+            </button>
+            <button
+                class="theme-toggle-btn"
+                onclick={toggleTheme}
+                title={currentTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+            >
+                {currentTheme === 'light' ? '☾' : '☀'}
             </button>
         </div>
     {/if}
@@ -202,8 +220,8 @@
     .sidebar {
         width: 250px;
         min-width: 250px;
-        background: #f8f9fa;
-        border-right: 1px solid #e0e0e0;
+        background: var(--bg-secondary);
+        border-right: 1px solid var(--border-color);
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -217,7 +235,7 @@
 
     .sidebar-header {
         padding: 12px;
-        border-bottom: 1px solid #e0e0e0;
+        border-bottom: 1px solid var(--border-color);
         display: flex;
         align-items: center;
         gap: 8px;
@@ -235,13 +253,13 @@
         cursor: pointer;
         font-size: 14px;
         padding: 4px 8px;
-        color: #666;
+        color: var(--text-secondary);
         border-radius: 4px;
     }
 
     .toggle-btn:hover {
-        background: #e9ecef;
-        color: #333;
+        background: var(--bg-hover);
+        color: var(--text-primary);
     }
 
     .sidebar.collapsed .search-input {
@@ -251,9 +269,15 @@
     .search-input {
         width: 100%;
         padding: 8px 12px;
-        border: 1px solid #ddd;
+        border: 1px solid var(--border-light);
         border-radius: 4px;
         font-size: 14px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+    }
+
+    .search-input::placeholder {
+        color: var(--text-muted);
     }
 
     /* scrollable middle area */
@@ -269,7 +293,7 @@
     .sidebar-section h3 {
         font-size: 12px;
         text-transform: uppercase;
-        color: #666;
+        color: var(--text-secondary);
         margin: 0 0 8px 0;
         display: flex;
         align-items: center;
@@ -295,15 +319,15 @@
         cursor: pointer;
         border-radius: 4px;
         font-size: 14px;
-        color: #333;
+        color: var(--text-primary);
     }
 
     .doc-btn:hover, .link-btn:hover {
-        background: #e9ecef;
+        background: var(--bg-hover);
     }
 
     .link-btn {
-        color: #0066cc;
+        color: var(--accent-color);
         font-family: monospace;
     }
 
@@ -314,7 +338,7 @@
     .add-doc-btn {
         background: none;
         border: none;
-        color: #666;
+        color: var(--text-secondary);
         font-size: 18px;
         cursor: pointer;
         padding: 0 4px;
@@ -322,22 +346,25 @@
     }
 
     .add-doc-btn:hover {
-        color: #333;
+        color: var(--text-primary);
     }
 
-    /* ── Sidebar footer with Switch Workspace ── */
+    /* ── Sidebar footer ── */
     .sidebar-footer {
         flex-shrink: 0;
         padding: 12px;
-        border-top: 1px solid #e0e0e0;
+        border-top: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     .switch-workspace-btn {
-        width: 100%;
+        flex: 1;
         padding: 8px 12px;
         background: transparent;
-        color: #555;
-        border: 1px solid #d0d0d0;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
         border-radius: 6px;
         font-size: 13px;
         cursor: pointer;
@@ -345,9 +372,26 @@
     }
 
     .switch-workspace-btn:hover {
-        background: #e9ecef;
-        color: #333;
-        border-color: #bbb;
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        border-color: var(--border-light);
+    }
+
+    .theme-toggle-btn {
+        flex-shrink: 0;
+        padding: 8px 10px;
+        background: transparent;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        font-size: 16px;
+        cursor: pointer;
+        line-height: 1;
+    }
+
+    .theme-toggle-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
     }
 
     /* ── Modals ── */
@@ -365,11 +409,12 @@
     }
 
     .modal-content {
-        background: white;
+        background: var(--bg-primary);
         padding: 20px;
         border-radius: 8px;
         min-width: 300px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        color: var(--text-primary);
     }
 
     .picker-modal {
@@ -378,22 +423,28 @@
         min-width: unset;
         padding: 24px;
         border-radius: 10px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     }
 
     .modal-content h3 {
         margin: 0 0 12px 0;
         font-size: 16px;
-        color: #333;
+        color: var(--text-primary);
     }
 
     .modal-input {
         width: 100%;
         padding: 8px 12px;
-        border: 1px solid #ddd;
+        border: 1px solid var(--border-light);
         border-radius: 4px;
         font-size: 14px;
         box-sizing: border-box;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+    }
+
+    .modal-input::placeholder {
+        color: var(--text-muted);
     }
 
     .modal-actions {
@@ -404,7 +455,7 @@
 
     .modal-btn {
         padding: 6px 16px;
-        background: #007bff;
+        background: var(--btn-primary-bg);
         color: white;
         border: none;
         border-radius: 4px;
@@ -413,7 +464,7 @@
     }
 
     .modal-btn:hover {
-        background: #0056b3;
+        background: var(--btn-primary-hover);
     }
 
     /* ── Workspace picker modal ── */
@@ -432,8 +483,8 @@
         flex-direction: column;
         width: 100%;
         padding: 10px 12px;
-        background: #f8f9fa;
-        border: 1px solid #e0e0e0;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
         border-radius: 6px;
         cursor: pointer;
         text-align: left;
@@ -441,24 +492,24 @@
     }
 
     .picker-item:hover {
-        background: #e9f0fb;
-        border-color: #0066cc;
+        background: var(--accent-bg);
+        border-color: var(--accent-color);
     }
 
     .picker-item-current {
-        border-color: #0066cc;
-        background: #eef4ff;
+        border-color: var(--accent-color);
+        background: var(--bg-accent);
     }
 
     .picker-name {
         font-size: 14px;
         font-weight: 600;
-        color: #333;
+        color: var(--text-primary);
     }
 
     .picker-path {
         font-size: 11px;
-        color: #999;
+        color: var(--text-muted);
         margin-top: 2px;
         white-space: nowrap;
         overflow: hidden;
@@ -470,7 +521,7 @@
         top: 10px;
         right: 10px;
         font-size: 10px;
-        background: #0066cc;
+        background: var(--accent-color);
         color: white;
         padding: 2px 6px;
         border-radius: 10px;
@@ -479,7 +530,7 @@
     }
 
     .picker-empty {
-        color: #999;
+        color: var(--text-muted);
         font-size: 14px;
         margin: 0 0 16px 0;
     }
@@ -488,28 +539,28 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-top: 1px solid #eee;
+        border-top: 1px solid var(--border-color);
         padding-top: 16px;
     }
 
     .browse-btn {
         padding: 8px 16px;
-        background: #f0f0f0;
-        color: #333;
-        border: 1px solid #ccc;
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        border: 1px solid var(--border-light);
         border-radius: 6px;
         font-size: 14px;
         cursor: pointer;
     }
 
     .browse-btn:hover {
-        background: #e0e0e0;
+        background: var(--border-color);
     }
 
     .cancel-btn {
         padding: 8px 16px;
         background: transparent;
-        color: #666;
+        color: var(--text-secondary);
         border: none;
         border-radius: 6px;
         font-size: 14px;
@@ -517,7 +568,7 @@
     }
 
     .cancel-btn:hover {
-        color: #333;
-        background: #f0f0f0;
+        color: var(--text-primary);
+        background: var(--bg-hover);
     }
 </style>

@@ -261,20 +261,24 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        background: var(--bg-primary);
+        color: var(--text-primary);
     }
 
     .editor-header {
         padding: 16px 24px;
-        border-bottom: 1px solid #e0e0e0;
+        border-bottom: 1px solid var(--border-color);
         display: flex;
         align-items: center;
         gap: 16px;
+        background: var(--bg-primary);
     }
 
     .editor-header h1 {
         margin: 0;
         flex: 1;
         font-size: 24px;
+        color: var(--text-primary);
     }
 
     .header-actions {
@@ -285,35 +289,36 @@
 
     .saving-indicator {
         font-size: 12px;
-        color: #666;
+        color: var(--text-secondary);
     }
 
     .toolbar {
         display: flex;
         padding: 8px 16px;
-        background: #f8f9fa;
-        border-bottom: 1px solid #e0e0e0;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
         gap: 4px;
         flex-wrap: wrap;
     }
 
     .toolbar button {
         padding: 6px 10px;
-        background: white;
-        border: 1px solid #ddd;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-light);
         border-radius: 4px;
         cursor: pointer;
         font-size: 14px;
         min-width: 32px;
+        color: var(--text-primary);
     }
 
     .toolbar button:hover {
-        background: #e9ecef;
+        background: var(--bg-hover);
     }
 
     .separator {
         width: 1px;
-        background: #ddd;
+        background: var(--border-light);
         margin: 0 4px;
     }
 
@@ -321,37 +326,40 @@
         flex: 1;
         padding: 24px;
         overflow-y: auto;
+        background: var(--bg-primary);
+        color: var(--text-primary);
     }
 
     .editor-content :global(.tiptap) {
         outline: none;
         min-height: 100%;
+        color: var(--text-primary);
     }
 
     .editor-content :global(.tiptap p.is-editor-empty:first-child::before) {
         content: attr(data-placeholder);
         float: left;
-        color: #adb5bd;
+        color: var(--text-muted);
         pointer-events: none;
         height: 0;
     }
 
-    .editor-content :global(h1) { font-size: 2em; margin: 0.67em 0; }
-    .editor-content :global(h2) { font-size: 1.5em; margin: 0.83em 0; }
-    .editor-content :global(h3) { font-size: 1.17em; margin: 1em 0; }
+    .editor-content :global(h1) { font-size: 2em; margin: 0.67em 0; color: var(--text-primary); }
+    .editor-content :global(h2) { font-size: 1.5em; margin: 0.83em 0; color: var(--text-primary); }
+    .editor-content :global(h3) { font-size: 1.17em; margin: 1em 0; color: var(--text-primary); }
     .editor-content :global(p) { margin: 1em 0; }
     .editor-content :global(ul), .editor-content :global(ol) { margin: 1em 0; padding-left: 2em; }
-    .editor-content :global(code) { background: #f4f4f4; padding: 2px 4px; border-radius: 3px; }
-    .editor-content :global(pre) { background: #f4f4f4; padding: 16px; border-radius: 6px; overflow-x: auto; }
-    .editor-content :global(blockquote) { border-left: 4px solid #ddd; margin: 1em 0; padding-left: 1em; color: #666; }
-    .editor-content :global(a) { color: #0066cc; text-decoration: underline; }
+    .editor-content :global(code) { background: var(--code-bg); color: var(--text-primary); padding: 2px 4px; border-radius: 3px; }
+    .editor-content :global(pre) { background: var(--code-bg); color: var(--text-primary); padding: 16px; border-radius: 6px; overflow-x: auto; }
+    .editor-content :global(blockquote) { border-left: 4px solid var(--border-light); margin: 1em 0; padding-left: 1em; color: var(--text-secondary); }
+    .editor-content :global(a) { color: var(--accent-color); text-decoration: underline; }
 
     .editor-content :global(.document-link) {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        background-color: #e8f0fe;
-        color: #1a73e8;
+        background-color: var(--accent-bg);
+        color: var(--accent-color);
         padding: 2px 8px;
         border-radius: 4px;
         font-size: 14px;
@@ -361,7 +369,7 @@
     }
 
     .editor-content :global(.document-link:hover) {
-        background-color: #d2e3fc;
+        background-color: var(--accent-bg-hover);
     }
 
     .editor-content :global(.document-link-icon) {
@@ -405,7 +413,7 @@
         margin-top: 4px;
         width: 18px;
         height: 18px;
-        accent-color: #0066cc;
+        accent-color: var(--accent-color);
         cursor: pointer;
     }
 
@@ -416,13 +424,14 @@
     }
 
     .editor-content :global(th), .editor-content :global(td) {
-        border: 1px solid #ddd;
+        border: 1px solid var(--border-light);
         padding: 8px;
         text-align: left;
+        color: var(--text-primary);
     }
 
     .editor-content :global(th) {
-        background: #f8f9fa;
+        background: var(--bg-secondary);
     }
 
     .empty-state {
@@ -430,6 +439,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #999;
+        color: var(--text-muted);
     }
 </style>

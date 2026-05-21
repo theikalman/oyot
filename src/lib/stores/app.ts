@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Document, DocumentLink, Todo } from '../types';
+import type { Document, DocumentLink, Todo, Theme } from '../types';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
@@ -9,7 +9,8 @@ function createAppStore() {
         allLinks: [] as string[],
         todos: [] as Todo[],
         currentDocument: null as Document | null,
-        isLoading: false
+        isLoading: false,
+        theme: 'light' as Theme
     });
 
     return {
@@ -21,6 +22,7 @@ function createAppStore() {
         setTodos: (todos: Todo[]) => update(s => ({ ...s, todos })),
         setCurrentDocument: (doc: Document | null) => update(s => ({ ...s, currentDocument: doc })),
         setLoading: (loading: boolean) => update(s => ({ ...s, isLoading: loading })),
+        setTheme: (theme: Theme) => update(s => ({ ...s, theme })),
         updateDocumentInList: (updatedDoc: Document) => update(s => ({
             ...s,
             documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d),
@@ -50,7 +52,8 @@ function createAppStore() {
             allLinks: [],
             todos: [],
             currentDocument: null,
-            isLoading: false
+            isLoading: false,
+            theme: 'light'
         })
     };
 }
@@ -64,3 +67,4 @@ export const links = derived(appStore, $s => $s.links);
 export const todos = derived(appStore, $s => $s.todos);
 export const workspacePath = derived(appStore, $s => $s.workspacePath);
 export const isLoading = derived(appStore, $s => $s.isLoading);
+export const theme = derived(appStore, $s => $s.theme);
