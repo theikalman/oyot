@@ -86,11 +86,10 @@ jobs:
 
       - name: Setup Android signing
         run: |
-          cd src-tauri/gen/android
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" > keystore.properties
-          echo "password=${{ secrets.KEY_STORE_PASSWORD }}" >> keystore.properties
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
-          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" > src-tauri/gen/android/keystore.properties
+          echo "password=${{ secrets.KEY_STORE_PASSWORD }}" >> src-tauri/gen/android/keystore.properties
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | tr -d '\n' | base64 --decode > $RUNNER_TEMP/keystore.jks
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> src-tauri/gen/android/keystore.properties
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
