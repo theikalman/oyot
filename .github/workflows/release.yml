@@ -7,53 +7,53 @@ on:
   workflow_dispatch:
 
 jobs:
-  desktop:
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: windows
-          - os: ubuntu-latest
-            platform: linux
-          # - os: macos-latest
-          #   platform: mac
-
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux system dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Oyot ${{ github.ref_name }}"
-          releaseBody: "Download the appropriate installer for your platform below."
-          releaseDraft: true
-          prerelease: false
+  # desktop:
+  #   permissions:
+  #     contents: write
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: windows-latest
+  #           platform: windows
+  #         - os: ubuntu-latest
+  #           platform: linux
+  #         # - os: macos-latest
+  #         #   platform: mac
+  #
+  #   runs-on: ${{ matrix.os }}
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 20
+  #         cache: npm
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #
+  #     - name: Install Linux system dependencies
+  #       if: matrix.os == 'ubuntu-latest'
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y \
+  #           libwebkit2gtk-4.1-dev \
+  #           libappindicator3-dev \
+  #           librsvg2-dev \
+  #           patchelf
+  #
+  #     - name: Install frontend dependencies
+  #       run: npm ci
+  #
+  #     - uses: tauri-apps/tauri-action@v0
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       with:
+  #         tagName: ${{ github.ref_name }}
+  #         releaseName: "Oyot ${{ github.ref_name }}"
+  #         releaseBody: "Download the appropriate installer for your platform below."
+  #         releaseDraft: true
+  #         prerelease: false
 
   android:
     permissions:
