@@ -44,6 +44,8 @@ export const SlashCommand = Extension.create({
                 render: () => {
                     let popup: HTMLElement | null = null;
                     let state: PopupState = { items: [], selectedIndex: 0 };
+                    let savedEditor: Editor | null = null;
+                    let savedRange: Range | null = null;
 
                     return {
                         onBeforeStart: (props: SuggestionProps<CommandSuggestion>) => {
@@ -66,6 +68,8 @@ export const SlashCommand = Extension.create({
                         onStart: (props: SuggestionProps<CommandSuggestion>) => {
                             state.items = props.items as CommandSuggestion[];
                             state.selectedIndex = 0;
+                            savedEditor = props.editor;
+                            savedRange = props.range;
 
                             const rect = props.clientRect?.();
                             if (rect && popup) {
@@ -110,6 +114,8 @@ export const SlashCommand = Extension.create({
                         onUpdate: (props: SuggestionProps<CommandSuggestion>) => {
                             state.items = props.items as CommandSuggestion[];
                             state.selectedIndex = 0;
+                            savedEditor = props.editor;
+                            savedRange = props.range;
 
                             const rect = props.clientRect?.();
                             if (rect && popup) {
@@ -165,12 +171,13 @@ export const SlashCommand = Extension.create({
                             if (props.event.key === 'Enter') {
                                 if (state.items[state.selectedIndex]) {
                                     const cmd = commandRegistry.getCommand(state.items[state.selectedIndex].id);
-                                    if (cmd && props.range) {
+                                    const range = props.range ?? savedRange;
+                                    if (cmd && savedEditor && range) {
                                         cmd.onSelect({
-                                            editor: props.view.state.selection.empty ? props.view.state.doc.resolve(props.range.from).parent : props.view.state.selection.$from.node(-1),
-                                            range: props.range,
+                                            editor: savedEditor,
+                                            range,
                                             props: {}
-                                        } as any);
+                                        });
                                     }
                                 }
                                 return true;
@@ -185,6 +192,8 @@ export const SlashCommand = Extension.create({
                             }
                             popup = null;
                             state = { items: [], selectedIndex: 0 };
+                            savedEditor = null;
+                            savedRange = null;
                         }
                     };
                 }
