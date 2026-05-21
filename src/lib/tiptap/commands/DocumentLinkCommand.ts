@@ -25,6 +25,8 @@ let currentEditor: Editor | null = null;
 let currentRange: Range | null = null;
 let documentPopupComponent: SvelteComponentInstance | null = null;
 let documentPopup: HTMLElement | null = null;
+let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+let clickOutsideHandler: ((e: MouseEvent) => void) | null = null;
 
 export function registerDocumentLinkCommand(editor: Editor): void {
     const command: SlashCommand = {
@@ -43,6 +45,9 @@ export function registerDocumentLinkCommand(editor: Editor): void {
             if (rect) {
                 showDocumentSuggestionPopup(rect);
             }
+
+            // Exit the slash suggestion so its popup is removed from the DOM
+            exitSuggestion((props.editor as Editor).view);
         }
     };
 
@@ -72,6 +77,28 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
     documentPopup.style.zIndex = '1001';
 
     document.body.appendChild(documentPopup);
+
+    // Escape key closes the document popup
+    keydownHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeDocumentPopup();
+        }
+    };
+    document.addEventListener('keydown', keydownHandler);
+
+    // Click outside closes the document popup (defer by one tick so the
+    // click that triggered the popup doesn't immediately close it)
+    clickOutsideHandler = (e: MouseEvent) => {
+        if (documentPopup && !documentPopup.contains(e.target as Node)) {
+            closeDocumentPopup();
+        }
+    };
+    setTimeout(() => {
+        if (clickOutsideHandler) {
+            document.addEventListener('mousedown', clickOutsideHandler);
+        }
+    }, 0);
 
     let selectedIndex = 0;
     let items: DocumentSuggestionItem[] = [];
@@ -112,6 +139,14 @@ function handleDocumentSelect(item: DocumentSuggestionItem): void {
 }
 
 function closeDocumentPopup(): void {
+    if (keydownHandler) {
+        document.removeEventListener('keydown', keydownHandler);
+        keydownHandler = null;
+    }
+    if (clickOutsideHandler) {
+        document.removeEventListener('mousedown', clickOutsideHandler);
+        clickOutsideHandler = null;
+    }
     if (documentPopup && documentPopup.parentNode) {
         documentPopup.parentNode.removeChild(documentPopup);
     }
