@@ -383,11 +383,12 @@
     .editor-content :global(ul[data-type="taskList"]) {
         list-style: none;
         padding-left: 0;
+        margin: 0;
     }
 
     .editor-content :global(ul[data-type="taskList"] > li) {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 4px;
         padding: 1px 0;
     }
