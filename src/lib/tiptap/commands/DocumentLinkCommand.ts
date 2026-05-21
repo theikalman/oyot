@@ -41,7 +41,12 @@ export function registerDocumentLinkCommand(editor: Editor): void {
             currentEditor = props.editor as Editor;
             currentRange = props.range;
 
+            // Capture rect before deleting the text (position changes after deletion)
             const rect = getAnchorClientRect(props.editor as Editor, props.range);
+
+            // Remove the typed slash command text (e.g. "/doc") from the editor immediately
+            (props.editor as Editor).chain().focus().deleteRange(props.range).run();
+
             if (rect) {
                 showDocumentSuggestionPopup(rect);
             }
@@ -122,10 +127,9 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
 }
 
 function handleDocumentSelect(item: DocumentSuggestionItem): void {
-    if (currentEditor && currentRange) {
+    if (currentEditor) {
         currentEditor.chain()
             .focus()
-            .deleteRange(currentRange)
             .insertContent({
                 type: 'documentLink',
                 attrs: {
