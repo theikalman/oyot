@@ -33,8 +33,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "iOS": {
-      "developmentTeam": "${APPLE_DEVELOPMENT_TEAM}"
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }
