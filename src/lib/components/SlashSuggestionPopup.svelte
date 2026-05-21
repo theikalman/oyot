@@ -1,18 +1,20 @@
 <script lang="ts">
+    import type { Writable } from 'svelte/store';
+
     interface Props {
         items: Array<{ id: string; title: string; icon?: string }>;
-        selectedIndex: number;
+        selectedIndexStore: Writable<number>;
         command: (item: { id: string; title: string; icon?: string }) => void;
         onClose: () => void;
     }
 
-    let { items = $bindable([]), selectedIndex = $bindable(0), command, onClose }: Props = $props();
+    let { items, selectedIndexStore, command, onClose }: Props = $props();
 
     let listElement: HTMLUListElement;
 
     $effect(() => {
-        if (listElement && selectedIndex >= 0) {
-            const selectedItem = listElement.children[selectedIndex] as HTMLElement;
+        if (listElement && $selectedIndexStore >= 0) {
+            const selectedItem = listElement.children[$selectedIndexStore] as HTMLElement;
             if (selectedItem) {
                 selectedItem.scrollIntoView({ block: 'nearest' });
             }
@@ -28,10 +30,10 @@
             {#each items as item, index}
                 <li
                     class="suggestion-item"
-                    class:selected={index === selectedIndex}
+                    class:selected={index === $selectedIndexStore}
                     role="option"
-                    aria-selected={index === selectedIndex}
-                    onmouseenter={() => { selectedIndex = index; }}
+                    aria-selected={index === $selectedIndexStore}
+                    onmouseenter={() => { selectedIndexStore.set(index); }}
                     onclick={() => command(item)}
                     onkeydown={(e) => { if (e.key === 'Enter') command(item); }}
                 >

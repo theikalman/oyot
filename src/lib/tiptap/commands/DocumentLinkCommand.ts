@@ -3,16 +3,10 @@ import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 import SlashSuggestionPopup from '../../components/SlashSuggestionPopup.svelte';
 import { mount } from 'svelte';
-import { get } from 'svelte/store';
+import { get, writable, type Writable } from 'svelte/store';
 import { documents as documentsStore } from '../../stores/app';
 import type { Document } from '../../types';
 import { exitSuggestion } from '@tiptap/suggestion';
-
-interface SvelteComponentInstance {
-    $set?: (props: Record<string, unknown>) => void;
-    $on?: (type: string, callback: (e: any) => void) => () => void;
-    $destroy?: () => void;
-}
 
 interface DocumentSuggestionItem {
     id: string;
@@ -23,10 +17,12 @@ interface DocumentSuggestionItem {
 
 let currentEditor: Editor | null = null;
 let currentRange: Range | null = null;
-let documentPopupComponent: SvelteComponentInstance | null = null;
+let documentPopupComponent: unknown | null = null;
 let documentPopup: HTMLElement | null = null;
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 let clickOutsideHandler: ((e: MouseEvent) => void) | null = null;
+let popupItems: DocumentSuggestionItem[] = [];
+let popupSelectedIndexStore: Writable<number> = writable(0);
 
 export function registerDocumentLinkCommand(editor: Editor): void {
     const command: SlashCommand = {
@@ -83,14 +79,32 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
 
     document.body.appendChild(documentPopup);
 
-    // Escape key closes the document popup
+    // Escape / ArrowUp / ArrowDown / Enter navigation for the document popup.
+    // Deferred by one tick so the Enter key that opened this popup (still
+    // propagating up to `document`) doesn't immediately select an item.
     keydownHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             e.preventDefault();
             closeDocumentPopup();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            popupSelectedIndexStore.update(i => (i - 1 + popupItems.length) % popupItems.length);
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            popupSelectedIndexStore.update(i => (i + 1) % popupItems.length);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            const idx = get(popupSelectedIndexStore);
+            if (popupItems[idx]) {
+                handleDocumentSelect(popupItems[idx]);
+            }
         }
     };
-    document.addEventListener('keydown', keydownHandler);
+    setTimeout(() => {
+        if (keydownHandler) {
+            document.addEventListener('keydown', keydownHandler);
+        }
+    }, 0);
 
     // Click outside closes the document popup (defer by one tick so the
     // click that triggered the popup doesn't immediately close it)
@@ -105,7 +119,6 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
         }
     }, 0);
 
-    let selectedIndex = 0;
     let items: DocumentSuggestionItem[] = [];
 
     const docs = get(documentsStore);
@@ -115,15 +128,18 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
         icon: '📄'
     }));
 
+    popupItems = items;
+    popupSelectedIndexStore = writable(0);
+
     documentPopupComponent = mount(SlashSuggestionPopup, {
         target: documentPopup,
         props: {
             items,
-            selectedIndex,
+            selectedIndexStore: popupSelectedIndexStore,
             command: handleDocumentSelect,
             onClose: closeDocumentPopup
         }
-    }) as any;
+    });
 }
 
 function handleDocumentSelect(item: DocumentSuggestionItem): void {
