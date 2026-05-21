@@ -10,7 +10,7 @@
 
     let { items, selectedIndexStore, command, onClose }: Props = $props();
 
-    let listElement: HTMLUListElement;
+    let listElement: HTMLUListElement | undefined = $state();
 
     $effect(() => {
         if (listElement && $selectedIndexStore >= 0) {
@@ -102,14 +102,6 @@
         font-size: 14px;
         font-weight: 500;
         color: var(--text-primary);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .item-description {
-        font-size: 12px;
-        color: var(--text-secondary);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
