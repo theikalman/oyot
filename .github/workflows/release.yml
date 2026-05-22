@@ -87,32 +87,28 @@ jobs:
       - name: Setup Android signing
         run: |
           echo "=== Secret length ==="
-          echo "${#ANDROID_SIGNING_KEY}"
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | wc -c
           KEY_FILE="$RUNNER_TEMP/keystore.jks"
           P12_FILE="$RUNNER_TEMP/signing-key.p12"
-          echo "$ANDROID_SIGNING_KEY" | base64 -d > "$P12_FILE"
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 -d > "$P12_FILE"
           echo "=== Decoded file size ==="
           stat --printf="%s" "$P12_FILE"
           echo ""
           if [ ! -s "$P12_FILE" ]; then
             echo "ERROR: Decoded signing key is empty"
             echo "=== Raw secret (first 20 chars) ==="
-            echo "${ANDROID_SIGNING_KEY:0:20}"
+            echo "${{ secrets.ANDROID_SIGNING_KEY }}" | head -c 20
             exit 1
           fi
           keytool -importkeystore -srckeystore "$P12_FILE" -srcstoretype PKCS12 \
             -destkeystore "$KEY_FILE" -deststoretype JKS \
-            -srcstorepass "$KEY_STORE_PASSWORD" \
-            -deststorepass "$KEY_STORE_PASSWORD" \
-            -srcalias "$KEY_ALIAS" -destalias "$KEY_ALIAS" \
+            -srcstorepass "${{ secrets.KEY_STORE_PASSWORD }}" \
+            -deststorepass "${{ secrets.KEY_STORE_PASSWORD }}" \
+            -srcalias "${{ secrets.KEY_ALIAS }}" -destalias "${{ secrets.KEY_ALIAS }}" \
             -noprompt
-          echo "keyAlias=$KEY_ALIAS" > src-tauri/gen/android/keystore.properties
-          echo "password=$KEY_STORE_PASSWORD" >> src-tauri/gen/android/keystore.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" > src-tauri/gen/android/keystore.properties
+          echo "password=${{ secrets.KEY_STORE_PASSWORD }}" >> src-tauri/gen/android/keystore.properties
           echo "storeFile=$KEY_FILE" >> src-tauri/gen/android/keystore.properties
-        env:
-          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
