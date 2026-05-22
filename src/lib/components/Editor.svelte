@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from "@tauri-apps/api/core";
+    import { listen } from "@tauri-apps/api/event";
     import { appStore, currentDocument, workspacePath, documents } from '../stores/app';
     import type { Document, DocumentSummary } from '../types';
     import { Editor } from '@tiptap/core';
@@ -16,11 +17,13 @@
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
     import { SlashCommand } from '../tiptap/SlashCommand';
-import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
-import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '../tiptap';
+    import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
+    import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '../tiptap';
     import { ResizableImage } from '../tiptap/extensions/ResizableImage';
     import { ImageExtension } from '../tiptap/extensions/ImageExtension';
     import { Extension } from '@tiptap/core';
+    import { LoroApp, bytesToJson } from '../loro/loroApp';
+    import { TiptapBinding, createInitialContent, isEmptyContent } from '../loro/tiptapBinding';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -36,6 +39,8 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
 
     let editorElement = $state<HTMLDivElement>();
     let editor: EditorType | null = null;
+    let loroApp: LoroApp | null = null;
+    let tiptapBinding: TiptapBinding | null = null;
     let isSaving = $state(false);
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
     let previousDocId = $state<string | null>(null);
@@ -43,6 +48,7 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
     let keyboardOpen = $state(false);
     let keyboardHeight = $state(0);
     let initialViewportHeight = $state(0);
+    let unlistenSyncEvent: (() => void) | null = null;
 
     let wsPath = $derived($workspacePath);
     let current = $derived($currentDocument);
@@ -58,17 +64,35 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         }
     }
 
-    onMount(() => {
+    async function initLoro() {
+        if (!loroApp) {
+            loroApp = new LoroApp();
+            await loroApp.init();
+        }
+    }
+
+    onMount(async () => {
         window.addEventListener('openDocument', handleOpenDocument);
         initialViewportHeight = window.innerHeight;
         window.visualViewport?.addEventListener('resize', handleViewportChange);
         window.visualViewport?.addEventListener('scroll', handleViewportChange);
+
+        await initLoro();
+
+        unlistenSyncEvent = await listen('sync-received', async (event) => {
+            console.log('[Editor] Received sync event:', event);
+            const docId = (event.payload as { docId?: string })?.docId;
+            if (docId && docId === current?.id) {
+                await reloadCurrentDocument();
+            }
+        });
     });
 
     onDestroy(() => {
         window.removeEventListener('openDocument', handleOpenDocument);
         window.visualViewport?.removeEventListener('resize', handleViewportChange);
         window.visualViewport?.removeEventListener('scroll', handleViewportChange);
+        unlistenSyncEvent?.();
     });
 
     function handleViewportChange() {
@@ -78,40 +102,34 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         keyboardHeight = keyboardOpen ? initialViewportHeight - vp.height : 0;
     }
 
-    function createInitialContent(title: string): any {
-        return {
-            type: 'doc',
-            content: [
-                {
-                    type: 'heading',
-                    attrs: { level: 1 },
-                    content: [{ type: 'text', text: title }]
-                },
-                {
-                    type: 'paragraph',
-                    content: []
-                }
-            ]
-        };
-    }
-
-    function bytesToJson(data: number[]): string {
-        return new TextDecoder().decode(new Uint8Array(data));
+    async function reloadCurrentDocument() {
+        if (!current?.id) return;
+        try {
+            const doc: Document = await invoke('get_document', { docId: current.id });
+            appStore.setCurrentDocument(doc);
+        } catch (error) {
+            console.error('[Editor] Failed to reload document:', error);
+        }
     }
 
     function initEditor(content: string, title: string) {
         if (editor) {
             editor.destroy();
         }
+        if (tiptapBinding) {
+            tiptapBinding.destroy();
+            tiptapBinding = null;
+        }
 
-        let initialContent: any;
+        let initialContent: object;
         try {
-            initialContent = JSON.parse(content);
-            if (!initialContent.content || initialContent.content.length === 0) {
-                initialContent = createInitialContent(title);
+            if (isEmptyContent(content)) {
+                initialContent = createInitialContent(title) as object;
+            } else {
+                initialContent = JSON.parse(content);
             }
         } catch {
-            initialContent = createInitialContent(title);
+            initialContent = createInitialContent(title) as object;
         }
 
         const ed = new Editor({
@@ -155,7 +173,7 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
                     clearTimeout(saveTimeout);
                 }
                 saveTimeout = setTimeout(() => {
-                    if (current && wsPath) {
+                    if (current && wsPath && loroApp && tiptapBinding) {
                         saveContent();
                     }
                 }, 1000);
@@ -163,6 +181,13 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         });
 
         editor = ed;
+
+        if (loroApp) {
+            tiptapBinding = new TiptapBinding({
+                editor: ed,
+                loroApp: loroApp
+            });
+        }
 
         ed.view.dom.addEventListener('click', (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -196,24 +221,25 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
     }
 
     async function saveContent() {
-        if (!editor || !current || !wsPath) return;
+        if (!editor || !current || !wsPath || !loroApp) return;
 
         isSaving = true;
         try {
-            const content = JSON.stringify(editor.getJSON());
-            const encoder = new TextEncoder();
-            const crdtState = Array.from(encoder.encode(content));
-            const updatedDoc: Document = await invoke('update_document', {
+            const update = loroApp.getUpdate();
+            const crdtState = Array.from(update);
+
+            const updatedDoc: Document = await invoke('save_crdt_update', {
                 docId: current.id,
-                title: current.title,
-                crdtState
+                update: crdtState
             });
+
+            const metadata = loroApp.getMetadata();
             const summary: DocumentSummary = {
                 id: updatedDoc.id,
                 doc_type: updatedDoc.doc_type,
-                title: updatedDoc.title,
-                todo_count: 0,
-                completed_todo_count: 0,
+                title: metadata.title || updatedDoc.title,
+                todo_count: metadata.todo_count,
+                completed_todo_count: metadata.completed_todo_count,
                 created_at: updatedDoc.created_at,
                 updated_at: updatedDoc.updated_at
             };
@@ -235,24 +261,29 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
                 editor.destroy();
                 editor = null;
             }
+            if (tiptapBinding) {
+                tiptapBinding.destroy();
+                tiptapBinding = null;
+            }
             return;
         }
 
-        if (previousDocId && previousDocId !== current.id && hasUnsavedChanges && wsPath && editor) {
+        if (previousDocId && previousDocId !== current.id && hasUnsavedChanges && wsPath && editor && loroApp) {
             const prevDoc = docs.find((d: DocumentSummary) => d.id === previousDocId);
+            const loroRef = loroApp;
             if (prevDoc) {
-                const content = JSON.stringify(editor.getJSON());
-                const encoder = new TextEncoder();
-                const crdtState = Array.from(encoder.encode(content));
-                invoke('update_document', {
+                const update = loroRef.getUpdate();
+                const crdtState = Array.from(update);
+                invoke('save_crdt_update', {
                     docId: prevDoc.id,
-                    title: prevDoc.title,
-                    crdtState
+                    update: crdtState
                 }).then(() => {
+                    const metadata = loroRef.getMetadata();
                     const summary: DocumentSummary = {
                         ...prevDoc,
-                        todo_count: 0,
-                        completed_todo_count: 0
+                        title: metadata.title || prevDoc.title,
+                        todo_count: metadata.todo_count,
+                        completed_todo_count: metadata.completed_todo_count
                     };
                     appStore.updateDocumentInList(summary);
                 }).catch(err => console.error('Failed to save previous document:', err));
@@ -261,13 +292,27 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
 
         previousDocId = current.id;
         hasUnsavedChanges = false;
-        const contentJson = bytesToJson(current.crdt_state);
-        initEditor(contentJson, current.title);
+        const currentLoro = loroApp;
+        if (currentLoro) {
+            const crdtState = new Uint8Array(current.crdt_state);
+            currentLoro.loadDocument(crdtState);
+            const content = currentLoro.getJsonContent();
+            initEditor(content, current.title);
+        } else {
+            const contentJson = bytesToJson(current.crdt_state);
+            initEditor(contentJson, current.title);
+        }
     });
 
     onDestroy(() => {
         if (editor) {
             editor.destroy();
+        }
+        if (tiptapBinding) {
+            tiptapBinding.destroy();
+        }
+        if (loroApp) {
+            loroApp.destroy();
         }
         if (saveTimeout) {
             clearTimeout(saveTimeout);

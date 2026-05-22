@@ -1,11 +1,13 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
+    import { listen } from "@tauri-apps/api/event";
     import { open } from "@tauri-apps/plugin-dialog";
-    import { appStore, workspacePath, isLoading, currentDocument, theme } from "../lib/stores/app";
+    import { appStore, workspacePath, isLoading, currentDocument, theme, syncStore } from "../lib/stores/app";
     import type { IndexData, Document, DocumentSummary, Theme } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Editor from "../lib/components/Editor.svelte";
+    import SyncStatus from "../lib/components/SyncStatus.svelte";
 
     let recentWorkspaces = $state<string[]>([]);
 
@@ -118,6 +120,9 @@
         <div class="workspace">
             <Sidebar onSwitchWorkspace={initWorkspace} />
             <div class="main-content">
+                <div class="sync-status-container">
+                    <SyncStatus />
+                </div>
                 {#if activeDocument}
                     <Editor />
                 {:else}
@@ -309,6 +314,13 @@
         flex-direction: column;
         overflow: hidden;
         background: var(--bg-primary);
+    }
+
+    .sync-status-container {
+        display: flex;
+        justify-content: flex-end;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border-color);
     }
 
     .empty-state {
