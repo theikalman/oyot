@@ -18,6 +18,17 @@ pub enum SyncMessage {
     DocSyncComplete {
         doc_id: String,
     },
+    RequestBlob {
+        hash: String,
+    },
+    SendBlob {
+        hash: String,
+        data: Vec<u8>,
+        mime_type: String,
+    },
+    BlobReceived {
+        hash: String,
+    },
 }
 
 impl SyncMessage {

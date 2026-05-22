@@ -67,21 +67,14 @@ export async function insertImageFromFile(editor: Editor): Promise<void> {
 
         if (!validateFileSize(blob)) return;
 
-        const wsPath = get(workspacePath);
-        if (!wsPath) {
-            console.error('Workspace path not available');
-            return;
-        }
-
-        const filename = filePath.split('/').pop() ?? filePath.split('\\').pop() ?? 'image.png';
         const base64 = arrayBufferToBase64(fileContent);
 
-        const relativePath: string = await invoke('save_image', {
+        const hash: string = await invoke('save_image', {
             imageData: base64,
-            filename
+            mimeType
         });
 
-        insertImageNode(editor, wsPath, relativePath);
+        insertImageNode(editor, hash, mimeType);
     } catch (error) {
         console.error('Failed to insert image:', error);
         alert('Failed to insert image. Please try again.');
@@ -92,34 +85,38 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
     if (!validateFileSize(blob)) return;
 
     try {
-        const wsPath = get(workspacePath);
-        if (!wsPath) {
-            console.error('Workspace path not available');
-            return;
-        }
-
         const arrayBuffer = await blob.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
         const base64 = arrayBufferToBase64(uint8Array);
 
-        const ext = blob.type.split('/')[1] || 'png';
-        const filename = `${Date.now()}.${ext}`;
-
-        const relativePath: string = await invoke('save_image', {
+        const hash: string = await invoke('save_image', {
             imageData: base64,
-            filename
+            mimeType: blob.type
         });
 
-        insertImageNode(editor, wsPath, relativePath);
+        insertImageNode(editor, hash, blob.type);
     } catch (error) {
         console.error('Failed to insert image:', error);
     }
 }
 
-function insertImageNode(editor: Editor, workspacePath: string, relativePath: string): void {
-    const fullPath = `${workspacePath}/${relativePath}`;
-    const assetUrl = convertFileSrc(fullPath);
-    editor.chain().focus().setImage({ src: assetUrl }).run();
+async function insertImageNode(editor: Editor, hash: string, mimeType: string): Promise<void> {
+    const localUrl = await invoke<string | null>('get_local_blob_url', { hash });
+
+    if (localUrl) {
+        const assetUrl = convertFileSrc(localUrl);
+        editor.chain().focus().setImage({
+            src: assetUrl,
+            alt: `oyot:${hash}`
+        }).run();
+    } else {
+        editor.chain().focus().setImage({
+            src: `oyot-attachment://${hash}`,
+            alt: `oyot:${hash}`
+        }).run();
+
+        invoke('request_attachment', { hash }).catch(console.error);
+    }
 }
 
 function validateFileSize(blob: Blob): boolean {
@@ -128,4 +125,16 @@ function validateFileSize(blob: Blob): boolean {
         return false;
     }
     return true;
+}
+
+export async function resolveAttachmentUrl(hash: string): Promise<string | null> {
+    try {
+        const localUrl = await invoke<string | null>('get_local_blob_url', { hash });
+        if (localUrl) {
+            return convertFileSrc(localUrl);
+        }
+        return null;
+    } catch {
+        return null;
+    }
 }

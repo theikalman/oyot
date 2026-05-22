@@ -1,9 +1,12 @@
+mod attachment_manager;
 mod commands;
 mod crdt;
 mod db;
 mod indexer;
 mod network;
 mod sync_manager;
+
+use crate::attachment_manager::AttachmentManager;
 
 use commands::*;
 use db::AppState;
@@ -15,6 +18,7 @@ use network::gossip_broadcaster::{bytes_to_topic_id, GossipBroadcaster};
 use network::sync_protocol::SyncMessage;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use parking_lot::Mutex as ParkingMutex;
 
 fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
     db.execute_batch(
@@ -80,6 +84,7 @@ fn spawn_sync_tasks(
     endpoint: Option<Arc<Endpoint>>,
     gossip: Option<Arc<GossipBroadcaster>>,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    workspace_path: String,
     app: tauri::AppHandle,
 ) {
     std::thread::spawn(move || {
@@ -88,17 +93,19 @@ fn spawn_sync_tasks(
         rt.block_on(async {
             if let Some(endpoint) = endpoint {
                 let db_clone = db.clone();
+                let workspace_clone = workspace_path.clone();
                 let app_clone = app.clone();
                 tokio::spawn(async move {
-                    accept_incoming_connections(&endpoint, &db_clone, &app_clone).await;
+                    accept_incoming_connections(&endpoint, db_clone, workspace_clone, &app_clone).await;
                 });
             }
 
             if let Some(gossip) = gossip {
                 let db_clone = db.clone();
+                let workspace_clone = workspace_path.clone();
                 let app_clone = app.clone();
                 tokio::spawn(async move {
-                    handle_gossip_messages(gossip, db_clone, app_clone).await;
+                    handle_gossip_messages(gossip, db_clone, workspace_clone, app_clone).await;
                 });
             }
 
@@ -111,16 +118,18 @@ fn spawn_sync_tasks(
 
 async fn accept_incoming_connections(
     endpoint: &Arc<Endpoint>,
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    workspace_path: String,
     app: &tauri::AppHandle,
 ) {
     loop {
         if let Some(incoming) = endpoint.accept().await {
             let db = db.clone();
+            let workspace_path = workspace_path.clone();
             let app = app.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(incoming, db, app).await {
+                if let Err(e) = handle_connection(incoming, db, workspace_path, app).await {
                     eprintln!("Error handling connection: {}", e);
                 }
             });
@@ -132,6 +141,7 @@ async fn accept_incoming_connections(
 async fn handle_connection(
     incoming: iroh::endpoint::Incoming,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    workspace_path: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let mut accepting = incoming.accept().map_err(|e| format!("Accept error: {}", e))?;
@@ -160,6 +170,9 @@ async fn handle_connection(
     match msg {
         SyncMessage::RequestDoc { doc_id, state_vector: _ } => {
             handle_doc_request(&mut send, &db, &doc_id, &app).await?;
+        }
+        SyncMessage::RequestBlob { hash } => {
+            handle_blob_request(&mut send, &db, &workspace_path, &hash).await?;
         }
         _ => {
             eprintln!("Unexpected message type received");
@@ -204,14 +217,66 @@ async fn handle_doc_request(
     Ok(())
 }
 
+async fn handle_blob_request(
+    send: &mut iroh::endpoint::SendStream,
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    workspace_path: &str,
+    hash: &str,
+) -> Result<(), String> {
+    let (data, mime_type): (Option<Vec<u8>>, Option<String>) = {
+        let db_lock = db.lock();
+        let result: Option<(String, String)> = db_lock
+            .query_row(
+                "SELECT local_path, mime_type FROM attachments WHERE hash = ? AND is_fully_downloaded = 1",
+                [hash],
+                |row| {
+                    let local_path: String = row.get(0)?;
+                    let mime_type: String = row.get(1)?;
+                    Ok((local_path, mime_type))
+                },
+            )
+            .ok();
+
+        if let Some((local_path, mime_type)) = result {
+            let full_path = std::path::PathBuf::from(workspace_path).join(&local_path);
+            let data = std::fs::read(&full_path).ok();
+            (data, Some(mime_type))
+        } else {
+            (None, None)
+        }
+    };
+
+    let response = if let (Some(data), Some(mime)) = (data, mime_type) {
+        SyncMessage::SendBlob {
+            hash: hash.to_string(),
+            data,
+            mime_type: mime,
+        }
+    } else {
+        SyncMessage::BlobReceived {
+            hash: hash.to_string(),
+        }
+    };
+
+    let encoded = response.encode();
+    send.write_all(&encoded)
+        .await
+        .map_err(|e| format!("Write error: {}", e))?;
+    let _ = send.finish();
+
+    Ok(())
+}
+
 async fn handle_gossip_messages(
     gossip: Arc<GossipBroadcaster>,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    workspace_path: String,
     app: tauri::AppHandle,
 ) {
     let gossip_net = gossip.gossip().clone();
     let topic_id = gossip.topic_id();
     let db_clone = db.clone();
+    let workspace_clone = workspace_path.clone();
     let app_clone = app.clone();
 
     let topic = match gossip_net.subscribe(topic_id, vec![]).await {
@@ -228,9 +293,10 @@ async fn handle_gossip_messages(
         match result {
             Ok(Event::Received(msg)) => {
                 let db = db_clone.clone();
+                let workspace_path = workspace_clone.clone();
                 let app = app_clone.clone();
                 let from = msg.delivered_from;
-                if let Err(e) = process_gossip_message(&db, &app, from, msg.content.as_ref()).await {
+                if let Err(e) = process_gossip_message(&db, &workspace_path, &app, from, msg.content.as_ref()).await {
                     eprintln!("Error processing gossip: {}", e);
                 }
             }
@@ -252,6 +318,7 @@ async fn handle_gossip_messages(
 
 async fn process_gossip_message(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    workspace_path: &str,
     app: &tauri::AppHandle,
     from: EndpointId,
     data: &[u8],
@@ -261,6 +328,14 @@ async fn process_gossip_message(
             SyncMessage::SendDocDelta { doc_id, delta } => {
                 let _ = apply_crdt_delta(db, &doc_id, &delta).await;
                 let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from.to_string() }));
+            }
+            SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
+                let _ = save_blob_to_disk(workspace_path, &hash, &mime_type, &blob_data);
+                let _ = update_attachment_db(db, &hash, &mime_type, workspace_path);
+                let _ = app.emit("blob-received", serde_json::json!({ "hash": hash }));
+            }
+            SyncMessage::BlobReceived { hash } => {
+                let _ = app.emit("blob-request-ack", serde_json::json!({ "hash": hash }));
             }
             _ => {}
         }
@@ -311,6 +386,57 @@ async fn apply_crdt_delta(
     Ok(())
 }
 
+fn save_blob_to_disk(workspace_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
+    let ext = match mime_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "bin",
+    };
+    let filename = format!("{}.{}", hash, ext);
+
+    let attachments_dir = std::path::PathBuf::from(workspace_path).join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+
+    let full_path = attachments_dir.join(&filename);
+    std::fs::write(&full_path, data).map_err(|e| e.to_string())?;
+
+    Ok(format!("attachments/{}", filename))
+}
+
+fn update_attachment_db(
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    hash: &str,
+    mime_type: &str,
+    workspace_path: &str,
+) -> Result<(), String> {
+    let ext = match mime_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "bin",
+    };
+    let filename = format!("{}.{}", hash, ext);
+    let relative_path = format!("attachments/{}", filename);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    let db_lock = db.lock();
+    db_lock.execute(
+        "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
+        rusqlite::params![hash, mime_type, &relative_path, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -340,19 +466,23 @@ pub fn run() {
                     let broadcaster = GossipBroadcaster::new(gossip, topic_bytes);
                     state.gossip_broadcaster = Some(Arc::new(broadcaster));
 
+                    let workspace_path = state.workspace_path.clone();
                     spawn_sync_tasks(
                         state.iroh_endpoint.clone(),
                         state.gossip_broadcaster.clone(),
                         state.db.clone(),
+                        workspace_path,
                         app.handle().clone(),
                     );
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to initialize Iroh endpoint: {}", e);
+                    let workspace_path = state.workspace_path.clone();
                     spawn_sync_tasks(
                         None,
                         None,
                         state.db.clone(),
+                        workspace_path,
                         app.handle().clone(),
                     );
                 }
@@ -382,6 +512,10 @@ pub fn run() {
             cleanup_orphaned_images,
             get_attachment_path,
             request_attachment,
+            get_attachment_info,
+            list_pending_attachments,
+            get_local_blob_url,
+            get_all_attachment_hashes,
             set_current_workspace,
             init_database,
             get_crdt_state,
