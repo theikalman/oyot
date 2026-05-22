@@ -51,7 +51,6 @@
         
         try {
             const newDoc: Document = await invoke('create_document', {
-                workspacePath: wsPath,
                 docType: 'note',
                 title: newDocTitle.trim(),
                 contentJson: '{}'

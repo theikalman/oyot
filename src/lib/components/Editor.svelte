@@ -199,7 +199,6 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         try {
             const content = JSON.stringify(editor.getJSON());
             const updatedDoc: Document = await invoke('update_document', {
-                workspacePath: wsPath,
                 docId: current.id,
                 title: current.title,
                 contentJson: content
@@ -230,7 +229,6 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
             if (prevDoc) {
                 const content = JSON.stringify(editor.getJSON());
                 invoke('update_document', {
-                    workspacePath: wsPath,
                     docId: prevDoc.id,
                     title: prevDoc.title,
                     contentJson: content

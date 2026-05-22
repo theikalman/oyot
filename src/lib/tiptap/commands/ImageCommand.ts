@@ -77,7 +77,6 @@ export async function insertImageFromFile(editor: Editor): Promise<void> {
         const base64 = arrayBufferToBase64(fileContent);
 
         const relativePath: string = await invoke('save_image', {
-            workspacePath: wsPath,
             imageData: base64,
             filename
         });
@@ -107,7 +106,6 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
         const filename = `${Date.now()}.${ext}`;
 
         const relativePath: string = await invoke('save_image', {
-            workspacePath: wsPath,
             imageData: base64,
             filename
         });

@@ -13,14 +13,14 @@
         appStore.setLoading(true);
         try {
             await invoke("init_database", { workspacePath: path });
-            const indexData: IndexData = await invoke("get_all_documents", { workspacePath: path });
+            const indexData: IndexData = await invoke("get_all_documents");
             appStore.setWorkspacePath(path);
             appStore.setDocuments(indexData.documents);
             appStore.setLinks(indexData.links);
             appStore.setAllLinks(indexData.all_links);
             appStore.setTodos(indexData.todos);
 
-            const todayJournal: Document = await invoke("get_or_create_today_journal", { workspacePath: path });
+            const todayJournal: Document = await invoke("get_or_create_today_journal");
             appStore.addDocument(todayJournal);
             appStore.setCurrentDocument(todayJournal);
 
@@ -29,7 +29,7 @@
             recentWorkspaces = await invoke("get_recent_workspaces");
 
             try {
-                const deletedCount: number = await invoke("cleanup_orphaned_images", { workspacePath: path });
+                const deletedCount: number = await invoke("cleanup_orphaned_images");
                 if (deletedCount > 0) {
                     console.log(`Cleaned up ${deletedCount} orphaned image(s)`);
                 }
