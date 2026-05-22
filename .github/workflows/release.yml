@@ -86,10 +86,18 @@ jobs:
 
       - name: Decode Android signing keystore
         run: |
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
+          JKS_FILE="$RUNNER_TEMP/keystore.jks"
+          PKCS12_FILE="$RUNNER_TEMP/keystore.p12"
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > "$JKS_FILE"
+          keytool -importkeystore -srckeystore "$JKS_FILE" -srcstoretype JKS \
+            -destkeystore "$PKCS12_FILE" -deststoretype PKCS12 \
+            -srcstorepass "${{ secrets.KEY_PASSWORD }}" \
+            -deststorepass "${{ secrets.KEY_PASSWORD }}" \
+            -srcalias "${{ secrets.KEY_ALIAS }}" -destalias "${{ secrets.KEY_ALIAS }}" \
+            -noprompt
           echo "keyAlias=${{ secrets.KEY_ALIAS }}" > src-tauri/gen/android/keystore.properties
           echo "password=${{ secrets.KEY_PASSWORD }}" >> src-tauri/gen/android/keystore.properties
-          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> src-tauri/gen/android/keystore.properties
+          echo "storeFile=$PKCS12_FILE" >> src-tauri/gen/android/keystore.properties
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
