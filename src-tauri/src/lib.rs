@@ -1,5 +1,9 @@
 mod commands;
+mod crdt;
 mod db;
+mod indexer;
+mod network;
+mod sync_manager;
 
 use commands::*;
 
@@ -31,7 +35,14 @@ pub fn run() {
             get_attachment_path,
             request_attachment,
             set_current_workspace,
-            init_database
+            init_database,
+            get_crdt_state,
+            save_crdt_update,
+            export_document_update_since,
+            get_node_id,
+            add_sync_peer,
+            get_sync_peers,
+            remove_sync_peer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
