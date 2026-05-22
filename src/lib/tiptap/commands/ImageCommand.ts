@@ -28,10 +28,10 @@ export function registerImageCommand(editor: Editor): void {
         onSelect: (props: CommandSelectProps) => {
             const range = props.range;
             const ed = props.editor as Editor;
-            
+
             exitSuggestion(ed.view);
             ed.chain().focus().deleteRange(range).run();
-            
+
             insertImageFromFile(ed);
         }
     };
