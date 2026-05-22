@@ -37,7 +37,7 @@
                     onclick={() => command(item)}
                     onkeydown={(e) => { if (e.key === 'Enter') command(item); }}
                 >
-                    <span class="item-icon">{item.icon || '📄'}</span>
+                    <span class="item-icon">{@html item.icon || '📄'}</span>
                     <span class="item-content">
                         <span class="item-title">{item.title}</span>
                     </span>
@@ -87,8 +87,17 @@
     }
 
     .item-icon {
-        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
         flex-shrink: 0;
+    }
+
+    .item-icon :global(svg) {
+        width: 20px;
+        height: 20px;
     }
 
     .item-content {
