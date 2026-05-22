@@ -15,8 +15,10 @@
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
     import { SlashCommand } from '../tiptap/SlashCommand';
-    import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
-    import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, commandRegistry } from '../tiptap';
+import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
+import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '../tiptap';
+import { Image } from '@tiptap/extension-image';
+import { ImageExtension } from '../tiptap/extensions/ImageExtension';
 
     let editorElement = $state<HTMLDivElement>();
     let editor: EditorType | null = null;
@@ -84,6 +86,10 @@
             element: editorElement,
             extensions: [
                 StarterKit,
+                Image.configure({
+                    inline: false
+                }),
+                ImageExtension,
                 Placeholder.configure({
                     placeholder: 'Start writing...'
                 }),
@@ -119,6 +125,7 @@
         registerDocumentLinkCommand(editor);
         registerDateCommand(editor);
         registerTodoCommand(editor);
+        registerImageCommand(editor);
         console.log('Commands registered, registry has:', commandRegistry.getAllCommands().length);
     }
 
@@ -237,6 +244,11 @@
             </button>
             <button onclick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3 }).run()} title="Table">
                 ⊞
+            </button>
+            <button onclick={() => insertImageFromFile(editor!)} title="Insert Image">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A1A1A1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m4.272 20.728 6.597-6.597c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668l6.553 6.553M14 15l2.869-2.869c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668L22 15M10 9a2 2 0 1 1-4 0 2 2 0 0 1 4 0M6.8 21h10.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C22 18.72 22 17.88 22 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C19.72 3 18.88 3 17.2 3H6.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C2 5.28 2 6.12 2 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C4.28 21 5.12 21 6.8 21"/>
+                </svg>
             </button>
             <span class="separator"></span>
             <button onclick={() => editor?.chain().focus().undo().run()} title="Undo">
@@ -444,5 +456,17 @@
         align-items: center;
         justify-content: center;
         color: var(--text-muted);
+    }
+
+    .editor-content :global(img) {
+        max-width: 100%;
+        height: auto;
+        border-radius: 4px;
+        display: block;
+        margin: 1em 0;
+    }
+
+    .editor-content :global(.ProseMirror-selectednode img) {
+        outline: 2px solid var(--accent-color);
     }
 </style>

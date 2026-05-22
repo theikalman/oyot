@@ -25,7 +25,17 @@
             appStore.setCurrentDocument(todayJournal);
 
             await invoke("save_recent_workspace", { workspacePath: path });
+            await invoke("set_current_workspace", { workspacePath: path });
             recentWorkspaces = await invoke("get_recent_workspaces");
+
+            try {
+                const deletedCount: number = await invoke("cleanup_orphaned_images", { workspacePath: path });
+                if (deletedCount > 0) {
+                    console.log(`Cleaned up ${deletedCount} orphaned image(s)`);
+                }
+            } catch (e) {
+                console.error("Failed to cleanup orphaned images:", e);
+            }
         } catch (error) {
             console.error("Failed to initialize workspace:", error);
         } finally {
