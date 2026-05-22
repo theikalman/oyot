@@ -20,6 +20,19 @@ import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
 import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '../tiptap';
     import { ResizableImage } from '../tiptap/extensions/ResizableImage';
     import { ImageExtension } from '../tiptap/extensions/ImageExtension';
+    import { Extension } from '@tiptap/core';
+
+    const ScrollOnFocus = Extension.create({
+        name: 'scrollOnFocus',
+        onSelectionUpdate() {
+            const vp = window.visualViewport;
+            if (vp && vp.height < initialViewportHeight - 100) {
+                requestAnimationFrame(() => {
+                    this.editor.commands.scrollIntoView();
+                });
+            }
+        }
+    });
 
     let editorElement = $state<HTMLDivElement>();
     let editor: EditorType | null = null;
@@ -27,6 +40,9 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
     let previousDocId = $state<string | null>(null);
     let hasUnsavedChanges = $state(false);
+    let keyboardOpen = $state(false);
+    let keyboardHeight = $state(0);
+    let initialViewportHeight = $state(0);
 
     let wsPath = $derived($workspacePath);
     let current = $derived($currentDocument);
@@ -45,11 +61,23 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
 
     onMount(() => {
         window.addEventListener('openDocument', handleOpenDocument);
+        initialViewportHeight = window.innerHeight;
+        window.visualViewport?.addEventListener('resize', handleViewportChange);
+        window.visualViewport?.addEventListener('scroll', handleViewportChange);
     });
 
     onDestroy(() => {
         window.removeEventListener('openDocument', handleOpenDocument);
+        window.visualViewport?.removeEventListener('resize', handleViewportChange);
+        window.visualViewport?.removeEventListener('scroll', handleViewportChange);
     });
+
+    function handleViewportChange() {
+        const vp = window.visualViewport;
+        if (!vp) return;
+        keyboardOpen = vp.height < initialViewportHeight - 100;
+        keyboardHeight = keyboardOpen ? initialViewportHeight - vp.height : 0;
+    }
 
     function createInitialContent(title: string): any {
         return {
@@ -108,6 +136,7 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
                 Typography,
                 DocumentLinkNode,
                 SlashCommand,
+                ScrollOnFocus,
             ],
             content: initialContent,
             editable: true,
@@ -371,6 +400,7 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
     .editor-content {
         flex: 1;
         padding: 24px;
+        padding-bottom: max(24px, env(safe-area-inset-bottom));
         overflow-y: auto;
         background: var(--bg-primary);
         color: var(--text-primary);

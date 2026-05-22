@@ -1,5 +1,3 @@
-use http::header::CONTENT_TYPE;
-use http::StatusCode;
 use regex::Regex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -616,13 +614,6 @@ fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
         None => return serde_json::Value::Object(Default::default()),
     };
     serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
-}
-
-fn get_current_workspace_path(app: &tauri::AppHandle) -> Option<String> {
-    let json = read_config(app);
-    json.get("current_workspace")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
 }
 
 fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), String> {
