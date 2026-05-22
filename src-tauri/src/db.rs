@@ -1,3 +1,4 @@
+use crate::network::gossip_broadcaster::GossipBroadcaster;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -8,6 +9,8 @@ pub struct AppState {
     pub workspace_path: String,
     pub db: Arc<parking_lot::Mutex<Connection>>,
     pub sync_manager: Arc<TokioMutex<crate::sync_manager::SyncManager>>,
+    pub iroh_endpoint: Option<Arc<iroh::Endpoint>>,
+    pub gossip_broadcaster: Option<Arc<GossipBroadcaster>>,
 }
 
 impl AppState {
@@ -18,6 +21,8 @@ impl AppState {
             workspace_path,
             db: Arc::new(parking_lot::Mutex::new(conn)),
             sync_manager: Arc::new(TokioMutex::new(crate::sync_manager::SyncManager::new())),
+            iroh_endpoint: None,
+            gossip_broadcaster: None,
         })
     }
 }
