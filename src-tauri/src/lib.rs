@@ -6,21 +6,17 @@ mod indexer;
 mod network;
 mod sync_manager;
 
-use crate::attachment_manager::AttachmentManager;
-
-use commands::*;
+use crate::commands::*;
 use db::AppState;
 use futures_lite::StreamExt;
 use iroh::{Endpoint, EndpointId};
-use iroh_gossip::net::Gossip;
 use iroh_gossip::api::Event;
-use network::gossip_broadcaster::{bytes_to_topic_id, GossipBroadcaster};
+use network::gossip_broadcaster::GossipBroadcaster;
 use network::sync_protocol::SyncMessage;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use parking_lot::Mutex as ParkingMutex;
 
-fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
+pub fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
     db.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS documents (
@@ -70,13 +66,25 @@ fn get_workspace_path(app: &tauri::AppHandle) -> String {
     workspace_path.to_string_lossy().to_string()
 }
 
-fn init_iroh_endpoint() -> Result<Endpoint, String> {
+fn init_iroh_endpoint_and_gossip(
+    workspace_path: String,
+) -> Result<(iroh::Endpoint, Option<Arc<GossipBroadcaster>>), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async {
-        Endpoint::builder(iroh::endpoint::presets::N0)
+        use iroh_gossip::net::Gossip;
+        use iroh_gossip::api::Event;
+        use network::gossip_broadcaster::{bytes_to_topic_id, GossipBroadcaster};
+
+        let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
             .bind()
             .await
-            .map_err(|e| format!("Failed to bind Iroh endpoint: {}", e))
+            .map_err(|e| format!("Failed to bind Iroh endpoint: {}", e))?;
+
+        let gossip = Gossip::builder().spawn(endpoint.clone());
+        let topic_bytes = bytes_to_topic_id("oyot-default-sync-v1");
+        let broadcaster = GossipBroadcaster::new(gossip, topic_bytes);
+
+        Ok((endpoint, Some(Arc::new(broadcaster))))
     })
 }
 
@@ -445,28 +453,24 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let workspace_path = get_workspace_path(app.handle());
-            let mut state = AppState::new(workspace_path)?;
+            let mut state = AppState::new(workspace_path.clone(), app.handle().clone())?;
 
             {
                 let db = state.db.lock();
                 setup_database_tables(&db)?;
             }
 
-            match init_iroh_endpoint() {
-                Ok(endpoint) => {
+            match init_iroh_endpoint_and_gossip(workspace_path.clone()) {
+                Ok((endpoint, gossip)) => {
                     let node_id = endpoint.id().to_string();
                     let mut sync_manager = state.sync_manager.blocking_lock();
                     sync_manager.set_node_id(node_id.clone());
                     drop(sync_manager);
 
-                    state.iroh_endpoint = Some(Arc::new(endpoint.clone()));
+                    state.iroh_endpoint = Some(Arc::new(endpoint));
 
-                    let gossip = Gossip::builder().spawn(endpoint);
-                    let topic_bytes = bytes_to_topic_id("oyot-default-sync-v1");
-                    let broadcaster = GossipBroadcaster::new(gossip, topic_bytes);
-                    state.gossip_broadcaster = Some(Arc::new(broadcaster));
+                    state.gossip_broadcaster = gossip;
 
-                    let workspace_path = state.workspace_path.clone();
                     spawn_sync_tasks(
                         state.iroh_endpoint.clone(),
                         state.gossip_broadcaster.clone(),

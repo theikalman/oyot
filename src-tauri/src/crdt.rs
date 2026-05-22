@@ -1,4 +1,4 @@
-use loro::{ContainerID, ExportMode, LoroDoc};
+use loro::{ContainerID, ExportMode, LoroDoc, VersionVector};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +40,10 @@ impl CrdtDocument {
         self.doc.export(ExportMode::Snapshot).unwrap_or_default()
     }
 
-    pub fn export_update_since(&self, _clock: &[u8]) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
+    pub fn export_update_since(&self, clock: &VersionVector) -> Result<Vec<u8>, String> {
+        self.doc
+            .export(ExportMode::updates(clock))
+            .map_err(|e| e.to_string())
     }
 
     fn get_text_by_name(&self, name: &str) -> String {
@@ -91,30 +93,6 @@ impl CrdtDocument {
             }
         }
         count
-    }
-
-    pub fn get_state_vector(&self) -> Vec<u8> {
-        serde_json::to_vec(&self.doc.oplog_vv()).unwrap_or_default()
-    }
-
-    pub fn get_doc_id(&self) -> Option<String> {
-        None
-    }
-
-    pub fn set_title(&self, title: &str) {
-        let cid = ContainerID::new_root("title".into(), loro::ContainerType::Text);
-        let text = self.doc.get_text(&cid);
-        let _ = text.insert(0, title);
-    }
-
-    pub fn get_json_content(&self) -> String {
-        let content = self.get_text_by_name("content");
-        serde_json::to_string(&serde_json::json!({
-            "type": "doc",
-            "content": serde_json::from_str::<serde_json::Value>(&content)
-                .unwrap_or(serde_json::Value::Array(vec![]))
-        }))
-        .unwrap_or_else(|_| r#"{"type":"doc","content":[]}"#.to_string())
     }
 }
 

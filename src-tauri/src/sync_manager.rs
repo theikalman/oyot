@@ -10,14 +10,7 @@ pub struct SyncPeer {
     pub is_online: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SyncMessage {
-    RequestStateVector { doc_id: String },
-    SendStateVector { doc_id: String, state_vector: Vec<u8> },
-    SendDelta { doc_id: String, delta: Vec<u8> },
-    AckSync { doc_id: String },
-}
-
+#[derive(Debug, Clone)]
 pub struct SyncManager {
     peers: Arc<Mutex<Vec<SyncPeer>>>,
     node_id: Option<String>,
@@ -110,12 +103,4 @@ impl Default for SyncManager {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub fn encode_message(msg: &SyncMessage) -> Vec<u8> {
-    bincode::serialize(msg).unwrap_or_default()
-}
-
-pub fn decode_message(data: &[u8]) -> Result<SyncMessage, String> {
-    bincode::deserialize(data).map_err(|e| e.to_string())
 }

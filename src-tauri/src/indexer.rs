@@ -1,4 +1,4 @@
-use crate::crdt::{CrdtDocument, DocumentMetadata};
+use crate::crdt::CrdtDocument;
 use rusqlite::params;
 
 pub fn update_document_index(
@@ -25,12 +25,4 @@ pub fn update_document_index(
     .map_err(|e| e.to_string())?;
 
     Ok(())
-}
-
-pub fn extract_metadata(crdt_state: &[u8]) -> DocumentMetadata {
-    let mut doc = CrdtDocument::new();
-    if !crdt_state.is_empty() {
-        let _ = doc.load_from_state(crdt_state);
-    }
-    doc.get_metadata()
 }

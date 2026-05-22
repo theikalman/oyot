@@ -1,79 +1,16 @@
 use crate::db::{get_db_path, AppState};
+use crate::setup_database_tables;
 use tauri::Manager;
 
 const MAX_RECENT_WORKSPACES: usize = 5;
-
-fn init_db_tables(conn: &rusqlite::Connection) -> Result<(), String> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS documents (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
-            title TEXT NOT NULL,
-            crdt_state BLOB NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            is_deleted INTEGER DEFAULT 0 NOT NULL
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS document_index (
-            document_id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            todo_count INTEGER DEFAULT 0 NOT NULL,
-            completed_todo_count INTEGER DEFAULT 0 NOT NULL,
-            FOREIGN KEY (document_id) REFERENCES documents(id)
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS attachments (
-            hash TEXT PRIMARY KEY,
-            mime_type TEXT NOT NULL,
-            local_path TEXT,
-            is_fully_downloaded INTEGER DEFAULT 0 NOT NULL,
-            created_at INTEGER NOT NULL
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS sync_peers (
-            node_id TEXT PRIMARY KEY,
-            device_name TEXT NOT NULL,
-            last_synchronized INTEGER
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_documents_is_deleted ON documents(is_deleted)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
 
 #[tauri::command]
 pub fn init_database(app: tauri::AppHandle, workspace_path: String) -> Result<String, String> {
     let db_path = get_db_path(&workspace_path);
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
-    init_db_tables(&conn)?;
+    setup_database_tables(&conn)?;
 
-    let state = AppState::new(workspace_path.clone())?;
+    let state = AppState::new(workspace_path.clone(), app.clone())?;
     app.manage(state);
 
     Ok(db_path.to_string_lossy().to_string())

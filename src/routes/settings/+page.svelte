@@ -636,4 +636,9 @@
         background: var(--bg-hover);
         color: var(--text-muted);
     }
+
+    :global([data-theme="dark"]) .peer-status.online {
+        background: #14532d;
+        color: #86efac;
+    }
 </style>

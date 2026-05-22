@@ -170,17 +170,6 @@ impl AttachmentManager {
             _ => "bin",
         }
     }
-
-    pub fn resolve_hash_to_url(&self, hash: &str) -> Option<String> {
-        let info = self.get_attachment_info(hash)?;
-        if info.is_fully_downloaded {
-            if let Some(local_path) = info.local_path {
-                let full_path = format!("{}/{}", self.workspace_path, local_path);
-                return Some(full_path);
-            }
-        }
-        None
-    }
 }
 
 fn current_timestamp() -> i64 {

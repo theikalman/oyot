@@ -1,9 +1,9 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import { invoke } from "@tauri-apps/api/core";
     import { listen } from "@tauri-apps/api/event";
     import { open } from "@tauri-apps/plugin-dialog";
-    import { appStore, workspacePath, isLoading, currentDocument, theme, syncStore } from "../lib/stores/app";
+    import { appStore, workspacePath, isLoading, currentDocument, theme, syncStore, type SyncPeer } from "../lib/stores/app";
     import type { IndexData, Document, DocumentSummary, Theme } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Editor from "../lib/components/Editor.svelte";
@@ -60,6 +60,8 @@
         }
     }
 
+    let cleanupFns: Array<() => void> = [];
+
     onMount(async () => {
         // Load saved theme and apply it
         try {
@@ -80,6 +82,40 @@
         } catch (error) {
             console.error("Failed to restore last workspace:", error);
         }
+
+        // Initialize sync state
+        try {
+            const nodeId: string | null = await invoke("get_node_id");
+            const peers: SyncPeer[] = await invoke("get_sync_peers");
+            syncStore.setNodeId(nodeId || "");
+            syncStore.setPeers(peers);
+            syncStore.setEnabled(true);
+            syncStore.setStatus("synced");
+        } catch (e) {
+            console.error("Failed to init sync:", e);
+            syncStore.setStatus("offline");
+        }
+
+        // Listen for peer events
+        const unlistenConnected = listen("peer-connected", (event) => {
+            const peerNodeId = event.payload as string;
+            syncStore.markPeerOnline(peerNodeId);
+            syncStore.setStatus("synced");
+        });
+        const unlistenDisconnected = listen("peer-disconnected", () => {
+            syncStore.setStatus("offline");
+        });
+        const unlistenSyncComplete = listen("sync-complete", () => {
+            syncStore.setStatus("synced");
+        });
+
+        unlistenConnected.then(fn => cleanupFns.push(fn));
+        unlistenDisconnected.then(fn => cleanupFns.push(fn));
+        unlistenSyncComplete.then(fn => cleanupFns.push(fn));
+    });
+
+    onDestroy(() => {
+        cleanupFns.forEach(fn => fn());
     });
 
     // Reactively apply theme to <body> whenever the store changes
