@@ -1,6 +1,7 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import type { Editor } from '@tiptap/core';
 import '@tiptap/extension-image';
@@ -17,6 +18,19 @@ function arrayBufferToBase64(buffer: Uint8Array): string {
         binary += String.fromCharCode(buffer[i]);
     }
     return btoa(binary);
+}
+
+function getMimeType(filePath: string): string {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'svg': 'image/svg+xml'
+    };
+    return mimeTypes[ext ?? ''] ?? 'image/png';
 }
 
 export function registerImageCommand(editor: Editor): void {
@@ -68,7 +82,7 @@ export async function insertImageFromFile(editor: Editor): Promise<void> {
             filename
         });
 
-        insertImageNode(editor, `asset://${relativePath}`);
+        insertImageNode(editor, wsPath, relativePath);
     } catch (error) {
         console.error('Failed to insert image:', error);
         alert('Failed to insert image. Please try again.');
@@ -98,14 +112,16 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
             filename
         });
 
-        insertImageNode(editor, `asset://${relativePath}`);
+        insertImageNode(editor, wsPath, relativePath);
     } catch (error) {
         console.error('Failed to insert image:', error);
     }
 }
 
-function insertImageNode(editor: Editor, src: string): void {
-    editor.chain().focus().setImage({ src }).run();
+function insertImageNode(editor: Editor, workspacePath: string, relativePath: string): void {
+    const fullPath = `${workspacePath}/${relativePath}`;
+    const assetUrl = convertFileSrc(fullPath);
+    editor.chain().focus().setImage({ src: assetUrl }).run();
 }
 
 function validateFileSize(blob: Blob): boolean {
@@ -114,17 +130,4 @@ function validateFileSize(blob: Blob): boolean {
         return false;
     }
     return true;
-}
-
-function getMimeType(filePath: string): string {
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    const mimeTypes: Record<string, string> = {
-        'png': 'image/png',
-        'jpg': 'image/jpeg',
-        'jpeg': 'image/jpeg',
-        'gif': 'image/gif',
-        'webp': 'image/webp',
-        'svg': 'image/svg+xml'
-    };
-    return mimeTypes[ext ?? ''] ?? 'image/png';
 }
