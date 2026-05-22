@@ -93,15 +93,6 @@ jobs:
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-          ANDROID_SIGNING_KEY_PATH: $RUNNER_TEMP/keystore.jks
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-
-      - name: Build Android APK
-        run: npm run tauri android build -- --apk
 
       - name: Upload Android APK to release
         uses: softprops/action-gh-release@v2
