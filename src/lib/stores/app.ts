@@ -37,7 +37,7 @@ function createAppStore() {
             if (exists) return s;
             return {
                 ...s,
-                documents: [...s.documents, doc].sort((a, b) => a.title.localeCompare(b.title))
+                documents: [...s.documents, doc]
             };
         }),
         removeDocument: (docId: string) => update(s => ({
