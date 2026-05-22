@@ -84,14 +84,12 @@
 
     async function browseNewWorkspace() {
         showWorkspacePicker = false;
-        const selected = await open({
-            directory: true,
-            multiple: false,
-            title: "Select Workspace Directory"
-        });
-        if (selected && typeof selected === "string") {
+        try {
+            const appDataDir: string = await invoke("get_workspace_dir");
             appStore.reset();
-            await onSwitchWorkspace(selected);
+            await onSwitchWorkspace(appDataDir);
+        } catch (error) {
+            console.error("Failed to open workspace:", error);
         }
     }
 

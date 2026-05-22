@@ -34,14 +34,11 @@
     }
 
     async function openWorkspace() {
-        const selected = await open({
-            directory: true,
-            multiple: false,
-            title: "Select Workspace Directory"
-        });
-
-        if (selected && typeof selected === "string") {
-            await initWorkspace(selected);
+        try {
+            const appDataDir: string = await invoke("get_workspace_dir");
+            await initWorkspace(appDataDir);
+        } catch (error) {
+            console.error("Failed to open workspace:", error);
         }
     }
 
