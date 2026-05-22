@@ -5,6 +5,7 @@
     import type { Document } from '../types';
     import { Editor } from '@tiptap/core';
     import type { Editor as EditorType } from '@tiptap/core';
+    import { NodeSelection } from 'prosemirror-state';
     import StarterKit from '@tiptap/starter-kit';
     import Placeholder from '@tiptap/extension-placeholder';
     import TaskList from '@tiptap/extension-task-list';
@@ -17,8 +18,8 @@
     import { SlashCommand } from '../tiptap/SlashCommand';
 import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
 import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '../tiptap';
-import { Image } from '@tiptap/extension-image';
-import { ImageExtension } from '../tiptap/extensions/ImageExtension';
+    import { ResizableImage } from '../tiptap/extensions/ResizableImage';
+    import { ImageExtension } from '../tiptap/extensions/ImageExtension';
 
     let editorElement = $state<HTMLDivElement>();
     let editor: EditorType | null = null;
@@ -82,12 +83,13 @@ import { ImageExtension } from '../tiptap/extensions/ImageExtension';
             initialContent = createInitialContent(title);
         }
 
-        editor = new Editor({
+        const ed = new Editor({
             element: editorElement,
             extensions: [
                 StarterKit,
-                Image.configure({
-                    inline: false
+                ResizableImage.configure({
+                    inline: false,
+                    allowBase64: true,
                 }),
                 ImageExtension,
                 Placeholder.configure({
@@ -109,7 +111,13 @@ import { ImageExtension } from '../tiptap/extensions/ImageExtension';
             ],
             content: initialContent,
             editable: true,
-            onUpdate: ({ editor }) => {
+            onTransaction: ({ editor: txnEditor, transaction }) => {
+                if (transaction.selectionSet) {
+                    const sel = txnEditor.state.selection;
+                    console.log('[Editor] Selection set:', sel.from, '->', sel.to, 'node:', sel.$anchor.node()?.type?.name);
+                }
+            },
+            onUpdate: ({ editor: updatedEditor }) => {
                 hasUnsavedChanges = true;
                 if (saveTimeout) {
                     clearTimeout(saveTimeout);
@@ -122,10 +130,36 @@ import { ImageExtension } from '../tiptap/extensions/ImageExtension';
             }
         });
 
-        registerDocumentLinkCommand(editor);
-        registerDateCommand(editor);
-        registerTodoCommand(editor);
-        registerImageCommand(editor);
+        editor = ed;
+
+        ed.view.dom.addEventListener('click', (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName !== 'IMG') return;
+            e.preventDefault();
+            e.stopPropagation();
+            const pos = ed.view.posAtDOM(target, 0);
+            console.log('[Editor] Image click, pos:', pos);
+            if (typeof pos === 'number') {
+                const tr = ed.state.tr.setSelection(NodeSelection.create(ed.state.doc, pos));
+                ed.view.dispatch(tr);
+                const selType = ed.state.selection.constructor.name;
+                const selFrom = ed.state.selection.from;
+                const selTo = ed.state.selection.to;
+                console.log('[Editor] After dispatch - selection type:', selType, 'from:', selFrom, 'to:', selTo);
+                const selectedNode = ed.view.dom.querySelector('.ProseMirror-selectednode');
+                console.log('[Editor] Selected node DOM:', selectedNode, 'classList:', selectedNode?.classList.toString(), 'innerHTML:', selectedNode?.innerHTML?.substring(0, 200));
+                requestAnimationFrame(() => {
+                    const selectedNode2 = ed.view.dom.querySelector('.ProseMirror-selectednode');
+                    const children = (selectedNode2 as HTMLElement)?.children;
+                    console.log('[Editor] After rAF - selected node:', selectedNode2, 'children:', children?.length, 'child HTML:', children?.[0]?.outerHTML?.substring(0, 300));
+                });
+            }
+        });
+
+        registerDocumentLinkCommand(ed);
+        registerDateCommand(ed);
+        registerTodoCommand(ed);
+        registerImageCommand(ed);
         console.log('Commands registered, registry has:', commandRegistry.getAllCommands().length);
     }
 
@@ -464,9 +498,38 @@ import { ImageExtension } from '../tiptap/extensions/ImageExtension';
         border-radius: 4px;
         display: block;
         margin: 1em 0;
+        cursor: pointer;
     }
 
     .editor-content :global(.ProseMirror-selectednode img) {
         outline: 2px solid var(--accent-color);
+    }
+
+    .editor-content :global(.ProseMirror-proseMirror img.ProseMirror-selectednode) {
+        cursor: nwse-resize;
+    }
+
+    .editor-content :global(.ProseMirror-selectednode[data-resize]) {
+        cursor: nwse-resize;
+    }
+
+    .editor-content :global(.resize-handle),
+    .editor-content :global([data-resize-handle]) {
+        opacity: 0;
+        width: 12px !important;
+        height: 12px !important;
+        background: var(--accent-color, #6366f1) !important;
+        border: 2px solid white !important;
+        border-radius: 3px !important;
+        position: absolute !important;
+        z-index: 10 !important;
+        cursor: nwse-resize !important;
+        pointer-events: none !important;
+    }
+
+    .editor-content :global(.ProseMirror-selectednode .resize-handle),
+    .editor-content :global(.ProseMirror-selectednode [data-resize-handle]) {
+        opacity: 1 !important;
+        pointer-events: all !important;
     }
 </style>
