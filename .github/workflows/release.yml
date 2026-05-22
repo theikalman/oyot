@@ -87,7 +87,14 @@ jobs:
       - name: Setup Android signing
         run: |
           KEY_FILE="$RUNNER_TEMP/keystore.jks"
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | tr -d '\r\n ' | base64 -d > "$KEY_FILE"
+          P12_FILE="$RUNNER_TEMP/signing-key.p12"
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | tr -d '\r\n ' | base64 -d > "$P12_FILE"
+          keytool -importkeystore -srckeystore "$P12_FILE" -srcstoretype PKCS12 \
+            -destkeystore "$KEY_FILE" -deststoretype JKS \
+            -srcstorepass "${{ secrets.KEY_STORE_PASSWORD }}" \
+            -deststorepass "${{ secrets.KEY_STORE_PASSWORD }}" \
+            -srcalias "${{ secrets.KEY_ALIAS }}" -destalias "${{ secrets.KEY_ALIAS }}" \
+            -noprompt
           echo "keyAlias=${{ secrets.KEY_ALIAS }}" > src-tauri/gen/android/keystore.properties
           echo "password=${{ secrets.KEY_STORE_PASSWORD }}" >> src-tauri/gen/android/keystore.properties
           echo "storeFile=$KEY_FILE" >> src-tauri/gen/android/keystore.properties
