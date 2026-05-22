@@ -655,6 +655,22 @@ fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     write_config(&app, json)
 }
 
+#[tauri::command]
+fn get_app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_workspace_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let workspace = app_data.join("Oyot");
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    Ok(workspace.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -676,7 +692,9 @@ pub fn run() {
             get_recent_workspaces,
             save_recent_workspace,
             get_theme,
-            save_theme
+            save_theme,
+            get_app_data_dir,
+            get_workspace_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
