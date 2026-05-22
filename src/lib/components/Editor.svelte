@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from "@tauri-apps/api/core";
     import { appStore, currentDocument, workspacePath, documents } from '../stores/app';
-    import type { Document } from '../types';
+    import type { Document, DocumentSummary } from '../types';
     import { Editor } from '@tiptap/core';
     import type { Editor as EditorType } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
@@ -52,10 +52,9 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         const customEvent = event as CustomEvent<{ id: string }>;
         const docId = customEvent.detail?.id;
         if (docId) {
-            const doc = docs.find((d: Document) => d.id === docId);
-            if (doc) {
-                appStore.setCurrentDocument(doc);
-            }
+            invoke<Document>('get_document', { docId }).then(fullDoc => {
+                appStore.setCurrentDocument(fullDoc);
+            }).catch(err => console.error('Failed to load document:', err));
         }
     }
 
@@ -94,6 +93,10 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
                 }
             ]
         };
+    }
+
+    function bytesToJson(data: number[]): string {
+        return new TextDecoder().decode(new Uint8Array(data));
     }
 
     function initEditor(content: string, title: string) {
@@ -198,12 +201,23 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         isSaving = true;
         try {
             const content = JSON.stringify(editor.getJSON());
+            const encoder = new TextEncoder();
+            const crdtState = Array.from(encoder.encode(content));
             const updatedDoc: Document = await invoke('update_document', {
                 docId: current.id,
                 title: current.title,
-                contentJson: content
+                crdtState
             });
-            appStore.updateDocumentInListOnly(updatedDoc);
+            const summary: DocumentSummary = {
+                id: updatedDoc.id,
+                doc_type: updatedDoc.doc_type,
+                title: updatedDoc.title,
+                todo_count: 0,
+                completed_todo_count: 0,
+                created_at: updatedDoc.created_at,
+                updated_at: updatedDoc.updated_at
+            };
+            appStore.updateDocumentInList(summary);
         } catch (error) {
             console.error('Failed to save:', error);
         } finally {
@@ -225,22 +239,30 @@ import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, 
         }
 
         if (previousDocId && previousDocId !== current.id && hasUnsavedChanges && wsPath && editor) {
-            const prevDoc = docs.find((d: Document) => d.id === previousDocId);
+            const prevDoc = docs.find((d: DocumentSummary) => d.id === previousDocId);
             if (prevDoc) {
                 const content = JSON.stringify(editor.getJSON());
+                const encoder = new TextEncoder();
+                const crdtState = Array.from(encoder.encode(content));
                 invoke('update_document', {
                     docId: prevDoc.id,
                     title: prevDoc.title,
-                    contentJson: content
+                    crdtState
                 }).then(() => {
-                    appStore.updateDocumentInListOnly({ ...prevDoc, content_json: content });
+                    const summary: DocumentSummary = {
+                        ...prevDoc,
+                        todo_count: 0,
+                        completed_todo_count: 0
+                    };
+                    appStore.updateDocumentInList(summary);
                 }).catch(err => console.error('Failed to save previous document:', err));
             }
         }
 
         previousDocId = current.id;
         hasUnsavedChanges = false;
-        initEditor(current.content_json, current.title);
+        const contentJson = bytesToJson(current.crdt_state);
+        initEditor(contentJson, current.title);
     });
 
     onDestroy(() => {

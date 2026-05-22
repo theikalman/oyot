@@ -18,7 +18,6 @@ pub fn run() {
             search_documents,
             get_backlinks,
             get_journals,
-            get_todos,
             get_or_create_today_journal,
             get_recent_workspaces,
             save_recent_workspace,
@@ -29,6 +28,8 @@ pub fn run() {
             save_image,
             delete_image,
             cleanup_orphaned_images,
+            get_attachment_path,
+            request_attachment,
             set_current_workspace,
             init_database
         ])

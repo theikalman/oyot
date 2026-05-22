@@ -3,7 +3,7 @@
     import { invoke } from "@tauri-apps/api/core";
     import { open } from "@tauri-apps/plugin-dialog";
     import { appStore, workspacePath, isLoading, currentDocument, theme } from "../lib/stores/app";
-    import type { IndexData, Document, Theme } from "../lib/types";
+    import type { IndexData, Document, DocumentSummary, Theme } from "../lib/types";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import Editor from "../lib/components/Editor.svelte";
 
@@ -16,12 +16,18 @@
             const indexData: IndexData = await invoke("get_all_documents");
             appStore.setWorkspacePath(path);
             appStore.setDocuments(indexData.documents);
-            appStore.setLinks(indexData.links);
-            appStore.setAllLinks(indexData.all_links);
-            appStore.setTodos(indexData.todos);
 
             const todayJournal: Document = await invoke("get_or_create_today_journal");
-            appStore.addDocument(todayJournal);
+            const summary: DocumentSummary = {
+                id: todayJournal.id,
+                doc_type: todayJournal.doc_type,
+                title: todayJournal.title,
+                todo_count: 0,
+                completed_todo_count: 0,
+                created_at: todayJournal.created_at,
+                updated_at: todayJournal.updated_at
+            };
+            appStore.addDocument(summary);
             appStore.setCurrentDocument(todayJournal);
 
             await invoke("save_recent_workspace", { workspacePath: path });

@@ -9,57 +9,57 @@ fn init_db_tables(conn: &rusqlite::Connection) -> Result<(), String> {
             id TEXT PRIMARY KEY,
             type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
             title TEXT NOT NULL,
-            content_json TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
+            crdt_state BLOB NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            is_deleted INTEGER DEFAULT 0 NOT NULL
         )",
         [],
     )
     .map_err(|e| e.to_string())?;
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS document_links (
-            source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            PRIMARY KEY (source_id, target_id),
-            FOREIGN KEY (source_id) REFERENCES documents(id) ON DELETE CASCADE,
-            FOREIGN KEY (target_id) REFERENCES documents(id) ON DELETE CASCADE
+        "CREATE TABLE IF NOT EXISTS document_index (
+            document_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            todo_count INTEGER DEFAULT 0 NOT NULL,
+            completed_todo_count INTEGER DEFAULT 0 NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(id)
         )",
         [],
     )
     .map_err(|e| e.to_string())?;
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS todos (
-            id TEXT PRIMARY KEY,
-            document_id TEXT NOT NULL,
-            text TEXT NOT NULL,
-            is_completed INTEGER NOT NULL CHECK(is_completed IN (0, 1)) DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        "CREATE TABLE IF NOT EXISTS attachments (
+            hash TEXT PRIMARY KEY,
+            mime_type TEXT NOT NULL,
+            local_path TEXT,
+            is_fully_downloaded INTEGER DEFAULT 0 NOT NULL,
+            created_at INTEGER NOT NULL
         )",
         [],
     )
     .map_err(|e| e.to_string())?;
 
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_todos_document ON todos(document_id)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_links_target ON document_links(target_id)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS images (
-            path TEXT PRIMARY KEY,
-            created_at TEXT DEFAULT (datetime('now')),
-            ref_count INTEGER DEFAULT 0
+        "CREATE TABLE IF NOT EXISTS sync_peers (
+            node_id TEXT PRIMARY KEY,
+            device_name TEXT NOT NULL,
+            last_synchronized INTEGER
         )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_is_deleted ON documents(is_deleted)",
         [],
     )
     .map_err(|e| e.to_string())?;

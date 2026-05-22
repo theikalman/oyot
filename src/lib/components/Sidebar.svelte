@@ -1,13 +1,14 @@
 <script lang="ts">
     import { appStore, documents, workspacePath, theme } from '../stores/app';
-    import type { Document, Theme } from '../types';
+    import type { Document, DocumentSummary, Theme } from '../types';
     import { invoke } from "@tauri-apps/api/core";
-    import { open } from "@tauri-apps/plugin-dialog";
 
     let { onSwitchWorkspace }: { onSwitchWorkspace: (path: string) => Promise<void> } = $props();
 
-    function handleDocClick(doc: Document) {
-        appStore.setCurrentDocument(doc);
+    function handleDocClick(doc: DocumentSummary) {
+        invoke<Document>('get_document', { docId: doc.id }).then(fullDoc => {
+            appStore.setCurrentDocument(fullDoc);
+        }).catch(err => console.error('Failed to load document:', err));
     }
 
     let searchInput = $state('');
@@ -17,46 +18,56 @@
     let showWorkspacePicker = $state(false);
     let recentWorkspaces = $state<string[]>([]);
 
-    function filterDocs(): Document[] {
+    function filterDocs(): DocumentSummary[] {
         const docList = $documents;
         if (!searchInput.trim()) return docList;
         const query = searchInput.toLowerCase();
-        return docList.filter((d: Document) => d.title.toLowerCase().includes(query));
+        return docList.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query));
     }
 
     let wsPath = $derived($workspacePath);
     let currentTheme = $derived($theme);
     let currentDocId = $derived($appStore.currentDocument?.id);
-    let journals = $derived($documents.filter((d: Document) => d.doc_type === 'journal'));
-    let notes = $derived($documents.filter((d: Document) => d.doc_type === 'note'));
+    let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
+    let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
     function workspaceName(path: string): string {
         return path.split("/").filter(Boolean).pop() ?? path;
     }
 
-    function filterJournals(): Document[] {
+    function filterJournals(): DocumentSummary[] {
         if (!searchInput.trim()) return journals;
         const query = searchInput.toLowerCase();
-        return journals.filter((d: Document) => d.title.toLowerCase().includes(query));
+        return journals.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query));
     }
 
-    function filterNotes(): Document[] {
+    function filterNotes(): DocumentSummary[] {
         if (!searchInput.trim()) return notes;
         const query = searchInput.toLowerCase();
-        return notes.filter((d: Document) => d.title.toLowerCase().includes(query));
+        return notes.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query));
     }
 
     async function createDocument() {
         if (!newDocTitle.trim() || !wsPath) return;
         
         try {
+            const emptyCrdtState = new Uint8Array([123, 34, 116, 121, 112, 101, 34, 58, 34, 100, 111, 99, 34, 44, 34, 99, 111, 110, 116, 101, 110, 116, 34, 58, 91, 93, 125]);
             const newDoc: Document = await invoke('create_document', {
                 docType: 'note',
                 title: newDocTitle.trim(),
-                contentJson: '{}'
+                crdtState: Array.from(emptyCrdtState)
             });
             
-            appStore.addDocument(newDoc);
+            const summary: DocumentSummary = {
+                id: newDoc.id,
+                doc_type: newDoc.doc_type,
+                title: newDoc.title,
+                todo_count: 0,
+                completed_todo_count: 0,
+                created_at: newDoc.created_at,
+                updated_at: newDoc.updated_at
+            };
+            appStore.addDocument(summary);
             appStore.setCurrentDocument(newDoc);
             
             newDocTitle = '';
