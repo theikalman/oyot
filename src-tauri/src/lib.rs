@@ -1,3 +1,5 @@
+use http::header::CONTENT_TYPE;
+use http::StatusCode;
 use regex::Regex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,14 @@ pub fn get_db_path(workspace_path: &str) -> PathBuf {
     PathBuf::from(workspace_path).join("oyot.db")
 }
 
+#[tauri::command]
+fn init_database(workspace_path: String) -> Result<String, String> {
+    let db_path = get_db_path(&workspace_path);
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+    init_db_tables(&conn)?;
+    Ok(db_path.to_string_lossy().to_string())
+}
+
 fn init_db_tables(conn: &Connection) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS documents (
@@ -105,6 +115,16 @@ fn init_db_tables(conn: &Connection) -> Result<(), String> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_links_target ON document_links(target_id)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS images (
+            path TEXT PRIMARY KEY,
+            created_at TEXT DEFAULT (datetime('now')),
+            ref_count INTEGER DEFAULT 0
+        )",
         [],
     )
     .map_err(|e| e.to_string())?;
@@ -242,14 +262,6 @@ fn format_journal_date(date_str: &str) -> Option<String> {
     let month_name = month_names.get(month as usize)?;
 
     Some(format!("{} {} {}", day, month_name, year))
-}
-
-#[tauri::command]
-fn init_database(workspace_path: String) -> Result<String, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-    init_db_tables(&conn)?;
-    Ok(db_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -400,6 +412,19 @@ fn update_document(
 fn delete_document(workspace_path: String, doc_id: String) -> Result<(), String> {
     let db_path = get_db_path(&workspace_path);
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    let content_json: Option<String> = conn
+        .query_row(
+            "SELECT content_json FROM documents WHERE id = ?",
+            params![doc_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(content) = content_json {
+        let image_paths = get_image_paths_from_content(&content);
+        decrement_image_ref_counts(&workspace_path, &image_paths)?;
+    }
 
     conn.execute("DELETE FROM documents WHERE id = ?", params![doc_id])
         .map_err(|e| e.to_string())?;
@@ -593,6 +618,13 @@ fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
 }
 
+fn get_current_workspace_path(app: &tauri::AppHandle) -> Option<String> {
+    let json = read_config(app);
+    json.get("current_workspace")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
@@ -636,6 +668,13 @@ fn save_recent_workspace(app: tauri::AppHandle, workspace_path: String) -> Resul
 }
 
 #[tauri::command]
+fn set_current_workspace(app: tauri::AppHandle, workspace_path: String) -> Result<(), String> {
+    let mut json = read_config(&app);
+    json["current_workspace"] = serde_json::json!(workspace_path);
+    write_config(&app, json)
+}
+
+#[tauri::command]
 fn get_theme(app: tauri::AppHandle) -> String {
     let json = read_config(&app);
     json.get("theme")
@@ -671,12 +710,185 @@ fn get_workspace_dir(app: tauri::AppHandle) -> Result<String, String> {
     Ok(workspace.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn save_image(
+    workspace_path: String,
+    image_data: String,
+    filename: String,
+) -> Result<String, String> {
+    let images_dir = PathBuf::from(&workspace_path).join("images");
+    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
+
+    let uuid = uuid_v4();
+    let sanitized = sanitize_filename(&filename);
+    let final_filename = format!("{}-{}", uuid, sanitized);
+
+    use base64::Engine;
+    let image_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&image_data)
+        .map_err(|e| e.to_string())?;
+
+    let full_path = images_dir.join(&final_filename);
+    std::fs::write(&full_path, image_bytes).map_err(|e| e.to_string())?;
+
+    let relative_path = format!("images/{}", final_filename);
+
+    let db_path = get_db_path(&workspace_path);
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO images (path, ref_count) VALUES (?, 1) 
+         ON CONFLICT(path) DO UPDATE SET ref_count = ref_count + 1",
+        params![&relative_path],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(relative_path)
+}
+
+#[tauri::command]
+fn delete_image(workspace_path: String, image_path: String) -> Result<(), String> {
+    let full_path = PathBuf::from(&workspace_path).join(&image_path);
+    if full_path.exists() {
+        std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
+    }
+
+    let db_path = get_db_path(&workspace_path);
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE images SET ref_count = ref_count - 1 WHERE path = ?",
+        params![&image_path],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute("DELETE FROM images WHERE ref_count <= 0", [])
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn cleanup_orphaned_images(workspace_path: String) -> Result<i32, String> {
+    let db_path = get_db_path(&workspace_path);
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    let orphaned: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT path FROM images WHERE ref_count <= 0")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let count = orphaned.len() as i32;
+    for path in &orphaned {
+        let full_path = PathBuf::from(&workspace_path).join(path);
+        if full_path.exists() {
+            let _ = std::fs::remove_file(&full_path);
+        }
+    }
+
+    conn.execute("DELETE FROM images WHERE ref_count <= 0", [])
+        .map_err(|e| e.to_string())?;
+
+    Ok(count)
+}
+
+fn sanitize_filename(filename: &str) -> String {
+    let parts: Vec<&str> = filename.rsplitn(2, '.').collect();
+    if parts.len() == 2 {
+        let name = parts[1];
+        let ext = parts[0];
+        let sanitized_name = name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+            .collect::<String>();
+        format!("{}.{}", sanitized_name, ext)
+    } else {
+        filename
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+            .collect()
+    }
+}
+
+fn get_image_paths_from_content(content_json: &str) -> Vec<String> {
+    let re = Regex::new(r#"src="(asset://([^"]+))""#).unwrap();
+    re.captures_iter(content_json)
+        .filter_map(|cap| cap.get(2).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+fn decrement_image_ref_counts(workspace_path: &str, paths: &[String]) -> Result<(), String> {
+    let db_path = get_db_path(workspace_path);
+    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    for path in paths {
+        conn.execute(
+            "UPDATE images SET ref_count = ref_count - 1 WHERE path = ?",
+            params![path],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    conn.execute("DELETE FROM images WHERE ref_count <= 0", [])
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .register_asynchronous_uri_scheme_protocol("asset", move |_ctx, request, responder| {
+            let uri = request.uri().to_string();
+
+            if let Some(relative_path) = uri.strip_prefix("asset://images/") {
+                if let Some(ws_path) = get_current_workspace_path(_ctx.app_handle()) {
+                    let full_path = PathBuf::from(&ws_path).join("images").join(relative_path);
+                    if full_path.exists() {
+                        match std::fs::read(&full_path) {
+                            Ok(data) => {
+                                let mime = match full_path.extension().and_then(|e| e.to_str()) {
+                                    Some("png") => "image/png",
+                                    Some("jpg") | Some("jpeg") => "image/jpeg",
+                                    Some("gif") => "image/gif",
+                                    Some("webp") => "image/webp",
+                                    Some("svg") => "image/svg+xml",
+                                    _ => "application/octet-stream",
+                                };
+                                responder.respond(
+                                    http::Response::builder()
+                                        .header(CONTENT_TYPE, mime)
+                                        .body(data)
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to read image: {}", e);
+                            }
+                        }
+                    } else {
+                        eprintln!("Image not found at path: {:?}", full_path);
+                    }
+                }
+            }
+
+            responder.respond(
+                http::Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .header(CONTENT_TYPE, "text/plain")
+                    .body("Not found".as_bytes().to_vec())
+                    .unwrap(),
+            );
+        })
         .invoke_handler(tauri::generate_handler![
             init_database,
             get_all_documents,
@@ -694,7 +906,11 @@ pub fn run() {
             get_theme,
             save_theme,
             get_app_data_dir,
-            get_workspace_dir
+            get_workspace_dir,
+            save_image,
+            delete_image,
+            cleanup_orphaned_images,
+            set_current_workspace
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

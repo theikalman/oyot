@@ -1,0 +1,130 @@
+import { open } from '@tauri-apps/plugin-dialog';
+import { readFile } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
+import { get } from 'svelte/store';
+import type { Editor } from '@tiptap/core';
+import '@tiptap/extension-image';
+import { workspacePath } from '../../stores/app';
+import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
+import { exitSuggestion } from '@tiptap/suggestion';
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+
+function arrayBufferToBase64(buffer: Uint8Array): string {
+    let binary = '';
+    const len = buffer.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(buffer[i]);
+    }
+    return btoa(binary);
+}
+
+export function registerImageCommand(editor: Editor): void {
+    const command: SlashCommand = {
+        id: 'image',
+        label: 'Insert Image',
+        icon: '🖼️',
+        onTrigger: () => {},
+        onSelect: (props: CommandSelectProps) => {
+            const range = props.range;
+            const ed = props.editor as Editor;
+            
+            exitSuggestion(ed.view);
+            ed.chain().focus().deleteRange(range).run();
+            
+            insertImageFromFile(ed);
+        }
+    };
+    commandRegistry.register(command);
+}
+
+export async function insertImageFromFile(editor: Editor): Promise<void> {
+    const filePath = await open({
+        multiple: false,
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }]
+    });
+
+    if (!filePath) return;
+
+    try {
+        const fileContent = await readFile(filePath);
+        const mimeType = getMimeType(filePath);
+        const blob = new Blob([fileContent], { type: mimeType });
+
+        if (!validateFileSize(blob)) return;
+
+        const wsPath = get(workspacePath);
+        if (!wsPath) {
+            console.error('Workspace path not available');
+            return;
+        }
+
+        const filename = filePath.split('/').pop() ?? filePath.split('\\').pop() ?? 'image.png';
+        const base64 = arrayBufferToBase64(fileContent);
+
+        const relativePath: string = await invoke('save_image', {
+            workspacePath: wsPath,
+            imageData: base64,
+            filename
+        });
+
+        insertImageNode(editor, `asset://${relativePath}`);
+    } catch (error) {
+        console.error('Failed to insert image:', error);
+        alert('Failed to insert image. Please try again.');
+    }
+}
+
+export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<void> {
+    if (!validateFileSize(blob)) return;
+
+    try {
+        const wsPath = get(workspacePath);
+        if (!wsPath) {
+            console.error('Workspace path not available');
+            return;
+        }
+
+        const arrayBuffer = await blob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const base64 = arrayBufferToBase64(uint8Array);
+
+        const ext = blob.type.split('/')[1] || 'png';
+        const filename = `${Date.now()}.${ext}`;
+
+        const relativePath: string = await invoke('save_image', {
+            workspacePath: wsPath,
+            imageData: base64,
+            filename
+        });
+
+        insertImageNode(editor, `asset://${relativePath}`);
+    } catch (error) {
+        console.error('Failed to insert image:', error);
+    }
+}
+
+function insertImageNode(editor: Editor, src: string): void {
+    editor.chain().focus().setImage({ src }).run();
+}
+
+function validateFileSize(blob: Blob): boolean {
+    if (blob.size > MAX_IMAGE_SIZE) {
+        alert('Image file is too large. Maximum size is 10MB.');
+        return false;
+    }
+    return true;
+}
+
+function getMimeType(filePath: string): string {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'svg': 'image/svg+xml'
+    };
+    return mimeTypes[ext ?? ''] ?? 'image/png';
+}
