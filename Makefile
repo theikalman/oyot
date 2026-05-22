@@ -1,5 +1,5 @@
 .PHONY: help install dev build run clean check fmt clippy \
-        release release-android release-ios release-tag
+        release release-android release-ios release-tag install-android
 
 # Only apply custom Rust path on macOS (Apple Silicon) — not needed on CI or Linux/Windows
 ifeq ($(shell uname -s),Darwin)
@@ -17,6 +17,7 @@ help:
 	@echo "Available commands:"
 	@echo "  make install          - Install npm dependencies"
 	@echo "  make dev              - Run development server"
+	@echo "  make install-android  - Build Android APK and install to tablet"
 	@echo "  make build            - Build the application"
 	@echo "  make run              - Build and run the application"
 	@echo "  make clean            - Clean build artifacts"
@@ -35,6 +36,13 @@ install:
 
 dev:
 	npm run tauri dev
+
+install-android:
+	npm run tauri android build -- --debug && \
+		cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
+		./apksigner sign --ks $(HOME)/repo/oyot/oyot.jks --ks-pass pass:ajiyakin123 --out /tmp/oyot-signed.apk $(HOME)/repo/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && \
+		cd $(ANDROID_HOME)/platform-tools/ && \
+		adb install -r /tmp/oyot-signed.apk
 
 build:
 	npm run tauri build
