@@ -86,11 +86,18 @@ jobs:
 
       - name: Setup Android signing
         run: |
+          echo "=== Secret length ==="
+          echo "${#ANDROID_SIGNING_KEY}"
           KEY_FILE="$RUNNER_TEMP/keystore.jks"
           P12_FILE="$RUNNER_TEMP/signing-key.p12"
-          printf '%s' "$ANDROID_SIGNING_KEY" | tr -d '\r\n ' | base64 -d > "$P12_FILE"
+          echo "$ANDROID_SIGNING_KEY" | base64 -d > "$P12_FILE"
+          echo "=== Decoded file size ==="
+          stat --printf="%s" "$P12_FILE"
+          echo ""
           if [ ! -s "$P12_FILE" ]; then
-            echo "ERROR: Decoded signing key is empty or invalid"
+            echo "ERROR: Decoded signing key is empty"
+            echo "=== Raw secret (first 20 chars) ==="
+            echo "${ANDROID_SIGNING_KEY:0:20}"
             exit 1
           fi
           keytool -importkeystore -srckeystore "$P12_FILE" -srcstoretype PKCS12 \
