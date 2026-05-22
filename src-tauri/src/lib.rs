@@ -67,12 +67,11 @@ fn get_workspace_path(app: &tauri::AppHandle) -> String {
 }
 
 fn init_iroh_endpoint_and_gossip(
-    workspace_path: String,
+    _workspace_path: String,
 ) -> Result<(iroh::Endpoint, Option<Arc<GossipBroadcaster>>), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async {
         use iroh_gossip::net::Gossip;
-        use iroh_gossip::api::Event;
         use network::gossip_broadcaster::{bytes_to_topic_id, GossipBroadcaster};
 
         let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
@@ -152,7 +151,7 @@ async fn handle_connection(
     workspace_path: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut accepting = incoming.accept().map_err(|e| format!("Accept error: {}", e))?;
+    let accepting = incoming.accept().map_err(|e| format!("Accept error: {}", e))?;
 
     let conn = accepting
         .await
@@ -418,7 +417,7 @@ fn update_attachment_db(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     hash: &str,
     mime_type: &str,
-    workspace_path: &str,
+    _workspace_path: &str,
 ) -> Result<(), String> {
     let ext = match mime_type {
         "image/png" => "png",

@@ -45,6 +45,7 @@ pub fn remove_peer(db: &rusqlite::Connection, node_id: &str) -> Result<(), Strin
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn mark_peer_online(db: &rusqlite::Connection, node_id: &str) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

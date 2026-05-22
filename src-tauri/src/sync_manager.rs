@@ -42,6 +42,7 @@ impl SyncManager {
         self.is_enabled
     }
 
+    #[allow(dead_code)]
     pub async fn trigger_sync(&self) -> Result<(), String> {
         if !self.is_enabled {
             return Err("Sync is disabled".to_string());
@@ -72,6 +73,7 @@ impl SyncManager {
         self.peers.lock().await.clone()
     }
 
+    #[allow(dead_code)]
     pub async fn mark_peer_online(&self, node_id: &str) {
         let mut peers = self.peers.lock().await;
         if let Some(peer) = peers.iter_mut().find(|p| p.node_id == node_id) {
@@ -79,6 +81,7 @@ impl SyncManager {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn mark_peer_offline(&self, node_id: &str) {
         let mut peers = self.peers.lock().await;
         if let Some(peer) = peers.iter_mut().find(|p| p.node_id == node_id) {
@@ -86,6 +89,7 @@ impl SyncManager {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn update_last_sync(&self, node_id: &str) {
         let mut peers = self.peers.lock().await;
         if let Some(peer) = peers.iter_mut().find(|p| p.node_id == node_id) {

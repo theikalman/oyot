@@ -4,7 +4,6 @@ use crate::indexer;
 use crate::network::peer_manager;
 use crate::network::sync_protocol::SyncMessage;
 use crate::sync_manager::SyncPeer;
-use futures_lite::StreamExt;
 use iroh::Endpoint;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -18,6 +17,7 @@ pub struct CrdtStateResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PeerList {
     pub peers: Vec<SyncPeer>,
 }
@@ -158,7 +158,7 @@ pub async fn get_sync_peers(state: tauri::State<'_, AppState>) -> Result<Vec<Syn
 
     let sync_manager = state.sync_manager.lock().await;
     for peer in &db_peers {
-        sync_manager.add_peer(peer.node_id.clone(), peer.device_name.clone()).await;
+        let _ = sync_manager.add_peer(peer.node_id.clone(), peer.device_name.clone()).await;
     }
     Ok(sync_manager.get_peers().await)
 }
@@ -284,7 +284,7 @@ async fn sync_with_peer(
                 if let Ok(msg) = SyncMessage::decode(&data) {
                     match msg {
                         SyncMessage::SendDocDelta { doc_id, delta } => {
-                            apply_crdt_delta_sync(db, &doc_id, &delta).await;
+                            let _ = apply_crdt_delta_sync(db, &doc_id, &delta).await;
                             let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
                         }
                         SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
@@ -371,7 +371,7 @@ fn update_attachment_db_sync(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     hash: &str,
     mime_type: &str,
-    workspace_path: &str,
+    _workspace_path: &str,
 ) -> Result<(), String> {
     let ext = match mime_type {
         "image/png" => "png",
