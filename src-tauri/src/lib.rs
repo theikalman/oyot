@@ -258,7 +258,7 @@ fn get_all_documents(workspace_path: String) -> Result<IndexData, String> {
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, type, title, content_json, created_at, updated_at FROM documents ORDER BY updated_at DESC"
+        "SELECT id, type, title, content_json, created_at, updated_at FROM documents ORDER BY created_at DESC"
     ).map_err(|e| e.to_string())?;
 
     let documents: Vec<Document> = stmt
