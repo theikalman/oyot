@@ -16,12 +16,6 @@ pub struct CrdtStateResult {
     pub crdt_state: Vec<u8>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct PeerList {
-    pub peers: Vec<SyncPeer>,
-}
-
 #[tauri::command]
 pub fn get_crdt_state(
     state: tauri::State<'_, AppState>,

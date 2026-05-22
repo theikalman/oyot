@@ -42,14 +42,6 @@ impl SyncManager {
         self.is_enabled
     }
 
-    #[allow(dead_code)]
-    pub async fn trigger_sync(&self) -> Result<(), String> {
-        if !self.is_enabled {
-            return Err("Sync is disabled".to_string());
-        }
-        Ok(())
-    }
-
     pub async fn add_peer(&self, node_id: String, device_name: String) -> Result<(), String> {
         let mut peers = self.peers.lock().await;
         if !peers.iter().any(|p| p.node_id == node_id) {
@@ -71,35 +63,6 @@ impl SyncManager {
 
     pub async fn get_peers(&self) -> Vec<SyncPeer> {
         self.peers.lock().await.clone()
-    }
-
-    #[allow(dead_code)]
-    pub async fn mark_peer_online(&self, node_id: &str) {
-        let mut peers = self.peers.lock().await;
-        if let Some(peer) = peers.iter_mut().find(|p| p.node_id == node_id) {
-            peer.is_online = true;
-        }
-    }
-
-    #[allow(dead_code)]
-    pub async fn mark_peer_offline(&self, node_id: &str) {
-        let mut peers = self.peers.lock().await;
-        if let Some(peer) = peers.iter_mut().find(|p| p.node_id == node_id) {
-            peer.is_online = false;
-        }
-    }
-
-    #[allow(dead_code)]
-    pub async fn update_last_sync(&self, node_id: &str) {
-        let mut peers = self.peers.lock().await;
-        if let Some(peer) = peers.iter_mut().find(|p| p.node_id == node_id) {
-            peer.last_synchronized = Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as i64
-            );
-        }
     }
 }
 

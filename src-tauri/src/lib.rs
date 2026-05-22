@@ -1,4 +1,3 @@
-mod attachment_manager;
 mod commands;
 mod crdt;
 mod db;

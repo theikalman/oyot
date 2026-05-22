@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
-pub const ALPN_PROTOCOL: &[u8] = b"oyot-sync-v1";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncMessage {
     Handshake {

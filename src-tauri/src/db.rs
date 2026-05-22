@@ -1,4 +1,3 @@
-use crate::attachment_manager::AttachmentManager;
 use crate::network::gossip_broadcaster::GossipBroadcaster;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -12,8 +11,6 @@ pub struct AppState {
     pub sync_manager: Arc<TokioMutex<crate::sync_manager::SyncManager>>,
     pub iroh_endpoint: Option<Arc<iroh::Endpoint>>,
     pub gossip_broadcaster: Option<Arc<GossipBroadcaster>>,
-    #[allow(dead_code)]
-    pub attachment_manager: Arc<AttachmentManager>,
     #[allow(dead_code)]
     pub app_handle: AppHandle,
 }
@@ -29,7 +26,6 @@ impl AppState {
             sync_manager: Arc::new(TokioMutex::new(crate::sync_manager::SyncManager::new())),
             iroh_endpoint: None,
             gossip_broadcaster: None,
-            attachment_manager: Arc::new(AttachmentManager::new(workspace_path, db)),
             app_handle,
         })
     }
