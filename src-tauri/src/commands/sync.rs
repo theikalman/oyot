@@ -148,3 +148,16 @@ pub async fn remove_sync_peer(
     let sync_manager = state.sync_manager.lock().await;
     sync_manager.remove_peer(&node_id).await
 }
+
+#[tauri::command]
+pub fn set_sync_enabled(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let mut sync_manager = state.sync_manager.blocking_lock();
+    sync_manager.set_enabled(enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let sync_manager = state.sync_manager.lock().await;
+    sync_manager.trigger_sync().await
+}

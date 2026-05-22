@@ -21,6 +21,7 @@ pub enum SyncMessage {
 pub struct SyncManager {
     peers: Arc<Mutex<Vec<SyncPeer>>>,
     node_id: Option<String>,
+    is_enabled: bool,
 }
 
 impl SyncManager {
@@ -28,6 +29,7 @@ impl SyncManager {
         Self {
             peers: Arc::new(Mutex::new(Vec::new())),
             node_id: None,
+            is_enabled: true,
         }
     }
 
@@ -37,6 +39,21 @@ impl SyncManager {
 
     pub fn get_node_id(&self) -> Option<String> {
         self.node_id.clone()
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.is_enabled = enabled;
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.is_enabled
+    }
+
+    pub async fn trigger_sync(&self) -> Result<(), String> {
+        if !self.is_enabled {
+            return Err("Sync is disabled".to_string());
+        }
+        Ok(())
     }
 
     pub async fn add_peer(&self, node_id: String, device_name: String) -> Result<(), String> {

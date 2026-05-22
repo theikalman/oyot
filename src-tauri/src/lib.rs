@@ -524,7 +524,9 @@ pub fn run() {
             get_node_id,
             add_sync_peer,
             get_sync_peers,
-            remove_sync_peer
+            remove_sync_peer,
+            set_sync_enabled,
+            trigger_sync
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
