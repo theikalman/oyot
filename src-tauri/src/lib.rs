@@ -846,49 +846,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .register_asynchronous_uri_scheme_protocol("asset", move |_ctx, request, responder| {
-            let uri = request.uri().to_string();
-
-            if let Some(relative_path) = uri.strip_prefix("asset://images/") {
-                if let Some(ws_path) = get_current_workspace_path(_ctx.app_handle()) {
-                    let full_path = PathBuf::from(&ws_path).join("images").join(relative_path);
-                    if full_path.exists() {
-                        match std::fs::read(&full_path) {
-                            Ok(data) => {
-                                let mime = match full_path.extension().and_then(|e| e.to_str()) {
-                                    Some("png") => "image/png",
-                                    Some("jpg") | Some("jpeg") => "image/jpeg",
-                                    Some("gif") => "image/gif",
-                                    Some("webp") => "image/webp",
-                                    Some("svg") => "image/svg+xml",
-                                    _ => "application/octet-stream",
-                                };
-                                responder.respond(
-                                    http::Response::builder()
-                                        .header(CONTENT_TYPE, mime)
-                                        .body(data)
-                                        .unwrap(),
-                                );
-                                return;
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to read image: {}", e);
-                            }
-                        }
-                    } else {
-                        eprintln!("Image not found at path: {:?}", full_path);
-                    }
-                }
-            }
-
-            responder.respond(
-                http::Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .header(CONTENT_TYPE, "text/plain")
-                    .body("Not found".as_bytes().to_vec())
-                    .unwrap(),
-            );
-        })
         .invoke_handler(tauri::generate_handler![
             init_database,
             get_all_documents,
