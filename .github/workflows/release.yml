@@ -84,20 +84,18 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Setup Android signing
+      - name: Decode Android signing keystore
         run: |
-          KEY_FILE="$RUNNER_TEMP/keystore.jks"
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | tr -d '\n' | base64 -d > "$KEY_FILE"
-          echo "=== Decoded file size ==="
-          stat --printf="%s" "$KEY_FILE"
-          echo ""
-          if [ ! -s "$KEY_FILE" ]; then
-            echo "ERROR: Decoded signing key is empty"
-            exit 1
-          fi
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" > src-tauri/gen/android/keystore.properties
-          echo "password=${{ secrets.KEY_STORE_PASSWORD }}" >> src-tauri/gen/android/keystore.properties
-          echo "storeFile=$KEY_FILE" >> src-tauri/gen/android/keystore.properties
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
+
+      - name: Build Android APK
+        run: npm run tauri android build -- --apk
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          ANDROID_SIGNING_KEY_PATH: $RUNNER_TEMP/keystore.jks
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
