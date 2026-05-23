@@ -81,7 +81,11 @@
             />
         {/if}
         <button class="toggle-btn" onclick={() => collapsed = !collapsed} title={collapsed ? 'Expand' : 'Collapse'}>
-            {collapsed ? '▶' : '◀'}
+            {#if collapsed}
+                <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M3 18h12"/></svg>
+            {:else}
+                <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M9 18h12"/></svg>
+            {/if}
         </button>
     </div>
 
@@ -176,23 +180,31 @@
         border-bottom: 1px solid var(--border-color);
         display: flex;
         align-items: center;
+        justify-content: space-between;
         gap: 8px;
         flex-shrink: 0;
+        height: 57px;
+        box-sizing: border-box;
     }
 
     .sidebar.collapsed .sidebar-header {
         justify-content: center;
-        padding: 12px 8px;
+        padding: 0 8px;
     }
 
     .toggle-btn {
         background: none;
         border: none;
         cursor: pointer;
-        font-size: 14px;
-        padding: 4px 8px;
+        padding: 4px;
         color: var(--text-secondary);
         border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        flex-shrink: 0;
     }
 
     .toggle-btn:hover {
@@ -205,13 +217,16 @@
     }
 
     .search-input {
-        width: 100%;
+        flex: 1;
         padding: 8px 12px;
         border: 1px solid var(--border-light);
         border-radius: 4px;
         font-size: 14px;
         background: var(--bg-primary);
         color: var(--text-primary);
+        height: 32px;
+        box-sizing: border-box;
+        min-width: 0;
     }
 
     .search-input::placeholder {
