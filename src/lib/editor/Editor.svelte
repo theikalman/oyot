@@ -99,8 +99,6 @@
 </script>
 
 <div class="editor-container">
-    <EditorHeader title={current?.title ?? ''} {isSaving} />
-
     {#if current}
         <Toolbar editor={editorInstance} />
         

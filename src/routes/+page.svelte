@@ -63,6 +63,9 @@
         <Sidebar />
         <div class="main-content">
             <div class="sync-status-container">
+                {#if activeDocument}
+                    <h1 class="page-title">{activeDocument.title}</h1>
+                {/if}
                 <SyncStatus />
             </div>
             {#if activeDocument}
@@ -159,10 +162,17 @@
 
     .sync-status-container {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        justify-content: space-between;
         padding: 12px 16px;
         border-bottom: 1px solid var(--border-color);
         min-height: 57px;
+    }
+
+    .page-title {
+        margin: 0;
+        font-size: 24px;
+        color: var(--text-primary);
     }
 
     .empty-state {
