@@ -20,6 +20,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tiptap/core": "^3.23.5",
     "@tiptap/extension-bubble-menu": "^3.23.5",
+    "@tiptap/extension-collaboration": "^3.23.5",
     "@tiptap/extension-image": "^3.23.6",
     "@tiptap/extension-placeholder": "^3.23.5",
     "@tiptap/extension-table": "^3.23.5",
@@ -31,7 +32,14 @@
     "@tiptap/extension-typography": "^3.23.5",
     "@tiptap/pm": "^3.23.5",
     "@tiptap/starter-kit": "^3.23.5",
-    "@tiptap/suggestion": "^3.23.5"
+    "@tiptap/suggestion": "^3.23.5",
+    "@types/qrcode": "^1.5.6",
+    "loro-crdt": "^1.12.1",
+    "loro-prosemirror": "^0.4.3",
+    "loro-wasm": "1.0",
+    "qrcode": "^1.5.4",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

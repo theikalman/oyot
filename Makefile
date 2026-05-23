@@ -35,7 +35,7 @@ install:
 	npm install
 
 dev:
-	npm run tauri dev
+	env RUST_BACKTRACE=full npm run tauri dev
 
 install-android:
 	npm run tauri android build -- --debug && \
