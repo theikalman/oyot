@@ -37,11 +37,10 @@
         if (!newDocTitle.trim()) return;
 
         try {
-            const emptyCrdtState = new Uint8Array([123, 34, 116, 121, 112, 101, 34, 58, 34, 100, 111, 99, 34, 44, 34, 99, 111, 110, 116, 101, 110, 116, 34, 58, 91, 93, 125]);
             const newDoc: Document = await invoke('create_document', {
                 docType: 'note',
                 title: newDocTitle.trim(),
-                crdtState: Array.from(emptyCrdtState)
+                crdtState: []
             });
 
             const summary: DocumentSummary = {

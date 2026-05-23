@@ -134,7 +134,7 @@ pub fn create_document(
     state: tauri::State<'_, AppState>,
     doc_type: String,
     title: String,
-    crdt_state: Vec<u8>,
+    _crdt_state: Vec<u8>,
 ) -> Result<Document, String> {
     let doc_id = if doc_type == "journal" {
         format_journal_date(&title).unwrap_or_else(|| title.clone())
@@ -142,6 +142,11 @@ pub fn create_document(
         uuid_v4()
     };
     let now = current_timestamp();
+
+    let empty_doc = loro::LoroDoc::new();
+    let crdt_state = empty_doc
+        .export(loro::ExportMode::Snapshot)
+        .map_err(|e| e.to_string())?;
 
     {
         let db = state.db.lock();
@@ -304,13 +309,16 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
         return Ok(doc);
     }
 
-    let empty_content = br#"{"type":"doc","content":[]}"#;
+    let empty_doc = loro::LoroDoc::new();
+    let empty_content = empty_doc
+        .export(loro::ExportMode::Snapshot)
+        .map_err(|e| e.to_string())?;
     let now = current_timestamp();
     {
         let db = state.db.lock();
         db.execute(
             "INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at) VALUES (?, 'journal', ?, ?, ?, ?)",
-            params![&doc_id, &today_title, empty_content.to_vec(), now, now],
+            params![&doc_id, &today_title, &empty_content, now, now],
         )
         .map_err(|e| e.to_string())?;
     }

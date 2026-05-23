@@ -32,14 +32,10 @@ export async function createDocument(
     crdtState?: Uint8Array
 ): Promise<Document> {
     try {
-        const emptyCrdtState = crdtState ?? new Uint8Array([
-            123, 34, 116, 121, 112, 101, 34, 58, 34, 100, 111, 99, 34, 44,
-            34, 99, 111, 110, 116, 101, 110, 116, 34, 58, 91, 93, 125
-        ]);
         const doc: Document = await invoke('create_document', {
             docType,
             title,
-            crdtState: Array.from(emptyCrdtState)
+            crdtState: crdtState ? Array.from(crdtState) : []
         });
         return doc;
     } catch (error) {
