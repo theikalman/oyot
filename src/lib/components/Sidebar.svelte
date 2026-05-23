@@ -1,7 +1,8 @@
 <script lang="ts">
-    import { appStore, documents, theme } from '../stores/app';
-    import type { Document, DocumentSummary, Theme } from '../types';
+    import { appStore, documents } from '../stores/app';
+    import type { Document, DocumentSummary } from '../types';
     import { invoke } from "@tauri-apps/api/core";
+    import { goto } from "$app/navigation";
 
     function handleDocClick(doc: DocumentSummary) {
         invoke<Document>('get_document', { docId: doc.id }).then(fullDoc => {
@@ -14,7 +15,6 @@
     let newDocTitle = $state('');
     let collapsed = $state(false);
 
-    let currentTheme = $derived($theme);
     let currentDocId = $derived($appStore.currentDocument?.id);
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
@@ -65,14 +65,8 @@
         showModal = false;
     }
 
-    async function toggleTheme() {
-        const next: Theme = currentTheme === 'light' ? 'dark' : 'light';
-        appStore.setTheme(next);
-        try {
-            await invoke('save_theme', { theme: next });
-        } catch (error) {
-            console.error('Failed to save theme:', error);
-        }
+    function goToSettings() {
+        goto('/settings');
     }
 </script>
 
@@ -127,11 +121,14 @@
 
         <div class="sidebar-footer">
             <button
-                class="theme-toggle-btn"
-                onclick={toggleTheme}
-                title={currentTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+                class="settings-btn"
+                onclick={goToSettings}
+                title="Settings"
             >
-                {currentTheme === 'light' ? '☾' : '☀'}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
             </button>
         </div>
     {/if}
@@ -304,19 +301,22 @@
         gap: 8px;
     }
 
-    .theme-toggle-btn {
+    .settings-btn {
         flex-shrink: 0;
-        padding: 8px 10px;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         background: transparent;
         color: var(--text-secondary);
         border: 1px solid var(--border-color);
-        border-radius: 6px;
-        font-size: 16px;
+        border-radius: 8px;
         cursor: pointer;
-        line-height: 1;
+        transition: background-color 0.15s, color 0.15s;
     }
 
-    .theme-toggle-btn:hover {
+    .settings-btn:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
     }
