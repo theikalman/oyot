@@ -3,12 +3,10 @@
     import type { Document, DocumentSummary, Theme } from '../types';
     import { invoke } from "@tauri-apps/api/core";
 
-    let { }: { } = $props();
-
     function handleDocClick(doc: DocumentSummary) {
         invoke<Document>('get_document', { docId: doc.id }).then(fullDoc => {
             appStore.setCurrentDocument(fullDoc);
-        }).catch(err => console.error('Failed to load document:', err));
+        }).catch(err => console.error('[Sidebar] Failed to load document:', err));
     }
 
     let searchInput = $state('');

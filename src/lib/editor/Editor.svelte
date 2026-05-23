@@ -4,8 +4,8 @@
     import { listen } from '@tauri-apps/api/event';
     import { currentDocument, appStore } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
-    import type { Document, DocumentSummary } from '$lib/types';
-    import { LoroApp } from '$lib/loro/loroApp';
+    import type { Document } from '$lib/types';
+    import type { LoroDocType } from 'loro-prosemirror';
     import { Toolbar, EditorHeader } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
     import { createSaveService, type EditorSaveService } from './EditorSaveService';
@@ -21,16 +21,16 @@
     }: Props = $props();
 
     let current = $derived($currentDocument);
-    let loroApp = $state<LoroApp | null>(null);
+    let loroDoc = $state<any>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
     let isSaving = $state(false);
     let unlistenSyncEvent: (() => void) | null = null;
     let previousDocId = $state<string | null>(null);
 
-    function handleEditorReady(editor: EditorType, loro: LoroApp) {
+    function handleEditorReady(editor: EditorType, doc: any) {
         editorInstance = editor;
-        loroApp = loro;
+        loroDoc = doc;
 
         if (saveService) {
             saveService.destroy();
@@ -44,7 +44,7 @@
 
         if (current) {
             saveService.setDocument(current);
-            saveService.setLoroApp(loro);
+            saveService.setLoroDoc(doc);
         }
     }
 

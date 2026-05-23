@@ -23,32 +23,14 @@
     } from '$lib/tiptap';
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import { LoroApp } from '$lib/loro/loroApp';
-    import { TiptapBinding, createInitialContent, isEmptyContent } from '$lib/loro/tiptapBinding';
-    import type { Document } from '$lib/types';
-
-    interface Props {
-        document: Document | null;
-        autoSave?: boolean;
-        debounceMs?: number;
-        onEditorReady?: (editor: EditorType, loroApp: LoroApp) => void;
-        onContentChange?: () => void;
-    }
-
-    let {
-        document,
-        autoSave = true,
-        debounceMs = 1000,
-        onEditorReady,
-        onContentChange
-    }: Props = $props();
-
-    let element = $state<HTMLDivElement | null>(null);
-    let editor = $state.raw<EditorType | null>(null);
-    let loroApp = $state.raw<LoroApp | null>(null);
-    let tiptapBinding = $state.raw<TiptapBinding | null>(null);
-    let isInitialized = $state.raw(false);
-    let currentDocId = $state.raw<string | null>(null);
+    import {
+        createLoroDoc,
+        createPresenceStore,
+        loadLoroDocFromState,
+        createInitialContent,
+        exportLoroDocSnapshot,
+        addLoroPluginsToEditor,
+    } from '$lib/loro/LoroEditorExtension';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -62,49 +44,52 @@
         }
     });
 
+    interface Props {
+        document: any | null;
+        autoSave?: boolean;
+        debounceMs?: number;
+        onEditorReady?: (editor: EditorType, loroDoc: any) => void;
+        onContentChange?: () => void;
+    }
+
+    let {
+        document,
+        autoSave = true,
+        debounceMs = 1000,
+        onEditorReady,
+        onContentChange
+    }: Props = $props();
+
+    let element = $state<HTMLDivElement | null>(null);
+    let editor = $state.raw<EditorType | null>(null);
+    let loroDoc = $state.raw<any>(null);
+    let isInitialized = $state.raw(false);
+    let currentDocId = $state.raw<string | null>(null);
+    let isLoadingLoro = $state.raw(false);
+
     let initialViewportHeight = 0;
     let keyboardOpen = $state(false);
     let keyboardHeight = $state(0);
 
     async function initializeEditor() {
-        if (!element) return false;
+        if (!element) {
+            return false;
+        }
 
-        if (loroApp) {
-            loroApp.destroy();
-            loroApp = null;
-        }
-        if (tiptapBinding) {
-            tiptapBinding.destroy();
-            tiptapBinding = null;
-        }
         if (editor) {
             editor.destroy();
             editor = null;
         }
-
-        const newLoroApp = new LoroApp();
-        try {
-            await newLoroApp.init();
-        } catch (error) {
-            console.error('[EditorInstance] Failed to init LoroApp:', error);
-            return false;
+        if (loroDoc) {
+            loroDoc = null;
         }
+
+        const newLoroDoc = await loadLoroDocFromState(
+            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array()
+        );
 
         const title = document?.title ?? 'Untitled';
         let initialContent: object = createInitialContent(title) as object;
-
-        if (document && document.crdt_state.length > 0) {
-            try {
-                const crdtState = new Uint8Array(document.crdt_state);
-                newLoroApp.loadDocument(crdtState);
-                const content = newLoroApp.getJsonContent();
-                if (content && !isEmptyContent(content)) {
-                    initialContent = JSON.parse(content);
-                }
-            } catch (error) {
-                console.error('[EditorInstance] Failed to load document:', error);
-            }
-        }
 
         const ed = new Editor({
             element,
@@ -131,7 +116,7 @@
                 Typography,
                 DocumentLinkNode,
                 SlashCommand,
-                ScrollOnFocus
+                ScrollOnFocus,
             ],
             content: initialContent,
             editable: true,
@@ -142,11 +127,6 @@
             }
         });
 
-        const binding = new TiptapBinding({
-            editor: ed,
-            loroApp: newLoroApp
-        });
-
         ed.view.dom.addEventListener('click', handleImageClick);
 
         registerDocumentLinkCommand(ed);
@@ -154,13 +134,15 @@
         registerTodoCommand(ed);
         registerImageCommand(ed);
 
-        loroApp = newLoroApp;
+        const presenceStore = await createPresenceStore(newLoroDoc);
+        await addLoroPluginsToEditor(ed, newLoroDoc, presenceStore);
+
+        loroDoc = newLoroDoc;
         editor = ed;
-        tiptapBinding = binding;
         isInitialized = true;
         currentDocId = document?.id ?? null;
 
-        onEditorReady?.(ed, newLoroApp);
+        onEditorReady?.(ed, newLoroDoc);
         return true;
     }
 
@@ -190,26 +172,22 @@
         const el = element;
         const doc = document;
 
-        if (el && !isInitialized && doc) {
-            initializeEditor();
+        if (el && !isInitialized && doc && !isLoadingLoro) {
+            isLoadingLoro = true;
+            initializeEditor().finally(() => {
+                isLoadingLoro = false;
+            });
         }
     });
 
     $effect(() => {
         const doc = document;
 
-        if (doc && editor && loroApp && isInitialized && doc.id !== currentDocId) {
-            try {
-                const crdtState = new Uint8Array(doc.crdt_state);
-                loroApp.loadDocument(crdtState);
-                const content = loroApp.getJsonContent();
-                if (content && !isEmptyContent(content)) {
-                    editor.commands.setContent(JSON.parse(content));
-                }
-                currentDocId = doc.id;
-            } catch (error) {
-                console.error('[EditorInstance] Failed to load document:', error);
-            }
+        if (doc && editor && loroDoc && isInitialized && doc.id !== currentDocId) {
+            isLoadingLoro = true;
+            initializeEditor().finally(() => {
+                isLoadingLoro = false;
+            });
         }
     });
 
@@ -228,17 +206,16 @@
             editor.destroy();
         }
 
-        if (tiptapBinding) {
-            tiptapBinding.destroy();
-        }
-
-        if (loroApp) {
-            loroApp.destroy();
-        }
+        loroDoc = null;
     });
 </script>
 
 <div class="editor-instance" style="padding-bottom: {keyboardOpen ? keyboardHeight : 0}px;">
+    {#if isLoadingLoro}
+        <div class="loading-editor">
+            <p>Loading editor...</p>
+        </div>
+    {/if}
     <div class="editor-content" bind:this={element}></div>
 </div>
 
@@ -250,6 +227,19 @@
         overflow: hidden;
         background: var(--bg-primary);
         color: var(--text-primary);
+    }
+
+    .loading-editor {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-primary);
+        color: var(--text-secondary);
     }
 
     .editor-content {
@@ -394,5 +384,30 @@
     .editor-content :global(.ProseMirror-selectednode [data-resize-handle]) {
         opacity: 1 !important;
         pointer-events: all !important;
+    }
+
+    .editor-content :global(.collaboration-cursor__caret) {
+        border-left: 1px solid #6366f1;
+        border-right: 1px solid #6366f1;
+        margin-left: -1px;
+        margin-right: -1px;
+        pointer-events: none;
+        position: relative;
+        word-break: normal;
+    }
+
+    .editor-content :global(.collaboration-cursor__label) {
+        border-radius: 3px 3px 3px 0;
+        color: white;
+        font-size: 11px;
+        font-weight: 600;
+        left: -1px;
+        line-height: normal;
+        padding: 2px 5px;
+        position: absolute;
+        top: -1.4em;
+        user-select: none;
+        white-space: nowrap;
+        pointer-events: none;
     }
 </style>

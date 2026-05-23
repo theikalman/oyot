@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import { LoroApp } from '$lib/loro/loroApp';
+import { exportLoroDocSnapshot } from '$lib/loro/LoroEditorExtension';
 import { toasts } from '$lib/services/toast';
-import type { Document, DocumentSummary } from '$lib/types';
+import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';
 
 export interface SaveServiceOptions {
@@ -11,7 +11,7 @@ export interface SaveServiceOptions {
 }
 
 export class EditorSaveService {
-    private loroApp: LoroApp | null = null;
+    private loroDoc: any = null;
     private currentDoc: Document | null = null;
     private saveTimeout: ReturnType<typeof setTimeout> | null = null;
     private debounceMs: number;
@@ -25,8 +25,8 @@ export class EditorSaveService {
         this.onSaved = options.onSaved;
     }
 
-    setLoroApp(app: LoroApp): void {
-        this.loroApp = app;
+    setLoroDoc(doc: any): void {
+        this.loroDoc = doc;
     }
 
     setDocument(doc: Document | null): void {
@@ -34,7 +34,7 @@ export class EditorSaveService {
     }
 
     triggerSave(): void {
-        if (this.isDestroyed || !this.currentDoc || !this.loroApp) return;
+        if (this.isDestroyed || !this.currentDoc || !this.loroDoc) return;
 
         if (this.saveTimeout) {
             clearTimeout(this.saveTimeout);
@@ -46,7 +46,7 @@ export class EditorSaveService {
     }
 
     async forceSave(): Promise<Document | null> {
-        if (this.isDestroyed || !this.currentDoc || !this.loroApp) {
+        if (this.isDestroyed || !this.currentDoc || !this.loroDoc) {
             return null;
         }
 
@@ -59,17 +59,16 @@ export class EditorSaveService {
     }
 
     private async performSave(): Promise<Document | null> {
-        if (!this.loroApp || !this.currentDoc) return null;
+        if (!this.loroDoc || !this.currentDoc) return null;
 
         this.onSaving?.();
 
         try {
-            const update = this.loroApp.getUpdate();
-            console.log('[EditorSaveService] getUpdate() returned', update.length, 'bytes');
-            const crdtState = Array.from(update);
+            const snapshot = exportLoroDocSnapshot(this.loroDoc);
+            const crdtState = Array.from(snapshot);
 
-            if (update.length === 0) {
-                console.warn('[EditorSaveService] No update to save, skipping');
+            if (snapshot.length === 0) {
+                console.warn('[EditorSaveService] No snapshot to save, skipping');
                 return null;
             }
 
@@ -78,18 +77,15 @@ export class EditorSaveService {
                 update: crdtState
             });
 
-            const metadata = this.loroApp.getMetadata();
-            const summary: DocumentSummary = {
+            appStore.updateDocumentInList({
                 id: updatedDoc.id,
                 doc_type: updatedDoc.doc_type,
-                title: metadata.title || updatedDoc.title,
-                todo_count: metadata.todo_count,
-                completed_todo_count: metadata.completed_todo_count,
+                title: updatedDoc.title,
+                todo_count: 0,
+                completed_todo_count: 0,
                 created_at: updatedDoc.created_at,
                 updated_at: updatedDoc.updated_at
-            };
-
-            appStore.updateDocumentInList(summary);
+            });
             this.onSaved?.(updatedDoc);
 
             return updatedDoc;
@@ -106,7 +102,7 @@ export class EditorSaveService {
             clearTimeout(this.saveTimeout);
             this.saveTimeout = null;
         }
-        this.loroApp = null;
+        this.loroDoc = null;
         this.currentDoc = null;
     }
 }
