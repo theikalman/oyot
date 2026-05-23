@@ -38,7 +38,7 @@ dev:
 	env RUST_BACKTRACE=full npm run tauri dev
 
 install-android:
-	npm run tauri android build -- --debug && \
+	npm run tauri android build -- --target aarch64 --debug && \
 		cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
 		./apksigner sign --ks $(HOME)/repo/oyot/oyot.jks --ks-pass pass:ajiyakin123 --out /tmp/oyot-signed.apk $(HOME)/repo/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && \
 		cd $(ANDROID_HOME)/platform-tools/ && \
