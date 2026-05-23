@@ -1,14 +1,16 @@
 <script lang="ts">
     interface Props {
-        title: string;
+        title?: string;
         isSaving: boolean;
     }
 
-    let { title, isSaving }: Props = $props();
+    let { title = '', isSaving }: Props = $props();
 </script>
 
 <div class="editor-header">
-    <h1>{title}</h1>
+    {#if title}
+        <h1>{title}</h1>
+    {/if}
     <div class="header-actions">
         {#if isSaving}
             <span class="saving-indicator">Saving...</span>
@@ -28,8 +30,7 @@
 
     .editor-header h1 {
         margin: 0;
-        flex: 1;
-        font-size: 24px;
+        font-size: 18px;
         color: var(--text-primary);
     }
 
