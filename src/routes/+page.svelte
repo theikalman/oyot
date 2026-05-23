@@ -1,127 +1,79 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { invoke } from "@tauri-apps/api/core";
-    import { open } from "@tauri-apps/plugin-dialog";
-    import { appStore, workspacePath, isLoading, currentDocument, theme } from "../lib/stores/app";
-    import type { IndexData, Document, Theme } from "../lib/types";
-    import Sidebar from "../lib/components/Sidebar.svelte";
-    import Editor from "../lib/components/Editor.svelte";
+    import { onMount, onDestroy } from 'svelte';
+    import { appStore, isLoading, currentDocument } from '$lib/stores/app';
+    import { initializeTheme, applyTheme } from '$lib/services/theme';
+    import { initializeSync, getSyncCleanup } from '$lib/services/sync';
+    import { loadAllDocuments, getOrCreateTodayJournal, cleanupOrphanedImages, toDocumentSummary } from '$lib/services/documents';
+    import Sidebar from '$lib/components/Sidebar.svelte';
+    import Editor from '$lib/editor/Editor.svelte';
+    import SyncStatus from '$lib/components/SyncStatus.svelte';
+    import ToastContainer from '$lib/components/ToastContainer.svelte';
 
-    let recentWorkspaces = $state<string[]>([]);
+    let activeDocument = $derived($currentDocument);
 
-    async function initWorkspace(path: string) {
+    async function init() {
         appStore.setLoading(true);
         try {
-            await invoke("init_database", { workspacePath: path });
-            const indexData: IndexData = await invoke("get_all_documents", { workspacePath: path });
-            appStore.setWorkspacePath(path);
+            const indexData = await loadAllDocuments();
             appStore.setDocuments(indexData.documents);
-            appStore.setLinks(indexData.links);
-            appStore.setAllLinks(indexData.all_links);
-            appStore.setTodos(indexData.todos);
 
-            const todayJournal: Document = await invoke("get_or_create_today_journal", { workspacePath: path });
-            appStore.addDocument(todayJournal);
+            const todayJournal = await getOrCreateTodayJournal();
+            const summary = toDocumentSummary(todayJournal);
+            appStore.addDocument(summary);
             appStore.setCurrentDocument(todayJournal);
 
-            await invoke("save_recent_workspace", { workspacePath: path });
-            await invoke("set_current_workspace", { workspacePath: path });
-            recentWorkspaces = await invoke("get_recent_workspaces");
-
-            try {
-                const deletedCount: number = await invoke("cleanup_orphaned_images", { workspacePath: path });
-                if (deletedCount > 0) {
-                    console.log(`Cleaned up ${deletedCount} orphaned image(s)`);
-                }
-            } catch (e) {
-                console.error("Failed to cleanup orphaned images:", e);
-            }
+            await cleanupOrphanedImages();
         } catch (error) {
-            console.error("Failed to initialize workspace:", error);
+            console.error('Failed to initialize:', error);
         } finally {
             appStore.setLoading(false);
         }
     }
 
-    async function openWorkspace() {
-        try {
-            const appDataDir: string = await invoke("get_workspace_dir");
-            await initWorkspace(appDataDir);
-        } catch (error) {
-            console.error("Failed to open workspace:", error);
-        }
-    }
-
     onMount(async () => {
-        // Load saved theme and apply it
         try {
-            const savedTheme: Theme = await invoke("get_theme");
+            const savedTheme = await initializeTheme();
             appStore.setTheme(savedTheme);
-            document.body.dataset.theme = savedTheme;
         } catch (error) {
-            console.error("Failed to load theme:", error);
-            document.body.dataset.theme = "light";
+            console.error('Failed to load theme:', error);
         }
 
         try {
-            const recents: string[] = await invoke("get_recent_workspaces");
-            recentWorkspaces = recents;
-            if (recents.length > 0) {
-                await initWorkspace(recents[0]);
-            }
+            await initializeSync();
         } catch (error) {
-            console.error("Failed to restore last workspace:", error);
+            console.error('Failed to init sync:', error);
         }
+
+        await init();
     });
 
-    // Reactively apply theme to <body> whenever the store changes
+    onDestroy(() => {
+        const cleanup = getSyncCleanup();
+        cleanup();
+    });
+
     $effect(() => {
-        document.body.dataset.theme = $theme;
+        const theme = $appStore.theme;
+        applyTheme(theme);
     });
-
-    let activeDocument = $derived($currentDocument);
-
-    function workspaceName(path: string): string {
-        return path.split("/").filter(Boolean).pop() ?? path;
-    }
 </script>
 
 <main class="app">
-    {#if !$workspacePath}
-        <div class="welcome">
-            <h1>Welcome to Oyot</h1>
-            <p>A lightweight personal knowledge management system</p>
-            {#if recentWorkspaces.length > 0}
-                <div class="recent-list">
-                    <p class="recent-label">Recent workspaces</p>
-                    {#each recentWorkspaces as path}
-                        <button class="recent-item" onclick={() => initWorkspace(path)}>
-                            <span class="recent-name">{workspaceName(path)}</span>
-                            <span class="recent-path">{path}</span>
-                        </button>
-                    {/each}
-                </div>
-                <button class="browse-btn" onclick={openWorkspace}>Browse...</button>
+    <div class="workspace">
+        <Sidebar />
+        <div class="main-content">
+            <div class="sync-status-container">
+                <SyncStatus />
+            </div>
+            {#if activeDocument}
+                <Editor />
             {:else}
-                <button class="open-workspace-btn" onclick={openWorkspace}>
-                    Open Workspace
-                </button>
+                <div class="empty-state">
+                    <p>Loading...</p>
+                </div>
             {/if}
         </div>
-    {:else}
-        <div class="workspace">
-            <Sidebar onSwitchWorkspace={initWorkspace} />
-            <div class="main-content">
-                {#if activeDocument}
-                    <Editor />
-                {:else}
-                    <div class="empty-state">
-                        <p>Select a document to edit</p>
-                    </div>
-                {/if}
-            </div>
-        </div>
-    {/if}
+    </div>
 
     {#if $isLoading}
         <div class="loading-overlay">
@@ -129,10 +81,11 @@
             <p>Loading...</p>
         </div>
     {/if}
+
+    <ToastContainer />
 </main>
 
 <style>
-    /* ── CSS custom properties (light theme defaults) ── */
     :global(:root) {
         --bg-primary: #ffffff;
         --bg-secondary: #f8f9fa;
@@ -153,7 +106,6 @@
         --loading-overlay-bg: rgba(255, 255, 255, 0.9);
     }
 
-    /* ── Dark theme overrides ── */
     :global([data-theme="dark"]) {
         --bg-primary: #1e1e1e;
         --bg-secondary: #252526;
@@ -191,106 +143,6 @@
         flex-direction: column;
     }
 
-    /* ── Welcome screen ── */
-    .welcome {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        padding: 40px;
-    }
-
-    .welcome h1 {
-        margin: 0 0 16px 0;
-        font-size: 32px;
-        color: var(--text-primary);
-    }
-
-    .welcome > p {
-        margin: 0 0 32px 0;
-        color: var(--text-secondary);
-    }
-
-    .open-workspace-btn {
-        padding: 12px 24px;
-        background: var(--accent-color);
-        color: white;
-        border: none;
-        border-radius: 6px;
-        font-size: 16px;
-        cursor: pointer;
-    }
-
-    .open-workspace-btn:hover {
-        background: var(--accent-hover);
-    }
-
-    /* ── Recent list on welcome screen ── */
-    .recent-list {
-        width: 100%;
-        max-width: 420px;
-        margin-bottom: 16px;
-        text-align: left;
-    }
-
-    .recent-label {
-        font-size: 12px;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        margin: 0 0 8px 0;
-        letter-spacing: 0.05em;
-    }
-
-    .recent-item {
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-        padding: 10px 12px;
-        margin-bottom: 4px;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        cursor: pointer;
-        text-align: left;
-    }
-
-    .recent-item:hover {
-        background: var(--bg-accent);
-        border-color: var(--accent-color);
-    }
-
-    .recent-name {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-
-    .recent-path {
-        font-size: 11px;
-        color: var(--text-muted);
-        margin-top: 2px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .browse-btn {
-        padding: 8px 16px;
-        background: var(--bg-hover);
-        color: var(--text-primary);
-        border: 1px solid var(--border-light);
-        border-radius: 6px;
-        font-size: 14px;
-        cursor: pointer;
-    }
-
-    .browse-btn:hover {
-        background: var(--border-color);
-    }
-
-    /* ── Workspace layout ── */
     .workspace {
         flex: 1;
         display: flex;
@@ -305,6 +157,13 @@
         background: var(--bg-primary);
     }
 
+    .sync-status-container {
+        display: flex;
+        justify-content: flex-end;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
     .empty-state {
         flex: 1;
         display: flex;
@@ -313,7 +172,6 @@
         color: var(--text-muted);
     }
 
-    /* ── Loading overlay ── */
     .loading-overlay {
         position: fixed;
         top: 0;

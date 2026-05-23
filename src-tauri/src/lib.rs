@@ -1,832 +1,431 @@
-use regex::Regex;
-use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tauri::Manager;
+mod commands;
+mod crdt;
+mod db;
+mod indexer;
+mod network;
+mod sync_manager;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Document {
-    pub id: String,
-    pub doc_type: String,
-    pub title: String,
-    pub content_json: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
+use crate::commands::*;
+use db::AppState;
+use futures_lite::StreamExt;
+use iroh::{Endpoint, EndpointId};
+use iroh_gossip::api::Event;
+use network::gossip_broadcaster::GossipBroadcaster;
+use network::sync_protocol::SyncMessage;
+use std::sync::Arc;
+use tauri::{Emitter, Manager};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DocumentLink {
-    pub source_id: String,
-    pub target_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Todo {
-    pub id: String,
-    pub document_id: String,
-    pub text: String,
-    pub is_completed: bool,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SearchResult {
-    pub id: String,
-    pub title: String,
-    pub line_number: i32,
-    pub line_content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct IndexData {
-    pub documents: Vec<Document>,
-    pub links: Vec<DocumentLink>,
-    pub all_links: Vec<String>,
-    pub todos: Vec<Todo>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JournalEntry {
-    pub id: String,
-    pub doc_type: String,
-    pub title: String,
-    pub content_json: String,
-    pub created_at: String,
-}
-
-pub fn get_db_path(workspace_path: &str) -> PathBuf {
-    PathBuf::from(workspace_path).join("oyot.db")
-}
-
-#[tauri::command]
-fn init_database(workspace_path: String) -> Result<String, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-    init_db_tables(&conn)?;
-    Ok(db_path.to_string_lossy().to_string())
-}
-
-fn init_db_tables(conn: &Connection) -> Result<(), String> {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS documents (
+pub fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
+    db.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,
             type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
             title TEXT NOT NULL,
-            content_json TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
+            crdt_state BLOB NOT NULL,
+            is_deleted INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
 
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS document_links (
-            source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            PRIMARY KEY (source_id, target_id),
-            FOREIGN KEY (source_id) REFERENCES documents(id) ON DELETE CASCADE,
-            FOREIGN KEY (target_id) REFERENCES documents(id) ON DELETE CASCADE
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
+        CREATE TABLE IF NOT EXISTS document_index (
+            document_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            todo_count INTEGER DEFAULT 0,
+            completed_todo_count INTEGER DEFAULT 0
+        );
 
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS todos (
-            id TEXT PRIMARY KEY,
-            document_id TEXT NOT NULL,
-            text TEXT NOT NULL,
-            is_completed INTEGER NOT NULL CHECK(is_completed IN (0, 1)) DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
+        CREATE TABLE IF NOT EXISTS attachments (
+            hash TEXT PRIMARY KEY,
+            mime_type TEXT NOT NULL,
+            local_path TEXT,
+            is_fully_downloaded INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL
+        );
 
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_todos_document ON todos(document_id)",
-        [],
+        CREATE TABLE IF NOT EXISTS sync_peers (
+            node_id TEXT PRIMARY KEY,
+            device_name TEXT NOT NULL,
+            last_synchronized INTEGER
+        );
+        ",
     )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_links_target ON document_links(target_id)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS images (
-            path TEXT PRIMARY KEY,
-            created_at TEXT DEFAULT (datetime('now')),
-            ref_count INTEGER DEFAULT 0
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
+    .map_err(|e| format!("Failed to create tables: {}", e))?;
     Ok(())
 }
 
-fn extract_wikilinks(content_json: &str) -> Vec<String> {
-    let re = Regex::new(r"\[\[(.+?)\]\]").unwrap();
-    re.captures_iter(content_json)
-        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-        .collect()
-}
+fn init_iroh_endpoint_and_gossip() -> Result<(iroh::Endpoint, Option<Arc<GossipBroadcaster>>), String> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    rt.block_on(async {
+        use iroh_gossip::net::Gossip;
+        use network::gossip_broadcaster::{bytes_to_topic_id, GossipBroadcaster};
 
-fn extract_todos_from_content(content_json: &str) -> Vec<(String, String, bool)> {
-    let mut todos = Vec::new();
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content_json) {
-        extract_todos_from_json(&parsed, &mut todos);
-    }
-    todos
-}
+        let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
+            .bind()
+            .await
+            .map_err(|e| format!("Failed to bind Iroh endpoint: {}", e))?;
 
-fn extract_todos_from_json(node: &serde_json::Value, todos: &mut Vec<(String, String, bool)>) {
-    if let Some(node_type) = node.get("type").and_then(|v| v.as_str()) {
-        if node_type == "taskItem" {
-            let id = node
-                .get("attrs")
-                .and_then(|a| a.get("id"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| uuid_v4());
+        let gossip = Gossip::builder().spawn(endpoint.clone());
+        let topic_bytes = bytes_to_topic_id("oyot-default-sync-v1");
+        let broadcaster = GossipBroadcaster::new(gossip, topic_bytes);
 
-            let text = node
-                .get("content")
-                .and_then(|c| c.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|n| n.get("text"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let completed = node
-                .get("attrs")
-                .and_then(|a| a.get("checked"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            todos.push((id, text, completed));
-        }
-    }
-
-    if let Some(content) = node.get("content").and_then(|c| c.as_array()) {
-        for child in content {
-            extract_todos_from_json(child, todos);
-        }
-    }
-}
-
-fn uuid_v4() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!("{:x}", timestamp)
-}
-
-fn update_document_links(
-    conn: &Connection,
-    doc_id: &str,
-    content_json: &str,
-) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM document_links WHERE source_id = ?",
-        params![doc_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    let links = extract_wikilinks(content_json);
-    for link in links {
-        let target_id = find_document_by_title(conn, &link);
-        if let Some(tid) = target_id {
-            conn.execute(
-                "INSERT INTO document_links (source_id, target_id) VALUES (?, ?)",
-                params![doc_id, tid],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok(())
-}
-
-fn find_document_by_title(conn: &Connection, title: &str) -> Option<String> {
-    conn.query_row(
-        "SELECT id FROM documents WHERE LOWER(title) = LOWER(?)",
-        params![title],
-        |row| row.get(0),
-    )
-    .ok()
-}
-
-fn update_document_todos(
-    conn: &Connection,
-    doc_id: &str,
-    content_json: &str,
-) -> Result<(), String> {
-    conn.execute("DELETE FROM todos WHERE document_id = ?", params![doc_id])
-        .map_err(|e| e.to_string())?;
-
-    let todos = extract_todos_from_content(content_json);
-    for (id, text, completed) in todos {
-        conn.execute(
-            "INSERT INTO todos (id, document_id, text, is_completed) VALUES (?, ?, ?, ?)",
-            params![id, doc_id, text, completed as i32],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
-}
-
-fn format_journal_date(date_str: &str) -> Option<String> {
-    let parts: Vec<&str> = date_str.split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let year: u32 = parts[0].parse().ok()?;
-    let month: u32 = parts[1].parse().ok()?;
-    let day: u32 = parts[2].parse().ok()?;
-
-    let month_names = [
-        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let month_name = month_names.get(month as usize)?;
-
-    Some(format!("{} {} {}", day, month_name, year))
-}
-
-#[tauri::command]
-fn get_all_documents(workspace_path: String) -> Result<IndexData, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let mut stmt = conn.prepare(
-        "SELECT id, type, title, content_json, created_at, updated_at FROM documents ORDER BY created_at DESC"
-    ).map_err(|e| e.to_string())?;
-
-    let documents: Vec<Document> = stmt
-        .query_map([], |row| {
-            Ok(Document {
-                id: row.get(0)?,
-                doc_type: row.get(1)?,
-                title: row.get(2)?,
-                content_json: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let mut stmt = conn
-        .prepare("SELECT source_id, target_id FROM document_links")
-        .map_err(|e| e.to_string())?;
-
-    let links: Vec<DocumentLink> = stmt
-        .query_map([], |row| {
-            Ok(DocumentLink {
-                source_id: row.get(0)?,
-                target_id: row.get(1)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, document_id, text, is_completed, created_at FROM todos ORDER BY created_at",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let todos: Vec<Todo> = stmt
-        .query_map([], |row| {
-            let is_completed: i32 = row.get(3)?;
-            Ok(Todo {
-                id: row.get(0)?,
-                document_id: row.get(1)?,
-                text: row.get(2)?,
-                is_completed: is_completed != 0,
-                created_at: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let all_links: Vec<String> = documents
-        .iter()
-        .filter(|d| d.doc_type == "note")
-        .map(|d| d.title.clone())
-        .collect();
-
-    Ok(IndexData {
-        documents,
-        links,
-        all_links,
-        todos,
+        Ok((endpoint, Some(Arc::new(broadcaster))))
     })
 }
 
-#[tauri::command]
-fn get_document(workspace_path: String, doc_id: String) -> Result<Document, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+fn spawn_sync_tasks(
+    endpoint: Option<Arc<Endpoint>>,
+    gossip: Option<Arc<GossipBroadcaster>>,
+    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    data_path: String,
+    app: tauri::AppHandle,
+) {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
 
-    let doc = conn.query_row(
-        "SELECT id, type, title, content_json, created_at, updated_at FROM documents WHERE id = ?",
-        params![doc_id],
-        |row| Ok(Document {
-            id: row.get(0)?,
-            doc_type: row.get(1)?,
-            title: row.get(2)?,
-            content_json: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-        }),
-    ).map_err(|e| e.to_string())?;
+        rt.block_on(async {
+            if let Some(endpoint) = endpoint {
+                let db_clone = db.clone();
+                let data_clone = data_path.clone();
+                let app_clone = app.clone();
+                tokio::spawn(async move {
+                    accept_incoming_connections(&endpoint, db_clone, data_clone, &app_clone).await;
+                });
+            }
 
-    Ok(doc)
+            if let Some(gossip) = gossip {
+                let db_clone = db.clone();
+                let data_clone = data_path.clone();
+                let app_clone = app.clone();
+                tokio::spawn(async move {
+                    handle_gossip_messages(gossip, db_clone, data_clone, app_clone).await;
+                });
+            }
+
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            }
+        });
+    });
 }
 
-#[tauri::command]
-fn create_document(
-    workspace_path: String,
-    doc_type: String,
-    title: String,
-    content_json: String,
-) -> Result<Document, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+async fn accept_incoming_connections(
+    endpoint: &Arc<Endpoint>,
+    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    data_path: String,
+    app: &tauri::AppHandle,
+) {
+    loop {
+        if let Some(incoming) = endpoint.accept().await {
+            let db = db.clone();
+            let data_path = data_path.clone();
+            let app = app.clone();
 
-    let doc_id = if doc_type == "journal" {
-        format_journal_date(&title).unwrap_or_else(|| title.clone())
-    } else {
-        uuid_v4()
-    };
-
-    conn.execute(
-        "INSERT INTO documents (id, type, title, content_json) VALUES (?, ?, ?, ?)",
-        params![doc_id, doc_type, title, content_json],
-    )
-    .map_err(|e| e.to_string())?;
-
-    update_document_links(&conn, &doc_id, &content_json)?;
-    update_document_todos(&conn, &doc_id, &content_json)?;
-
-    get_document(workspace_path, doc_id)
+            tokio::spawn(async move {
+                if let Err(e) = handle_connection(incoming, db, data_path, app).await {
+                    eprintln!("Error handling connection: {}", e);
+                }
+            });
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
 }
 
-#[tauri::command]
-fn update_document(
-    workspace_path: String,
-    doc_id: String,
-    title: String,
-    content_json: String,
-) -> Result<Document, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+async fn handle_connection(
+    incoming: iroh::endpoint::Incoming,
+    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    data_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let accepting = incoming.accept().map_err(|e| format!("Accept error: {}", e))?;
 
-    conn.execute(
-        "UPDATE documents SET title = ?, content_json = ?, updated_at = datetime('now') WHERE id = ?",
-        params![title, content_json, doc_id],
-    ).map_err(|e| e.to_string())?;
+    let conn = accepting
+        .await
+        .map_err(|e| format!("Connection error: {}", e))?;
 
-    update_document_links(&conn, &doc_id, &content_json)?;
-    update_document_todos(&conn, &doc_id, &content_json)?;
+    let remote_id = conn.remote_id();
+    let (mut send, mut recv) = conn
+        .accept_bi()
+        .await
+        .map_err(|e| format!("Failed to accept bi-stream: {}", e))?;
 
-    get_document(workspace_path, doc_id)
-}
+    let buf = recv
+        .read_to_end(1024 * 1024)
+        .await
+        .map_err(|e| format!("Read error: {}", e))?;
 
-#[tauri::command]
-fn delete_document(workspace_path: String, doc_id: String) -> Result<(), String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let content_json: Option<String> = conn
-        .query_row(
-            "SELECT content_json FROM documents WHERE id = ?",
-            params![doc_id],
-            |row| row.get(0),
-        )
-        .ok();
-
-    if let Some(content) = content_json {
-        let image_paths = get_image_paths_from_content(&content);
-        decrement_image_ref_counts(&workspace_path, &image_paths)?;
+    if buf.is_empty() {
+        return Ok(());
     }
 
-    conn.execute("DELETE FROM documents WHERE id = ?", params![doc_id])
-        .map_err(|e| e.to_string())?;
+    let msg = SyncMessage::decode(&buf).map_err(|e| format!("Decode error: {}", e))?;
+
+    match msg {
+        SyncMessage::RequestDoc { doc_id, state_vector: _ } => {
+            handle_doc_request(&mut send, &db, &doc_id, &app).await?;
+        }
+        SyncMessage::RequestBlob { hash } => {
+            handle_blob_request(&mut send, &db, &data_path, &hash).await?;
+        }
+        _ => {
+            eprintln!("Unexpected message type received");
+        }
+    }
+
+    let _ = app.emit("peer-connected", remote_id.to_string());
 
     Ok(())
 }
 
-#[tauri::command]
-fn search_documents(workspace_path: String, query: String) -> Result<Vec<SearchResult>, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+async fn handle_doc_request(
+    send: &mut iroh::endpoint::SendStream,
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    doc_id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let crdt_state: Vec<u8> = {
+        let db_lock = db.lock();
+        db_lock
+            .query_row(
+                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
+                [doc_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default()
+    };
 
-    let search_pattern = format!("%{}%", query.to_lowercase());
+    let response = SyncMessage::SendDocDelta {
+        doc_id: doc_id.to_string(),
+        delta: crdt_state,
+    };
 
-    let mut stmt = conn.prepare(
-        "SELECT id, title, content_json FROM documents WHERE LOWER(title) LIKE ? OR LOWER(content_json) LIKE ?"
-    ).map_err(|e| e.to_string())?;
+    let encoded = response.encode();
+    send.write_all(&encoded)
+        .await
+        .map_err(|e| format!("Write error: {}", e))?;
+    let _ = send.finish();
 
-    let docs: Vec<(String, String, String)> = stmt
-        .query_map(params![&search_pattern, &search_pattern], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+    let _ = app.emit("sync-complete", doc_id);
 
-    let query_lower = query.to_lowercase();
-    let mut results: Vec<SearchResult> = Vec::new();
+    Ok(())
+}
 
-    for (id, title, content) in docs {
-        for (line_num, line) in content.lines().enumerate() {
-            if line.to_lowercase().contains(&query_lower) {
-                results.push(SearchResult {
-                    id: id.clone(),
-                    title: title.clone(),
-                    line_number: (line_num + 1) as i32,
-                    line_content: line.to_string(),
-                });
+async fn handle_blob_request(
+    send: &mut iroh::endpoint::SendStream,
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    data_path: &str,
+    hash: &str,
+) -> Result<(), String> {
+    let (data, mime_type): (Option<Vec<u8>>, Option<String>) = {
+        let db_lock = db.lock();
+        let result: Option<(String, String)> = db_lock
+            .query_row(
+                "SELECT local_path, mime_type FROM attachments WHERE hash = ? AND is_fully_downloaded = 1",
+                [hash],
+                |row| {
+                    let local_path: String = row.get(0)?;
+                    let mime_type: String = row.get(1)?;
+                    Ok((local_path, mime_type))
+                },
+            )
+            .ok();
+
+        if let Some((local_path, mime_type)) = result {
+            let full_path = std::path::PathBuf::from(data_path).join(&local_path);
+            let data = std::fs::read(&full_path).ok();
+            (data, Some(mime_type))
+        } else {
+            (None, None)
+        }
+    };
+
+    let response = if let (Some(data), Some(mime)) = (data, mime_type) {
+        SyncMessage::SendBlob {
+            hash: hash.to_string(),
+            data,
+            mime_type: mime,
+        }
+    } else {
+        SyncMessage::BlobReceived {
+            hash: hash.to_string(),
+        }
+    };
+
+    let encoded = response.encode();
+    send.write_all(&encoded)
+        .await
+        .map_err(|e| format!("Write error: {}", e))?;
+    let _ = send.finish();
+
+    Ok(())
+}
+
+async fn handle_gossip_messages(
+    gossip: Arc<GossipBroadcaster>,
+    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    data_path: String,
+    app: tauri::AppHandle,
+) {
+    let gossip_net = gossip.gossip().clone();
+    let topic_id = gossip.topic_id();
+    let db_clone = db.clone();
+    let data_clone = data_path.clone();
+    let app_clone = app.clone();
+
+    let topic = match gossip_net.subscribe(topic_id, vec![]).await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Failed to subscribe to gossip topic: {}", e);
+            return;
+        }
+    };
+
+    let (_sender, mut receiver) = topic.split();
+
+    while let Some(result) = receiver.next().await {
+        match result {
+            Ok(Event::Received(msg)) => {
+                let db = db_clone.clone();
+                let data_path = data_clone.clone();
+                let app = app_clone.clone();
+                let from = msg.delivered_from;
+                if let Err(e) = process_gossip_message(&db, &data_path, &app, from, msg.content.as_ref()).await {
+                    eprintln!("Error processing gossip: {}", e);
+                }
+            }
+            Ok(Event::NeighborUp(who)) => {
+                let _ = app_clone.emit("peer-connected", who.to_string());
+            }
+            Ok(Event::NeighborDown(who)) => {
+                let _ = app_clone.emit("peer-disconnected", who.to_string());
+            }
+            Ok(Event::Lagged) => {
+                eprintln!("Gossip receiver lagged behind");
+            }
+            Err(e) => {
+                eprintln!("Gossip receive error: {}", e);
             }
         }
     }
-
-    Ok(results)
 }
 
-#[tauri::command]
-fn get_backlinks(workspace_path: String, target_title: String) -> Result<Vec<Document>, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let target_id = find_document_by_title(&conn, &target_title);
-    if target_id.is_none() {
-        return Ok(Vec::new());
+async fn process_gossip_message(
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    data_path: &str,
+    app: &tauri::AppHandle,
+    from: EndpointId,
+    data: &[u8],
+) -> Result<(), String> {
+    if let Ok(msg) = SyncMessage::decode(data) {
+        match msg {
+            SyncMessage::SendDocDelta { doc_id, delta } => {
+                let _ = apply_crdt_delta(db, &doc_id, &delta).await;
+                let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from.to_string() }));
+            }
+            SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
+                let _ = save_blob_to_disk(data_path, &hash, &mime_type, &blob_data);
+                let _ = update_attachment_db(db, &hash, &mime_type, data_path);
+                let _ = app.emit("blob-received", serde_json::json!({ "hash": hash }));
+            }
+            SyncMessage::BlobReceived { hash } => {
+                let _ = app.emit("blob-request-ack", serde_json::json!({ "hash": hash }));
+            }
+            _ => {}
+        }
     }
-
-    let target_id = target_id.unwrap();
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT d.id, d.type, d.title, d.content_json, d.created_at, d.updated_at 
-         FROM documents d
-         JOIN document_links l ON d.id = l.source_id 
-         WHERE l.target_id = ?",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let backlinks: Vec<Document> = stmt
-        .query_map(params![target_id], |row| {
-            Ok(Document {
-                id: row.get(0)?,
-                doc_type: row.get(1)?,
-                title: row.get(2)?,
-                content_json: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(backlinks)
+    Ok(())
 }
 
-#[tauri::command]
-fn get_journals(workspace_path: String) -> Result<Vec<JournalEntry>, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let mut stmt = conn.prepare(
-        "SELECT id, type, title, content_json, created_at FROM documents WHERE type = 'journal' ORDER BY created_at DESC"
-    ).map_err(|e| e.to_string())?;
-
-    let journals: Vec<JournalEntry> = stmt
-        .query_map([], |row| {
-            Ok(JournalEntry {
-                id: row.get(0)?,
-                doc_type: row.get(1)?,
-                title: row.get(2)?,
-                content_json: row.get(3)?,
-                created_at: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(journals)
-}
-
-#[tauri::command]
-fn get_or_create_today_journal(workspace_path: String) -> Result<Document, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let today_title = get_today_date();
-
-    let result: Option<Document> = conn.query_row(
-        "SELECT id, type, title, content_json, created_at, updated_at FROM documents WHERE type = 'journal' AND title = ?",
-        params![&today_title],
-        |row| Ok(Document {
-            id: row.get(0)?,
-            doc_type: row.get(1)?,
-            title: row.get(2)?,
-            content_json: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-        })
-    ).ok();
-
-    if let Some(doc) = result {
-        return Ok(doc);
-    }
-
-    let empty_content = r#"{"type":"doc","content":[]}"#;
-    let doc_id = format_journal_date(&today_title).unwrap_or_else(|| today_title.clone());
-    conn.execute(
-        "INSERT INTO documents (id, type, title, content_json) VALUES (?, 'journal', ?, ?)",
-        params![&doc_id, &today_title, empty_content],
-    )
-    .map_err(|e| e.to_string())?;
-
-    get_document(workspace_path, doc_id)
-}
-
-fn get_today_date() -> String {
-    let now = chrono::Local::now();
-    now.format("%Y-%m-%d").to_string()
-}
-
-#[tauri::command]
-fn get_todos(workspace_path: String) -> Result<Vec<Todo>, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, document_id, text, is_completed, created_at FROM todos ORDER BY created_at",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let todos: Vec<Todo> = stmt
-        .query_map([], |row| {
-            let is_completed: i32 = row.get(3)?;
-            Ok(Todo {
-                id: row.get(0)?,
-                document_id: row.get(1)?,
-                text: row.get(2)?,
-                is_completed: is_completed != 0,
-                created_at: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(todos)
-}
-
-const MAX_RECENT_WORKSPACES: usize = 5;
-
-fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
-    let config_path = match app.path().app_data_dir().ok() {
-        Some(dir) => dir.join("config.json"),
-        None => return serde_json::Value::Object(Default::default()),
+async fn apply_crdt_delta(
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    doc_id: &str,
+    delta: &[u8],
+) -> Result<(), String> {
+    let current_state: Vec<u8> = {
+        let db_lock = db.lock();
+        db_lock
+            .query_row(
+                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
+                [doc_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default()
     };
-    let content = match std::fs::read_to_string(config_path).ok() {
-        Some(c) => c,
-        None => return serde_json::Value::Object(Default::default()),
-    };
-    serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
-}
 
-fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
-    let config_path = app_data_dir.join("config.json");
-    std::fs::write(config_path, json.to_string()).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn get_recent_workspaces(app: tauri::AppHandle) -> Vec<String> {
-    let json = read_config(&app);
-    json.get("recent_workspaces")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-#[tauri::command]
-fn save_recent_workspace(app: tauri::AppHandle, workspace_path: String) -> Result<(), String> {
-    let mut json = read_config(&app);
-
-    // Read existing list, deduplicate, prepend new path, cap at MAX
-    let mut recents: Vec<String> = json
-        .get("recent_workspaces")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-    recents.retain(|p| p != &workspace_path);
-    recents.insert(0, workspace_path);
-    recents.truncate(MAX_RECENT_WORKSPACES);
-
-    json["recent_workspaces"] = serde_json::json!(recents);
-    write_config(&app, json)
-}
-
-#[tauri::command]
-fn set_current_workspace(app: tauri::AppHandle, workspace_path: String) -> Result<(), String> {
-    let mut json = read_config(&app);
-    json["current_workspace"] = serde_json::json!(workspace_path);
-    write_config(&app, json)
-}
-
-#[tauri::command]
-fn get_theme(app: tauri::AppHandle) -> String {
-    let json = read_config(&app);
-    json.get("theme")
-        .and_then(|v| v.as_str())
-        .filter(|s| *s == "light" || *s == "dark")
-        .unwrap_or("light")
-        .to_string()
-}
-
-#[tauri::command]
-fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
-    if theme != "light" && theme != "dark" {
-        return Err(format!("Invalid theme: {}", theme));
+    let mut doc = crate::crdt::CrdtDocument::new();
+    if !current_state.is_empty() {
+        doc.load_from_state(&current_state)?;
     }
-    let mut json = read_config(&app);
-    json["theme"] = serde_json::json!(theme);
-    write_config(&app, json)
-}
+    doc.apply_update(delta)?;
+    let new_state = doc.export_state();
 
-#[tauri::command]
-fn get_app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
-    app.path()
-        .app_data_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
-}
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
 
-#[tauri::command]
-fn get_workspace_dir(app: tauri::AppHandle) -> Result<String, String> {
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let workspace = app_data.join("Oyot");
-    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
-    Ok(workspace.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-fn save_image(
-    workspace_path: String,
-    image_data: String,
-    filename: String,
-) -> Result<String, String> {
-    let images_dir = PathBuf::from(&workspace_path).join("images");
-    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
-
-    let uuid = uuid_v4();
-    let sanitized = sanitize_filename(&filename);
-    let final_filename = format!("{}-{}", uuid, sanitized);
-
-    use base64::Engine;
-    let image_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&image_data)
-        .map_err(|e| e.to_string())?;
-
-    let full_path = images_dir.join(&final_filename);
-    std::fs::write(&full_path, image_bytes).map_err(|e| e.to_string())?;
-
-    let relative_path = format!("images/{}", final_filename);
-
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "INSERT INTO images (path, ref_count) VALUES (?, 1) 
-         ON CONFLICT(path) DO UPDATE SET ref_count = ref_count + 1",
-        params![&relative_path],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(relative_path)
-}
-
-#[tauri::command]
-fn delete_image(workspace_path: String, image_path: String) -> Result<(), String> {
-    let full_path = PathBuf::from(&workspace_path).join(&image_path);
-    if full_path.exists() {
-        std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
+    {
+        let db_lock = db.lock();
+        db_lock
+            .execute(
+                "UPDATE documents SET crdt_state = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
+                rusqlite::params![&new_state, now, doc_id],
+            )
+            .map_err(|e| e.to_string())?;
     }
 
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "UPDATE images SET ref_count = ref_count - 1 WHERE path = ?",
-        params![&image_path],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute("DELETE FROM images WHERE ref_count <= 0", [])
-        .map_err(|e| e.to_string())?;
+    crate::indexer::update_document_index(&db.lock(), doc_id, &new_state)?;
 
     Ok(())
 }
 
-#[tauri::command]
-fn cleanup_orphaned_images(workspace_path: String) -> Result<i32, String> {
-    let db_path = get_db_path(&workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let orphaned: Vec<String> = {
-        let mut stmt = conn
-            .prepare("SELECT path FROM images WHERE ref_count <= 0")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| e.to_string())?;
-        rows.filter_map(|r| r.ok()).collect()
+fn save_blob_to_disk(data_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
+    let ext = match mime_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "bin",
     };
+    let filename = format!("{}.{}", hash, ext);
 
-    let count = orphaned.len() as i32;
-    for path in &orphaned {
-        let full_path = PathBuf::from(&workspace_path).join(path);
-        if full_path.exists() {
-            let _ = std::fs::remove_file(&full_path);
-        }
-    }
+    let attachments_dir = std::path::PathBuf::from(data_path).join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
-    conn.execute("DELETE FROM images WHERE ref_count <= 0", [])
-        .map_err(|e| e.to_string())?;
+    let full_path = attachments_dir.join(&filename);
+    std::fs::write(&full_path, data).map_err(|e| e.to_string())?;
 
-    Ok(count)
+    Ok(format!("attachments/{}", filename))
 }
 
-fn sanitize_filename(filename: &str) -> String {
-    let parts: Vec<&str> = filename.rsplitn(2, '.').collect();
-    if parts.len() == 2 {
-        let name = parts[1];
-        let ext = parts[0];
-        let sanitized_name = name
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-            .collect::<String>();
-        format!("{}.{}", sanitized_name, ext)
-    } else {
-        filename
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-            .collect()
-    }
-}
+fn update_attachment_db(
+    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    hash: &str,
+    mime_type: &str,
+    _data_path: &str,
+) -> Result<(), String> {
+    let ext = match mime_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "bin",
+    };
+    let filename = format!("{}.{}", hash, ext);
+    let relative_path = format!("attachments/{}", filename);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
 
-fn get_image_paths_from_content(content_json: &str) -> Vec<String> {
-    let re = Regex::new(r#"src="(asset://([^"]+))""#).unwrap();
-    re.captures_iter(content_json)
-        .filter_map(|cap| cap.get(2).map(|m| m.as_str().to_string()))
-        .collect()
-}
-
-fn decrement_image_ref_counts(workspace_path: &str, paths: &[String]) -> Result<(), String> {
-    let db_path = get_db_path(workspace_path);
-    let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    for path in paths {
-        conn.execute(
-            "UPDATE images SET ref_count = ref_count - 1 WHERE path = ?",
-            params![path],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    conn.execute("DELETE FROM images WHERE ref_count <= 0", [])
-        .map_err(|e| e.to_string())?;
+    let db_lock = db.lock();
+    db_lock.execute(
+        "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
+        rusqlite::params![hash, mime_type, &relative_path, now],
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -837,8 +436,54 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .setup(|app| {
+            let app_data_dir = app.handle().path().app_data_dir()
+                .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+            let data_path = app_data_dir.to_string_lossy().to_string();
+
+            let mut state = AppState::new(app.handle().clone())?;
+
+            {
+                let db = state.db.lock();
+                setup_database_tables(&db)?;
+            }
+
+            match init_iroh_endpoint_and_gossip() {
+                Ok((endpoint, gossip)) => {
+                    let node_id = endpoint.id().to_string();
+                    let mut sync_manager = state.sync_manager.blocking_lock();
+                    sync_manager.set_node_id(node_id.clone());
+                    drop(sync_manager);
+
+                    state.iroh_endpoint = Some(Arc::new(endpoint));
+
+                    state.gossip_broadcaster = gossip;
+
+                    spawn_sync_tasks(
+                        state.iroh_endpoint.clone(),
+                        state.gossip_broadcaster.clone(),
+                        state.db.clone(),
+                        data_path,
+                        app.handle().clone(),
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to initialize Iroh endpoint: {}", e);
+                    let data_path = state.data_dir.to_string_lossy().to_string();
+                    spawn_sync_tasks(
+                        None,
+                        None,
+                        state.db.clone(),
+                        data_path,
+                        app.handle().clone(),
+                    );
+                }
+            }
+
+            app.manage(state);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
-            init_database,
             get_all_documents,
             get_document,
             create_document,
@@ -847,18 +492,27 @@ pub fn run() {
             search_documents,
             get_backlinks,
             get_journals,
-            get_todos,
             get_or_create_today_journal,
-            get_recent_workspaces,
-            save_recent_workspace,
             get_theme,
             save_theme,
-            get_app_data_dir,
-            get_workspace_dir,
             save_image,
             delete_image,
             cleanup_orphaned_images,
-            set_current_workspace
+            get_attachment_path,
+            request_attachment,
+            get_attachment_info,
+            list_pending_attachments,
+            get_local_blob_url,
+            get_all_attachment_hashes,
+            get_crdt_state,
+            save_crdt_update,
+            export_document_update_since,
+            get_node_id,
+            add_sync_peer,
+            get_sync_peers,
+            remove_sync_peer,
+            set_sync_enabled,
+            trigger_sync
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

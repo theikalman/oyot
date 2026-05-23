@@ -1,13 +1,9 @@
 import { writable, derived } from 'svelte/store';
-import type { Document, DocumentLink, Todo, Theme } from '../types';
+import type { Document, DocumentSummary, SearchResult, Theme, ViewMode, SyncPeer } from '../types';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
-        workspacePath: null as string | null,
-        documents: [] as Document[],
-        links: [] as DocumentLink[],
-        allLinks: [] as string[],
-        todos: [] as Todo[],
+        documents: [] as DocumentSummary[],
         currentDocument: null as Document | null,
         isLoading: false,
         theme: 'light' as Theme
@@ -15,24 +11,16 @@ function createAppStore() {
 
     return {
         subscribe,
-        setWorkspacePath: (path: string) => update(s => ({ ...s, workspacePath: path })),
-        setDocuments: (documents: Document[]) => update(s => ({ ...s, documents })),
-        setLinks: (links: DocumentLink[]) => update(s => ({ ...s, links })),
-        setAllLinks: (links: string[]) => update(s => ({ ...s, allLinks: links })),
-        setTodos: (todos: Todo[]) => update(s => ({ ...s, todos })),
+        setDocuments: (documents: DocumentSummary[]) => update(s => ({ ...s, documents })),
         setCurrentDocument: (doc: Document | null) => update(s => ({ ...s, currentDocument: doc })),
         setLoading: (loading: boolean) => update(s => ({ ...s, isLoading: loading })),
         setTheme: (theme: Theme) => update(s => ({ ...s, theme })),
-        updateDocumentInList: (updatedDoc: Document) => update(s => ({
+        updateDocumentInList: (updatedDoc: DocumentSummary) => update(s => ({
             ...s,
             documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d),
-            currentDocument: s.currentDocument?.id === updatedDoc.id ? updatedDoc : s.currentDocument
+            currentDocument: s.currentDocument?.id === updatedDoc.id ? s.currentDocument : s.currentDocument
         })),
-        updateDocumentInListOnly: (updatedDoc: Document) => update(s => ({
-            ...s,
-            documents: s.documents.map(d => d.id === updatedDoc.id ? updatedDoc : d)
-        })),
-        addDocument: (doc: Document) => update(s => {
+        addDocument: (doc: DocumentSummary) => update(s => {
             const exists = s.documents.some(d => d.id === doc.id);
             if (exists) return s;
             return {
@@ -46,11 +34,7 @@ function createAppStore() {
             currentDocument: s.currentDocument?.id === docId ? null : s.currentDocument
         })),
         reset: () => set({
-            workspacePath: null,
             documents: [],
-            links: [],
-            allLinks: [],
-            todos: [],
             currentDocument: null,
             isLoading: false,
             theme: 'light'
@@ -62,9 +46,45 @@ export const appStore = createAppStore();
 
 export const currentDocument = derived(appStore, $s => $s.currentDocument);
 export const documents = derived(appStore, $s => $s.documents);
-export const allLinks = derived(appStore, $s => $s.allLinks);
-export const links = derived(appStore, $s => $s.links);
-export const todos = derived(appStore, $s => $s.todos);
-export const workspacePath = derived(appStore, $s => $s.workspacePath);
 export const isLoading = derived(appStore, $s => $s.isLoading);
 export const theme = derived(appStore, $s => $s.theme);
+
+export type SyncStatus = 'synced' | 'syncing' | 'offline';
+
+function createSyncStore() {
+    const { subscribe, set, update } = writable({
+        nodeId: null as string | null,
+        peers: [] as SyncPeer[],
+        status: 'offline' as SyncStatus,
+        isEnabled: false
+    });
+
+    return {
+        subscribe,
+        setNodeId: (nodeId: string) => update(s => ({ ...s, nodeId })),
+        setPeers: (peers: SyncPeer[]) => update(s => ({ ...s, peers })),
+        addPeer: (peer: SyncPeer) => update(s => ({
+            ...s,
+            peers: [...s.peers.filter(p => p.node_id !== peer.node_id), peer]
+        })),
+        removePeer: (nodeId: string) => update(s => ({
+            ...s,
+            peers: s.peers.filter(p => p.node_id !== nodeId)
+        })),
+        setStatus: (status: SyncStatus) => update(s => ({ ...s, status })),
+        setEnabled: (enabled: boolean) => update(s => ({ ...s, isEnabled: enabled })),
+        markPeerOnline: (nodeId: string) => update(s => ({
+            ...s,
+            peers: s.peers.map(p => p.node_id === nodeId ? { ...p, is_online: true } : p)
+        })),
+        markPeerOffline: (nodeId: string) => update(s => ({
+            ...s,
+            peers: s.peers.map(p => p.node_id === nodeId ? { ...p, is_online: false } : p)
+        }))
+    };
+}
+
+export const syncStore = createSyncStore();
+export const nodeId = derived(syncStore, $s => $s.nodeId);
+export const syncPeers = derived(syncStore, $s => $s.peers);
+export const syncStatus = derived(syncStore, $s => $s.status);
