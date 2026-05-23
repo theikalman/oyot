@@ -54,20 +54,7 @@ pub fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn get_workspace_path(app: &tauri::AppHandle) -> String {
-    let config_dir = app.path().app_config_dir().expect("Failed to get config dir");
-    let workspace_path = config_dir.join("workspace");
-
-    if !workspace_path.exists() {
-        std::fs::create_dir_all(&workspace_path).expect("Failed to create workspace dir");
-    }
-
-    workspace_path.to_string_lossy().to_string()
-}
-
-fn init_iroh_endpoint_and_gossip(
-    _workspace_path: String,
-) -> Result<(iroh::Endpoint, Option<Arc<GossipBroadcaster>>), String> {
+fn init_iroh_endpoint_and_gossip() -> Result<(iroh::Endpoint, Option<Arc<GossipBroadcaster>>), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async {
         use iroh_gossip::net::Gossip;
@@ -90,7 +77,7 @@ fn spawn_sync_tasks(
     endpoint: Option<Arc<Endpoint>>,
     gossip: Option<Arc<GossipBroadcaster>>,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    workspace_path: String,
+    data_path: String,
     app: tauri::AppHandle,
 ) {
     std::thread::spawn(move || {
@@ -99,19 +86,19 @@ fn spawn_sync_tasks(
         rt.block_on(async {
             if let Some(endpoint) = endpoint {
                 let db_clone = db.clone();
-                let workspace_clone = workspace_path.clone();
+                let data_clone = data_path.clone();
                 let app_clone = app.clone();
                 tokio::spawn(async move {
-                    accept_incoming_connections(&endpoint, db_clone, workspace_clone, &app_clone).await;
+                    accept_incoming_connections(&endpoint, db_clone, data_clone, &app_clone).await;
                 });
             }
 
             if let Some(gossip) = gossip {
                 let db_clone = db.clone();
-                let workspace_clone = workspace_path.clone();
+                let data_clone = data_path.clone();
                 let app_clone = app.clone();
                 tokio::spawn(async move {
-                    handle_gossip_messages(gossip, db_clone, workspace_clone, app_clone).await;
+                    handle_gossip_messages(gossip, db_clone, data_clone, app_clone).await;
                 });
             }
 
@@ -125,17 +112,17 @@ fn spawn_sync_tasks(
 async fn accept_incoming_connections(
     endpoint: &Arc<Endpoint>,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    workspace_path: String,
+    data_path: String,
     app: &tauri::AppHandle,
 ) {
     loop {
         if let Some(incoming) = endpoint.accept().await {
             let db = db.clone();
-            let workspace_path = workspace_path.clone();
+            let data_path = data_path.clone();
             let app = app.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(incoming, db, workspace_path, app).await {
+                if let Err(e) = handle_connection(incoming, db, data_path, app).await {
                     eprintln!("Error handling connection: {}", e);
                 }
             });
@@ -147,7 +134,7 @@ async fn accept_incoming_connections(
 async fn handle_connection(
     incoming: iroh::endpoint::Incoming,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    workspace_path: String,
+    data_path: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let accepting = incoming.accept().map_err(|e| format!("Accept error: {}", e))?;
@@ -178,7 +165,7 @@ async fn handle_connection(
             handle_doc_request(&mut send, &db, &doc_id, &app).await?;
         }
         SyncMessage::RequestBlob { hash } => {
-            handle_blob_request(&mut send, &db, &workspace_path, &hash).await?;
+            handle_blob_request(&mut send, &db, &data_path, &hash).await?;
         }
         _ => {
             eprintln!("Unexpected message type received");
@@ -226,7 +213,7 @@ async fn handle_doc_request(
 async fn handle_blob_request(
     send: &mut iroh::endpoint::SendStream,
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    workspace_path: &str,
+    data_path: &str,
     hash: &str,
 ) -> Result<(), String> {
     let (data, mime_type): (Option<Vec<u8>>, Option<String>) = {
@@ -244,7 +231,7 @@ async fn handle_blob_request(
             .ok();
 
         if let Some((local_path, mime_type)) = result {
-            let full_path = std::path::PathBuf::from(workspace_path).join(&local_path);
+            let full_path = std::path::PathBuf::from(data_path).join(&local_path);
             let data = std::fs::read(&full_path).ok();
             (data, Some(mime_type))
         } else {
@@ -276,13 +263,13 @@ async fn handle_blob_request(
 async fn handle_gossip_messages(
     gossip: Arc<GossipBroadcaster>,
     db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    workspace_path: String,
+    data_path: String,
     app: tauri::AppHandle,
 ) {
     let gossip_net = gossip.gossip().clone();
     let topic_id = gossip.topic_id();
     let db_clone = db.clone();
-    let workspace_clone = workspace_path.clone();
+    let data_clone = data_path.clone();
     let app_clone = app.clone();
 
     let topic = match gossip_net.subscribe(topic_id, vec![]).await {
@@ -299,10 +286,10 @@ async fn handle_gossip_messages(
         match result {
             Ok(Event::Received(msg)) => {
                 let db = db_clone.clone();
-                let workspace_path = workspace_clone.clone();
+                let data_path = data_clone.clone();
                 let app = app_clone.clone();
                 let from = msg.delivered_from;
-                if let Err(e) = process_gossip_message(&db, &workspace_path, &app, from, msg.content.as_ref()).await {
+                if let Err(e) = process_gossip_message(&db, &data_path, &app, from, msg.content.as_ref()).await {
                     eprintln!("Error processing gossip: {}", e);
                 }
             }
@@ -324,7 +311,7 @@ async fn handle_gossip_messages(
 
 async fn process_gossip_message(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    workspace_path: &str,
+    data_path: &str,
     app: &tauri::AppHandle,
     from: EndpointId,
     data: &[u8],
@@ -336,8 +323,8 @@ async fn process_gossip_message(
                 let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from.to_string() }));
             }
             SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
-                let _ = save_blob_to_disk(workspace_path, &hash, &mime_type, &blob_data);
-                let _ = update_attachment_db(db, &hash, &mime_type, workspace_path);
+                let _ = save_blob_to_disk(data_path, &hash, &mime_type, &blob_data);
+                let _ = update_attachment_db(db, &hash, &mime_type, data_path);
                 let _ = app.emit("blob-received", serde_json::json!({ "hash": hash }));
             }
             SyncMessage::BlobReceived { hash } => {
@@ -392,7 +379,7 @@ async fn apply_crdt_delta(
     Ok(())
 }
 
-fn save_blob_to_disk(workspace_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
+fn save_blob_to_disk(data_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
     let ext = match mime_type {
         "image/png" => "png",
         "image/jpeg" => "jpg",
@@ -403,7 +390,7 @@ fn save_blob_to_disk(workspace_path: &str, hash: &str, mime_type: &str, data: &[
     };
     let filename = format!("{}.{}", hash, ext);
 
-    let attachments_dir = std::path::PathBuf::from(workspace_path).join("attachments");
+    let attachments_dir = std::path::PathBuf::from(data_path).join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
     let full_path = attachments_dir.join(&filename);
@@ -416,7 +403,7 @@ fn update_attachment_db(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     hash: &str,
     mime_type: &str,
-    _workspace_path: &str,
+    _data_path: &str,
 ) -> Result<(), String> {
     let ext = match mime_type {
         "image/png" => "png",
@@ -450,15 +437,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let workspace_path = get_workspace_path(app.handle());
-            let mut state = AppState::new(workspace_path.clone(), app.handle().clone())?;
+            let app_data_dir = app.handle().path().app_data_dir()
+                .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+            let data_path = app_data_dir.to_string_lossy().to_string();
+
+            let mut state = AppState::new(app.handle().clone())?;
 
             {
                 let db = state.db.lock();
                 setup_database_tables(&db)?;
             }
 
-            match init_iroh_endpoint_and_gossip(workspace_path.clone()) {
+            match init_iroh_endpoint_and_gossip() {
                 Ok((endpoint, gossip)) => {
                     let node_id = endpoint.id().to_string();
                     let mut sync_manager = state.sync_manager.blocking_lock();
@@ -473,18 +463,18 @@ pub fn run() {
                         state.iroh_endpoint.clone(),
                         state.gossip_broadcaster.clone(),
                         state.db.clone(),
-                        workspace_path,
+                        data_path,
                         app.handle().clone(),
                     );
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to initialize Iroh endpoint: {}", e);
-                    let workspace_path = state.workspace_path.clone();
+                    let data_path = state.data_dir.to_string_lossy().to_string();
                     spawn_sync_tasks(
                         None,
                         None,
                         state.db.clone(),
-                        workspace_path,
+                        data_path,
                         app.handle().clone(),
                     );
                 }
@@ -503,12 +493,8 @@ pub fn run() {
             get_backlinks,
             get_journals,
             get_or_create_today_journal,
-            get_recent_workspaces,
-            save_recent_workspace,
             get_theme,
             save_theme,
-            get_app_data_dir,
-            get_workspace_dir,
             save_image,
             delete_image,
             cleanup_orphaned_images,
@@ -518,8 +504,6 @@ pub fn run() {
             list_pending_attachments,
             get_local_blob_url,
             get_all_attachment_hashes,
-            set_current_workspace,
-            init_database,
             get_crdt_state,
             save_crdt_update,
             export_document_update_since,

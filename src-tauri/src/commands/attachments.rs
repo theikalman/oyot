@@ -1,7 +1,6 @@
 use crate::db::AppState;
 use rusqlite::params;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 
 #[tauri::command]
 pub fn save_image(
@@ -27,7 +26,7 @@ pub fn save_image(
     };
     let filename = format!("{}.{}", hash, ext);
 
-    let attachments_dir = PathBuf::from(&state.workspace_path).join("attachments");
+    let attachments_dir = state.data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
     let full_path = attachments_dir.join(&filename);
@@ -59,7 +58,7 @@ pub fn delete_image(state: tauri::State<'_, AppState>, hash: String) -> Result<(
     };
 
     if let Some(relative_path) = local_path {
-        let full_path = PathBuf::from(&state.workspace_path).join(relative_path);
+        let full_path = state.data_dir.join(relative_path);
         if full_path.exists() {
             std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
         }
@@ -92,7 +91,7 @@ pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32,
 
     let count = orphaned.len() as i32;
     for path in &orphaned {
-        let full_path = PathBuf::from(&state.workspace_path).join(path);
+        let full_path = state.data_dir.join(path);
         if full_path.exists() {
             let _ = std::fs::remove_file(&full_path);
         }
@@ -201,8 +200,8 @@ pub fn get_local_blob_url(
 
     match result {
         Ok(relative_path) => {
-            let full_path = format!("{}/{}", state.workspace_path, relative_path);
-            Ok(Some(full_path))
+            let full_path = state.data_dir.join(relative_path);
+            Ok(Some(full_path.to_string_lossy().to_string()))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.to_string()),

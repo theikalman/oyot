@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from "@tauri-apps/api/core";
     import { listen } from "@tauri-apps/api/event";
-    import { appStore, currentDocument, workspacePath, documents } from '../stores/app';
+    import { appStore, currentDocument, documents } from '../stores/app';
     import type { Document, DocumentSummary } from '../types';
     import { Editor } from '@tiptap/core';
     import type { Editor as EditorType } from '@tiptap/core';
@@ -50,7 +50,6 @@
     let initialViewportHeight = $state(0);
     let unlistenSyncEvent: (() => void) | null = null;
 
-    let wsPath = $derived($workspacePath);
     let current = $derived($currentDocument);
     let docs = $derived($documents);
 
@@ -173,7 +172,7 @@
                     clearTimeout(saveTimeout);
                 }
                 saveTimeout = setTimeout(() => {
-                    if (current && wsPath && loroApp && tiptapBinding) {
+                    if (current && loroApp && tiptapBinding) {
                         saveContent();
                     }
                 }, 1000);
@@ -221,7 +220,7 @@
     }
 
     async function saveContent() {
-        if (!editor || !current || !wsPath || !loroApp) return;
+        if (!editor || !current || !loroApp) return;
 
         isSaving = true;
         try {
@@ -268,7 +267,7 @@
             return;
         }
 
-        if (previousDocId && previousDocId !== current.id && hasUnsavedChanges && wsPath && editor && loroApp) {
+        if (previousDocId && previousDocId !== current.id && hasUnsavedChanges && editor && loroApp) {
             const prevDoc = docs.find((d: DocumentSummary) => d.id === previousDocId);
             const loroRef = loroApp;
             if (prevDoc) {

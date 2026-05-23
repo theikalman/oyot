@@ -2,10 +2,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { get } from 'svelte/store';
 import type { Editor } from '@tiptap/core';
 import '@tiptap/extension-image';
-import { workspacePath } from '../../stores/app';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 import { exitSuggestion } from '@tiptap/suggestion';
 

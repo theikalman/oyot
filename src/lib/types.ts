@@ -54,7 +54,6 @@ export interface SyncPeer {
 }
 
 export interface AppState {
-    workspacePath: string | null;
     documents: DocumentSummary[];
     currentDocument: Document | null;
     viewMode: ViewMode;

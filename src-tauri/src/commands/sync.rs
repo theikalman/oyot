@@ -199,15 +199,17 @@ pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), Strin
 
     let db = state.db.clone();
     let app = state.app_handle.clone();
+    let data_path = state.data_dir.to_string_lossy().to_string();
 
     for peer in peers {
         let node_id = peer.node_id.clone();
         let app_clone = app.clone();
         let db_clone = db.clone();
         let endpoint_clone = endpoint.clone();
+        let data_clone = data_path.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = sync_with_peer(&endpoint_clone, &node_id, &db_clone, &app_clone).await {
+            if let Err(e) = sync_with_peer(&endpoint_clone, &node_id, &db_clone, &app_clone, &data_clone).await {
                 eprintln!("Failed to sync with peer {}: {}", node_id, e);
             }
         });
@@ -221,6 +223,7 @@ async fn sync_with_peer(
     node_id: &str,
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     app: &tauri::AppHandle,
+    data_path: &str,
 ) -> Result<(), String> {
     use iroh::PublicKey;
 
@@ -282,9 +285,8 @@ async fn sync_with_peer(
                             let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
                         }
                         SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
-                            let workspace_path = "";
-                            let _ = save_blob_to_disk_sync(workspace_path, &hash, &mime_type, &blob_data);
-                            let _ = update_attachment_db_sync(db, &hash, &mime_type, workspace_path);
+                            let _ = save_blob_to_disk_sync(data_path, &hash, &mime_type, &blob_data);
+                            let _ = update_attachment_db_sync(db, &hash, &mime_type, data_path);
                         }
                         SyncMessage::DocSyncComplete { doc_id } => {
                             let _ = app.emit("sync-complete", doc_id);
@@ -344,7 +346,7 @@ async fn apply_crdt_delta_sync(
     Ok(())
 }
 
-fn save_blob_to_disk_sync(workspace_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
+fn save_blob_to_disk_sync(data_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
     let ext = match mime_type {
         "image/png" => "png",
         "image/jpeg" => "jpg",
@@ -354,7 +356,7 @@ fn save_blob_to_disk_sync(workspace_path: &str, hash: &str, mime_type: &str, dat
         _ => "bin",
     };
     let filename = format!("{}.{}", hash, ext);
-    let attachments_dir = std::path::PathBuf::from(workspace_path).join("attachments");
+    let attachments_dir = std::path::PathBuf::from(data_path).join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     let full_path = attachments_dir.join(&filename);
     std::fs::write(&full_path, data).map_err(|e| e.to_string())?;
@@ -365,7 +367,7 @@ fn update_attachment_db_sync(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     hash: &str,
     mime_type: &str,
-    _workspace_path: &str,
+    _data_path: &str,
 ) -> Result<(), String> {
     let ext = match mime_type {
         "image/png" => "png",

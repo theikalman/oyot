@@ -3,7 +3,6 @@ import type { Document, DocumentSummary, SearchResult, Theme, ViewMode } from '.
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
-        workspacePath: null as string | null,
         documents: [] as DocumentSummary[],
         currentDocument: null as Document | null,
         isLoading: false,
@@ -12,7 +11,6 @@ function createAppStore() {
 
     return {
         subscribe,
-        setWorkspacePath: (path: string) => update(s => ({ ...s, workspacePath: path })),
         setDocuments: (documents: DocumentSummary[]) => update(s => ({ ...s, documents })),
         setCurrentDocument: (doc: Document | null) => update(s => ({ ...s, currentDocument: doc })),
         setLoading: (loading: boolean) => update(s => ({ ...s, isLoading: loading })),
@@ -36,7 +34,6 @@ function createAppStore() {
             currentDocument: s.currentDocument?.id === docId ? null : s.currentDocument
         })),
         reset: () => set({
-            workspacePath: null,
             documents: [],
             currentDocument: null,
             isLoading: false,
@@ -49,7 +46,6 @@ export const appStore = createAppStore();
 
 export const currentDocument = derived(appStore, $s => $s.currentDocument);
 export const documents = derived(appStore, $s => $s.documents);
-export const workspacePath = derived(appStore, $s => $s.workspacePath);
 export const isLoading = derived(appStore, $s => $s.isLoading);
 export const theme = derived(appStore, $s => $s.theme);
 
