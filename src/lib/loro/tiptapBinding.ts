@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/core';
-import { LoroApp, bytesToJson, jsonToBytes } from './loroApp';
+import { LoroApp } from './loroApp';
 
 export interface TiptapBindingOptions {
     editor: Editor;
@@ -18,8 +18,8 @@ export class TiptapBinding {
         this.loroApp = options.loroApp;
         this.contentContainer = options.contentContainer || 'content';
 
-        this.setupEditorListener();
         this.setupLoroListener();
+        this.setupEditorListener();
     }
 
     private setupEditorListener(): void {
@@ -27,9 +27,6 @@ export class TiptapBinding {
             if (this.isApplyingRemoteChange) {
                 return;
             }
-
-            const json = JSON.stringify(editor.getJSON());
-            this.applyLocalChange(json);
         });
     }
 
@@ -37,11 +34,6 @@ export class TiptapBinding {
         this.loroApp.subscribe((event: any) => {
             this.handleRemoteChange();
         });
-    }
-
-    private applyLocalChange(json: string): void {
-        const bytes = jsonToBytes(json);
-        this.loroApp.applyUpdate(bytes);
     }
 
     private handleRemoteChange(): void {
