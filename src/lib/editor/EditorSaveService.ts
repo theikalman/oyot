@@ -65,7 +65,13 @@ export class EditorSaveService {
 
         try {
             const update = this.loroApp.getUpdate();
+            console.log('[EditorSaveService] getUpdate() returned', update.length, 'bytes');
             const crdtState = Array.from(update);
+
+            if (update.length === 0) {
+                console.warn('[EditorSaveService] No update to save, skipping');
+                return null;
+            }
 
             const updatedDoc: Document = await invoke('save_crdt_update', {
                 docId: this.currentDoc.id,

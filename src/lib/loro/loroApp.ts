@@ -86,14 +86,18 @@ export class LoroApp {
         return this.doc.exportSnapshot();
     }
 
-    getText(container: string): string {
-        if (!this.doc) return '';
-        const text = this.doc.getText(container);
+    getText(container: string): LoroContainer {
+        if (!this.doc) return { toString: () => '', insert: () => {}, delete: () => {}, length: 0, get: () => null } as unknown as LoroContainer;
+        return this.doc.getText(container) as unknown as LoroContainer;
+    }
+
+    getTextAsString(container: string): string {
+        const text = this.getText(container);
         return text.toString();
     }
 
     getJsonContent(): string {
-        const content = this.getText('content');
+        const content = this.getTextAsString('content');
         try {
             const parsed = JSON.parse(content);
             return JSON.stringify({
@@ -109,7 +113,7 @@ export class LoroApp {
     }
 
     getMetadata(): DocumentMetadata {
-        const title = this.getText('title');
+        const title = this.getTextAsString('title');
         const todoCount = this.countTodos();
         const completedCount = this.countCompletedTodos();
 

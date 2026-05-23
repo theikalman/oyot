@@ -27,6 +27,25 @@ export class TiptapBinding {
             if (this.isApplyingRemoteChange) {
                 return;
             }
+
+            console.log('[TiptapBinding] Editor update detected, syncing to LoroApp');
+
+            const json = editor.getJSON();
+            const content = JSON.stringify(json);
+
+            try {
+                const text = this.loroApp.getText(this.contentContainer);
+                const existingLen = text.length;
+
+                if (existingLen > 0) {
+                    this.loroApp.getText(this.contentContainer).delete(0, existingLen);
+                }
+
+                this.loroApp.getText(this.contentContainer).insert(0, content);
+                console.log('[TiptapBinding] Successfully synced to LoroApp, content length:', content.length);
+            } catch (error) {
+                console.error('[TiptapBinding] Failed to sync to LoroApp:', error);
+            }
         });
     }
 
