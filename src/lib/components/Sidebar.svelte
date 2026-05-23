@@ -80,13 +80,6 @@
                 class="search-input"
             />
         {/if}
-        <button class="toggle-btn" onclick={() => collapsed = !collapsed} title={collapsed ? 'Expand' : 'Collapse'}>
-            {#if collapsed}
-                <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M3 18h12"/></svg>
-            {:else}
-                <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M9 18h12"/></svg>
-            {/if}
-        </button>
     </div>
 
     {#if !collapsed}
@@ -138,6 +131,14 @@
     {/if}
 </aside>
 
+<button class="toggle-btn collapsed" onclick={() => collapsed = !collapsed} title={collapsed ? 'Expand' : 'Collapse'}>
+    {#if collapsed}
+        <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M3 18h12"/></svg>
+    {:else}
+        <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M9 18h12"/></svg>
+    {/if}
+</button>
+
 {#if showModal}
     <div class="modal-overlay" role="presentation" onclick={closeModal}>
         <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && closeModal()}>
@@ -171,8 +172,53 @@
     }
 
     .sidebar.collapsed {
+        display: none;
+    }
+
+    .toggle-btn {
         width: 40px;
-        min-width: 40px;
+        height: 40px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+        color: var(--text-secondary);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        margin-left: auto;
+    }
+
+    .toggle-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .toggle-btn.collapsed {
+        position: fixed;
+        left: 20px;
+        bottom: 48px;
+        z-index: 100;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        transition: box-shadow 0.2s ease, transform 0.2s ease;
+    }
+
+    .toggle-btn.collapsed:hover {
+        box-shadow: 0 0 16px 4px rgba(59, 130, 246, 0.4);
+    }
+
+    .toggle-btn.collapsed svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .sidebar.collapsed .search-input {
+        display: none;
     }
 
     .sidebar-header {
@@ -185,35 +231,6 @@
         flex-shrink: 0;
         height: 57px;
         box-sizing: border-box;
-    }
-
-    .sidebar.collapsed .sidebar-header {
-        justify-content: center;
-        padding: 0 8px;
-    }
-
-    .toggle-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 4px;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        flex-shrink: 0;
-    }
-
-    .toggle-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .sidebar.collapsed .search-input {
-        display: none;
     }
 
     .search-input {
@@ -313,7 +330,7 @@
         border-top: 1px solid var(--border-color);
         display: flex;
         align-items: center;
-        gap: 8px;
+        justify-content: flex-end;
     }
 
     .settings-btn {
