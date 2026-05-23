@@ -2,8 +2,8 @@
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from "@tauri-apps/api/core";
     import { listen } from "@tauri-apps/api/event";
-    import { appStore, currentDocument, documents } from '../stores/app';
-    import type { Document, DocumentSummary } from '../types';
+    import { appStore, currentDocument, documents } from '$lib/stores/app';
+    import type { Document, DocumentSummary } from '$lib/types';
     import { Editor } from '@tiptap/core';
     import type { Editor as EditorType } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
@@ -16,14 +16,15 @@
     import TableCell from '@tiptap/extension-table-cell';
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
-    import { SlashCommand } from '../tiptap/SlashCommand';
-    import { DocumentLinkNode } from '../tiptap/nodes/DocumentLinkNode';
-    import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '../tiptap';
-    import { ResizableImage } from '../tiptap/extensions/ResizableImage';
-    import { ImageExtension } from '../tiptap/extensions/ImageExtension';
+    import { SlashCommand } from '$lib/tiptap/SlashCommand';
+    import { DocumentLinkNode } from '$lib/tiptap/nodes/DocumentLinkNode';
+    import { registerDocumentLinkCommand, registerDateCommand, registerTodoCommand, registerImageCommand, insertImageFromFile, commandRegistry } from '$lib/tiptap';
+    import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
+    import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
     import { Extension } from '@tiptap/core';
-    import { LoroApp, bytesToJson } from '../loro/loroApp';
-    import { TiptapBinding, createInitialContent, isEmptyContent } from '../loro/tiptapBinding';
+    import { LoroApp, bytesToJson } from '$lib/loro/loroApp';
+    import { TiptapBinding, createInitialContent, isEmptyContent } from '$lib/loro/tiptapBinding';
+    import { Toolbar, EditorHeader } from '$lib/editor';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -38,7 +39,7 @@
     });
 
     let editorElement = $state<HTMLDivElement>();
-    let editor: EditorType | null = null;
+    let editor = $state<EditorType | null>(null);
     let loroApp: LoroApp | null = null;
     let tiptapBinding: TiptapBinding | null = null;
     let isSaving = $state(false);
@@ -320,71 +321,10 @@
 </script>
 
 <div class="editor-container">
-    <div class="editor-header">
-        {#if current}
-            <h1>{current.title}</h1>
-        {/if}
-        <div class="header-actions">
-            {#if isSaving}
-                <span class="saving-indicator">Saving...</span>
-            {/if}
-        </div>
-    </div>
+    <EditorHeader title={current?.title ?? ''} {isSaving} />
 
     {#if current}
-        <div class="toolbar visible">
-            <button onclick={() => editor?.chain().focus().toggleBold().run()} title="Bold">
-                <strong>B</strong>
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleItalic().run()} title="Italic">
-                <em>I</em>
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough">
-                <s>S</s>
-            </button>
-            <span class="separator"></span>
-            <button onclick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} title="Heading 1">
-                H1
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} title="Heading 2">
-                H2
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} title="Heading 3">
-                H3
-            </button>
-            <span class="separator"></span>
-            <button onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List">
-                •
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Ordered List">
-                1.
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List">
-                ☑
-            </button>
-            <span class="separator"></span>
-            <button onclick={() => editor?.chain().focus().toggleBlockquote().run()} title="Quote">
-                "
-            </button>
-            <button onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title="Code Block">
-                &lt;/&gt;
-            </button>
-            <button onclick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3 }).run()} title="Table">
-                ⊞
-            </button>
-            <button onclick={() => insertImageFromFile(editor!)} title="Insert Image">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A1A1A1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="m4.272 20.728 6.597-6.597c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668l6.553 6.553M14 15l2.869-2.869c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668L22 15M10 9a2 2 0 1 1-4 0 2 2 0 0 1 4 0M6.8 21h10.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C22 18.72 22 17.88 22 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C19.72 3 18.88 3 17.2 3H6.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C2 5.28 2 6.12 2 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C4.28 21 5.12 21 6.8 21"/>
-                </svg>
-            </button>
-            <span class="separator"></span>
-            <button onclick={() => editor?.chain().focus().undo().run()} title="Undo">
-                ↩
-            </button>
-            <button onclick={() => editor?.chain().focus().redo().run()} title="Redo">
-                ↪
-            </button>
-        </div>
+        <Toolbar {editor} />
 
         <div class="editor-content" bind:this={editorElement}></div>
     {:else}
@@ -402,63 +342,6 @@
         overflow: hidden;
         background: var(--bg-primary);
         color: var(--text-primary);
-    }
-
-    .editor-header {
-        padding: 16px 24px;
-        border-bottom: 1px solid var(--border-color);
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        background: var(--bg-primary);
-    }
-
-    .editor-header h1 {
-        margin: 0;
-        flex: 1;
-        font-size: 24px;
-        color: var(--text-primary);
-    }
-
-    .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .saving-indicator {
-        font-size: 12px;
-        color: var(--text-secondary);
-    }
-
-    .toolbar {
-        display: flex;
-        padding: 8px 16px;
-        background: var(--bg-secondary);
-        border-bottom: 1px solid var(--border-color);
-        gap: 4px;
-        flex-wrap: wrap;
-    }
-
-    .toolbar button {
-        padding: 6px 10px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-light);
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-        min-width: 32px;
-        color: var(--text-primary);
-    }
-
-    .toolbar button:hover {
-        background: var(--bg-hover);
-    }
-
-    .separator {
-        width: 1px;
-        background: var(--border-light);
-        margin: 0 4px;
     }
 
     .editor-content {

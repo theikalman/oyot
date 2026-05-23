@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Document, DocumentSummary, SearchResult, Theme, ViewMode } from '../types';
+import type { Document, DocumentSummary, SearchResult, Theme, ViewMode, SyncPeer } from '../types';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
@@ -48,13 +48,6 @@ export const currentDocument = derived(appStore, $s => $s.currentDocument);
 export const documents = derived(appStore, $s => $s.documents);
 export const isLoading = derived(appStore, $s => $s.isLoading);
 export const theme = derived(appStore, $s => $s.theme);
-
-export interface SyncPeer {
-    node_id: string;
-    device_name: string;
-    last_synchronized: number | null;
-    is_online: boolean;
-}
 
 export type SyncStatus = 'synced' | 'syncing' | 'offline';
 

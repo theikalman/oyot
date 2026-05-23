@@ -1,99 +1,61 @@
 <script lang="ts">
-    import { onMount, onDestroy } from "svelte";
-    import { invoke } from "@tauri-apps/api/core";
-    import { listen } from "@tauri-apps/api/event";
-    import { appStore, isLoading, currentDocument, theme, syncStore, type SyncPeer } from "../lib/stores/app";
-    import type { IndexData, Document, DocumentSummary, Theme } from "../lib/types";
-    import Sidebar from "../lib/components/Sidebar.svelte";
-    import Editor from "../lib/components/Editor.svelte";
-    import SyncStatus from "../lib/components/SyncStatus.svelte";
+    import { onMount, onDestroy } from 'svelte';
+    import { appStore, isLoading, currentDocument } from '$lib/stores/app';
+    import { initializeTheme, applyTheme } from '$lib/services/theme';
+    import { initializeSync, getSyncCleanup } from '$lib/services/sync';
+    import { loadAllDocuments, getOrCreateTodayJournal, cleanupOrphanedImages, toDocumentSummary } from '$lib/services/documents';
+    import Sidebar from '$lib/components/Sidebar.svelte';
+    import Editor from '$lib/editor/Editor.svelte';
+    import SyncStatus from '$lib/components/SyncStatus.svelte';
+    import ToastContainer from '$lib/components/ToastContainer.svelte';
+
+    let activeDocument = $derived($currentDocument);
 
     async function init() {
         appStore.setLoading(true);
         try {
-            const indexData: IndexData = await invoke("get_all_documents");
+            const indexData = await loadAllDocuments();
             appStore.setDocuments(indexData.documents);
 
-            const todayJournal: Document = await invoke("get_or_create_today_journal");
-            const summary: DocumentSummary = {
-                id: todayJournal.id,
-                doc_type: todayJournal.doc_type,
-                title: todayJournal.title,
-                todo_count: 0,
-                completed_todo_count: 0,
-                created_at: todayJournal.created_at,
-                updated_at: todayJournal.updated_at
-            };
+            const todayJournal = await getOrCreateTodayJournal();
+            const summary = toDocumentSummary(todayJournal);
             appStore.addDocument(summary);
             appStore.setCurrentDocument(todayJournal);
 
-            try {
-                const deletedCount: number = await invoke("cleanup_orphaned_images");
-                if (deletedCount > 0) {
-                    console.log(`Cleaned up ${deletedCount} orphaned image(s)`);
-                }
-            } catch (e) {
-                console.error("Failed to cleanup orphaned images:", e);
-            }
+            await cleanupOrphanedImages();
         } catch (error) {
-            console.error("Failed to initialize:", error);
+            console.error('Failed to initialize:', error);
         } finally {
             appStore.setLoading(false);
         }
     }
 
-    let cleanupFns: Array<() => void> = [];
-
     onMount(async () => {
         try {
-            const savedTheme: Theme = await invoke("get_theme");
+            const savedTheme = await initializeTheme();
             appStore.setTheme(savedTheme);
-            document.body.dataset.theme = savedTheme;
         } catch (error) {
-            console.error("Failed to load theme:", error);
-            document.body.dataset.theme = "light";
+            console.error('Failed to load theme:', error);
         }
 
         try {
-            const nodeId: string | null = await invoke("get_node_id");
-            const peers: SyncPeer[] = await invoke("get_sync_peers");
-            syncStore.setNodeId(nodeId || "");
-            syncStore.setPeers(peers);
-            syncStore.setEnabled(true);
-            syncStore.setStatus("synced");
-        } catch (e) {
-            console.error("Failed to init sync:", e);
-            syncStore.setStatus("offline");
+            await initializeSync();
+        } catch (error) {
+            console.error('Failed to init sync:', error);
         }
-
-        const unlistenConnected = listen("peer-connected", (event) => {
-            const peerNodeId = event.payload as string;
-            syncStore.markPeerOnline(peerNodeId);
-            syncStore.setStatus("synced");
-        });
-        const unlistenDisconnected = listen("peer-disconnected", () => {
-            syncStore.setStatus("offline");
-        });
-        const unlistenSyncComplete = listen("sync-complete", () => {
-            syncStore.setStatus("synced");
-        });
-
-        unlistenConnected.then(fn => cleanupFns.push(fn));
-        unlistenDisconnected.then(fn => cleanupFns.push(fn));
-        unlistenSyncComplete.then(fn => cleanupFns.push(fn));
 
         await init();
     });
 
     onDestroy(() => {
-        cleanupFns.forEach(fn => fn());
+        const cleanup = getSyncCleanup();
+        cleanup();
     });
 
     $effect(() => {
-        document.body.dataset.theme = $theme;
+        const theme = $appStore.theme;
+        applyTheme(theme);
     });
-
-    let activeDocument = $derived($currentDocument);
 </script>
 
 <main class="app">
@@ -119,6 +81,8 @@
             <p>Loading...</p>
         </div>
     {/if}
+
+    <ToastContainer />
 </main>
 
 <style>

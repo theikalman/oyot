@@ -51,6 +51,7 @@ export interface SyncPeer {
     node_id: string;
     device_name: string;
     last_synchronized: number | null;
+    is_online: boolean;
 }
 
 export interface AppState {
