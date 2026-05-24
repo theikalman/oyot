@@ -33,13 +33,11 @@
     "@tiptap/pm": "^3.23.5",
     "@tiptap/starter-kit": "^3.23.5",
     "@tiptap/suggestion": "^3.23.5",
+    "@tiptap/y-tiptap": "^3.0.3",
     "@types/qrcode": "^1.5.6",
-    "loro-crdt": "^1.12.1",
-    "loro-prosemirror": "^0.4.3",
-    "loro-wasm": "1.0",
     "qrcode": "^1.5.4",
-    "vite-plugin-top-level-await": "^1.6.0",
-    "vite-plugin-wasm": "^3.6.0"
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

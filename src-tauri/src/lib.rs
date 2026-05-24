@@ -1,7 +1,5 @@
 mod commands;
-mod crdt;
 mod db;
-mod indexer;
 mod network;
 mod sync_manager;
 
@@ -19,21 +17,24 @@ pub fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
     db.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS documents (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
-            title TEXT NOT NULL,
-            crdt_state BLOB NOT NULL,
-            is_deleted INTEGER DEFAULT 0,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            id          TEXT    PRIMARY KEY,
+            type        TEXT    NOT NULL CHECK(type IN ('journal', 'note')),
+            title       TEXT    NOT NULL DEFAULT 'Untitled',
+            is_deleted  INTEGER DEFAULT 0,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS document_index (
-            document_id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            todo_count INTEGER DEFAULT 0,
-            completed_todo_count INTEGER DEFAULT 0
+        CREATE TABLE IF NOT EXISTS document_updates (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id          TEXT    NOT NULL,
+            update_blob     BLOB    NOT NULL,
+            timestamp       INTEGER NOT NULL,
+            origin_peer_id  TEXT
         );
+
+        CREATE INDEX IF NOT EXISTS idx_doc_updates_doc_id
+            ON document_updates (doc_id, id ASC);
 
         CREATE TABLE IF NOT EXISTS attachments (
             hash TEXT PRIMARY KEY,
@@ -183,20 +184,21 @@ async fn handle_doc_request(
     doc_id: &str,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
-    let crdt_state: Vec<u8> = {
+    let updates: Vec<Vec<u8>> = {
         let db_lock = db.lock();
-        db_lock
-            .query_row(
-                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-                [doc_id],
-                |row| row.get(0),
-            )
-            .unwrap_or_default()
+        let mut stmt = db_lock
+            .prepare("SELECT update_blob FROM document_updates WHERE doc_id = ? ORDER BY id ASC")
+            .map_err(|e| e.to_string())?;
+        let result: Vec<Vec<u8>> = stmt.query_map([doc_id], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        result
     };
 
-    let response = SyncMessage::SendDocDelta {
+    let response = SyncMessage::SendDocUpdates {
         doc_id: doc_id.to_string(),
-        delta: crdt_state,
+        updates,
     };
 
     let encoded = response.encode();
@@ -319,12 +321,20 @@ async fn process_gossip_message(
     if let Ok(msg) = SyncMessage::decode(data) {
         match msg {
             SyncMessage::SendDocDelta { doc_id, delta } => {
-                let _ = apply_crdt_delta(db, &doc_id, &delta).await;
-                let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from.to_string() }));
+                let origin_peer_id = from.to_string();
+                store_remote_update(db, &doc_id, &delta, Some(&origin_peer_id))?;
+                let _ = app.emit(
+                    "remote_network_update",
+                    serde_json::json!({
+                        "doc_id": doc_id,
+                        "update_blob": delta,
+                        "origin": origin_peer_id
+                    }),
+                );
             }
             SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
                 let _ = save_blob_to_disk(data_path, &hash, &mime_type, &blob_data);
-                let _ = update_attachment_db(db, &hash, &mime_type, data_path);
+                let _ = update_attachment_db(db, &hash, &mime_type);
                 let _ = app.emit("blob-received", serde_json::json!({ "hash": hash }));
             }
             SyncMessage::BlobReceived { hash } => {
@@ -336,45 +346,32 @@ async fn process_gossip_message(
     Ok(())
 }
 
-async fn apply_crdt_delta(
+/// Store a raw Yjs update blob into the document_updates log and bump the document's updated_at.
+pub fn store_remote_update(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     doc_id: &str,
-    delta: &[u8],
+    update_blob: &[u8],
+    origin_peer_id: Option<&str>,
 ) -> Result<(), String> {
-    let current_state: Vec<u8> = {
-        let db_lock = db.lock();
-        db_lock
-            .query_row(
-                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-                [doc_id],
-                |row| row.get(0),
-            )
-            .unwrap_or_default()
-    };
-
-    let mut doc = crate::crdt::CrdtDocument::new();
-    if !current_state.is_empty() {
-        doc.load_from_state(&current_state)?;
-    }
-    doc.apply_update(delta)?;
-    let new_state = doc.export_state();
-
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
 
-    {
-        let db_lock = db.lock();
-        db_lock
-            .execute(
-                "UPDATE documents SET crdt_state = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
-                rusqlite::params![&new_state, now, doc_id],
-            )
-            .map_err(|e| e.to_string())?;
-    }
+    let db_lock = db.lock();
+    db_lock
+        .execute(
+            "INSERT INTO document_updates (doc_id, update_blob, timestamp, origin_peer_id) VALUES (?, ?, ?, ?)",
+            rusqlite::params![doc_id, update_blob, now, origin_peer_id],
+        )
+        .map_err(|e| e.to_string())?;
 
-    crate::indexer::update_document_index(&db.lock(), doc_id, &new_state)?;
+    db_lock
+        .execute(
+            "UPDATE documents SET updated_at = ? WHERE id = ?",
+            rusqlite::params![now, doc_id],
+        )
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -403,7 +400,6 @@ fn update_attachment_db(
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     hash: &str,
     mime_type: &str,
-    _data_path: &str,
 ) -> Result<(), String> {
     let ext = match mime_type {
         "image/png" => "png",
@@ -456,7 +452,6 @@ pub fn run() {
                     drop(sync_manager);
 
                     state.iroh_endpoint = Some(Arc::new(endpoint));
-
                     state.gossip_broadcaster = gossip;
 
                     spawn_sync_tasks(
@@ -504,15 +499,15 @@ pub fn run() {
             list_pending_attachments,
             get_local_blob_url,
             get_all_attachment_hashes,
-            get_crdt_state,
-            save_crdt_update,
-            export_document_update_since,
             get_node_id,
             add_sync_peer,
             get_sync_peers,
             remove_sync_peer,
             set_sync_enabled,
-            trigger_sync
+            trigger_sync,
+            load_document_ledger,
+            commit_local_update,
+            broadcast_p2p_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

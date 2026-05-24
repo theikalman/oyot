@@ -1,14 +1,12 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event';
+    import * as Y from 'yjs';
     import { currentDocument, appStore } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
-    import type { Document } from '$lib/types';
-    import type { LoroDocType } from 'loro-prosemirror';
-    import { Toolbar, EditorHeader } from '$lib/editor';
+    import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
-    import { createSaveService, type EditorSaveService } from './EditorSaveService';
+    import { createSaveService, REMOTE_ORIGIN, type EditorSaveService } from './EditorSaveService';
 
     interface Props {
         debounceMs?: number;
@@ -21,65 +19,58 @@
     }: Props = $props();
 
     let current = $derived($currentDocument);
-    let loroDoc = $state<any>(null);
+    let ydoc = $state<Y.Doc | null>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
     let isSaving = $state(false);
     let unlistenSyncEvent: (() => void) | null = null;
     let previousDocId = $state<string | null>(null);
 
-    function handleEditorReady(editor: EditorType, doc: any) {
+    function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
-        loroDoc = doc;
+        ydoc = doc;
 
         if (saveService) {
             saveService.destroy();
         }
 
         saveService = createSaveService({
-            debounceMs,
             onSaving: () => { isSaving = true; },
             onSaved: () => { isSaving = false; }
         });
 
         if (current) {
             saveService.setDocument(current);
-            saveService.setLoroDoc(doc);
+            saveService.setYjsDoc(doc);
         }
     }
 
     function handleContentChange() {
-        saveService?.triggerSave();
+        // Content changes are handled by the ydoc 'update' listener in EditorSaveService.
+        // This callback is kept for potential future use (e.g., UI dirty indicator).
     }
 
-    async function handleDocumentChange(newDoc: Document | null, oldDoc: Document | null) {
-        if (!newDoc || !oldDoc) return;
-
-        if (saveService && previousDocId && previousDocId !== newDoc.id) {
-            await saveService.forceSave();
+    $effect(() => {
+        const newDoc = current;
+        if (newDoc && newDoc.id !== previousDocId) {
+            previousDocId = newDoc.id;
+            saveService?.setDocument(newDoc);
         }
-
-        previousDocId = newDoc.id;
-        saveService?.setDocument(newDoc);
-    }
-
-    async function reloadCurrentDocument() {
-        if (!current?.id) return;
-        try {
-            const doc: Document = await invoke('get_document', { docId: current.id });
-            appStore.setCurrentDocument(doc);
-        } catch (error) {
-            console.error('[Editor] Failed to reload document:', error);
-        }
-    }
+    });
 
     onMount(async () => {
-        unlistenSyncEvent = await listen('sync-received', async (event) => {
-            console.log('[Editor] Received sync event:', event);
-            const docId = (event.payload as { docId?: string })?.docId;
-            if (docId && docId === current?.id) {
-                await reloadCurrentDocument();
-            }
+        unlistenSyncEvent = await listen('remote_network_update', (event) => {
+            const payload = event.payload as { doc_id?: string; update_blob?: number[] };
+            const docId = payload?.doc_id;
+            const rawBlob = payload?.update_blob;
+
+            if (!docId || docId !== current?.id) return;
+            if (!rawBlob || !ydoc) return;
+
+            // Apply the remote update with a tagged origin so EditorSaveService
+            // knows not to re-persist or re-broadcast it.
+            const update = new Uint8Array(rawBlob);
+            Y.applyUpdate(ydoc, update, REMOTE_ORIGIN);
         });
     });
 
@@ -87,13 +78,6 @@
         unlistenSyncEvent?.();
         if (saveService) {
             saveService.destroy();
-        }
-    });
-
-    $effect(() => {
-        const newDoc = current;
-        if (newDoc) {
-            handleDocumentChange(newDoc, previousDocId ? { id: previousDocId } as Document : null);
         }
     });
 </script>
@@ -104,8 +88,6 @@
         
         <EditorInstance
             document={current}
-            {autoSave}
-            {debounceMs}
             onEditorReady={handleEditorReady}
             onContentChange={handleContentChange}
         />

@@ -13,6 +13,12 @@ pub enum SyncMessage {
         doc_id: String,
         delta: Vec<u8>,
     },
+    /// Bulk update response used during QUIC catch-up sync.
+    /// Contains all raw Yjs update blobs for a document in insertion order.
+    SendDocUpdates {
+        doc_id: String,
+        updates: Vec<Vec<u8>>,
+    },
     DocSyncComplete {
         doc_id: String,
     },

@@ -29,13 +29,11 @@ export async function loadDocument(id: string): Promise<Document> {
 export async function createDocument(
     docType: DocType,
     title: string,
-    crdtState?: Uint8Array
 ): Promise<Document> {
     try {
         const doc: Document = await invoke('create_document', {
             docType,
             title,
-            crdtState: crdtState ? Array.from(crdtState) : []
         });
         return doc;
     } catch (error) {
@@ -45,21 +43,47 @@ export async function createDocument(
     }
 }
 
-export async function saveCrdtUpdate(
-    docId: string,
-    update: Uint8Array
-): Promise<Document> {
+/**
+ * Load all raw Yjs update blobs for a document in insertion order.
+ * Returns them as Uint8Array[] ready for loadYjsDocFromUpdates().
+ */
+export async function loadDocumentLedger(docId: string): Promise<Uint8Array[]> {
     try {
-        const doc: Document = await invoke('save_crdt_update', {
-            docId,
-            update: Array.from(update)
-        });
-        return doc;
+        const blobs: number[][] = await invoke('load_document_ledger', { docId });
+        return blobs.map(b => new Uint8Array(b));
     } catch (error) {
-        console.error('Failed to save document:', error);
-        toasts.error('Failed to save document');
+        console.error('Failed to load document ledger:', error);
+        toasts.error('Failed to load document');
         throw error;
     }
+}
+
+/**
+ * Persist one Yjs binary update chunk and update the document title.
+ */
+export async function commitLocalUpdate(
+    docId: string,
+    updateBlob: Uint8Array,
+    title: string,
+): Promise<void> {
+    await invoke('commit_local_update', {
+        docId,
+        updateBlob: Array.from(updateBlob),
+        title,
+    });
+}
+
+/**
+ * Broadcast a raw Yjs update blob to all gossip peers (no DB write).
+ */
+export async function broadcastP2PUpdate(
+    docId: string,
+    updateBlob: Uint8Array,
+): Promise<void> {
+    await invoke('broadcast_p2p_update', {
+        docId,
+        updateBlob: Array.from(updateBlob),
+    });
 }
 
 export async function getOrCreateTodayJournal(): Promise<Document> {
@@ -92,9 +116,7 @@ export function toDocumentSummary(doc: Document): DocumentSummary {
         id: doc.id,
         doc_type: doc.doc_type,
         title: doc.title,
-        todo_count: 0,
-        completed_todo_count: 0,
         created_at: doc.created_at,
-        updated_at: doc.updated_at
+        updated_at: doc.updated_at,
     };
 }

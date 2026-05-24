@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
+    import { invoke } from '@tauri-apps/api/core';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
@@ -13,6 +14,8 @@
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
     import { Extension } from '@tiptap/core';
+    import Collaboration from '@tiptap/extension-collaboration';
+    import * as Y from 'yjs';
     import { SlashCommand } from '$lib/tiptap/SlashCommand';
     import { DocumentLinkNode } from '$lib/tiptap/nodes/DocumentLinkNode';
     import {
@@ -23,14 +26,7 @@
     } from '$lib/tiptap';
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import {
-        createLoroDoc,
-        createPresenceStore,
-        loadLoroDocFromState,
-        createInitialContent,
-        exportLoroDocSnapshot,
-        addLoroPluginsToEditor,
-    } from '$lib/loro/LoroEditorExtension';
+    import { loadYjsDocFromUpdates } from '$lib/yjs/yjsApp';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -46,55 +42,56 @@
 
     interface Props {
         document: any | null;
-        autoSave?: boolean;
-        debounceMs?: number;
-        onEditorReady?: (editor: EditorType, loroDoc: any) => void;
+        onEditorReady?: (editor: EditorType, ydoc: Y.Doc) => void;
         onContentChange?: () => void;
     }
 
     let {
         document,
-        autoSave = true,
-        debounceMs = 1000,
         onEditorReady,
         onContentChange
     }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
-    let loroDoc = $state.raw<any>(null);
+    let ydoc = $state.raw<Y.Doc | null>(null);
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
-    let isLoadingLoro = $state.raw(false);
+    let isLoading = $state.raw(false);
 
     let initialViewportHeight = 0;
     let keyboardOpen = $state(false);
     let keyboardHeight = $state(0);
 
     async function initializeEditor() {
-        if (!element) {
-            return false;
-        }
+        if (!element) return false;
 
+        // Destroy previous editor instance
         if (editor) {
             editor.destroy();
             editor = null;
         }
-        if (loroDoc) {
-            loroDoc = null;
+        ydoc = null;
+
+        // Load all Yjs update blobs for this document from the DB
+        const docId: string = document?.id ?? null;
+        let blobs: Uint8Array[] = [];
+        if (docId) {
+            try {
+                const raw: number[][] = await invoke('load_document_ledger', { docId });
+                blobs = raw.map(b => new Uint8Array(b));
+            } catch (err) {
+                console.error('[EditorInstance] Failed to load document ledger:', err);
+            }
         }
 
-        const newLoroDoc = await loadLoroDocFromState(
-            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array()
-        );
-
-        const title = document?.title ?? 'Untitled';
-        let initialContent: object = createInitialContent(title) as object;
+        const newYdoc = loadYjsDocFromUpdates(blobs);
 
         const ed = new Editor({
             element,
             extensions: [
                 StarterKit,
+                Collaboration.configure({ document: newYdoc }),
                 ResizableImage.configure({
                     inline: false,
                     allowBase64: true
@@ -118,12 +115,9 @@
                 SlashCommand,
                 ScrollOnFocus,
             ],
-            content: initialContent,
             editable: true,
             onUpdate: () => {
-                if (autoSave && editor) {
-                    onContentChange?.();
-                }
+                onContentChange?.();
             }
         });
 
@@ -134,15 +128,12 @@
         registerTodoCommand(ed);
         registerImageCommand(ed);
 
-        const presenceStore = await createPresenceStore(newLoroDoc);
-        await addLoroPluginsToEditor(ed, newLoroDoc, presenceStore);
-
-        loroDoc = newLoroDoc;
+        ydoc = newYdoc;
         editor = ed;
         isInitialized = true;
         currentDocId = document?.id ?? null;
 
-        onEditorReady?.(ed, newLoroDoc);
+        onEditorReady?.(ed, newYdoc);
         return true;
     }
 
@@ -172,10 +163,10 @@
         const el = element;
         const doc = document;
 
-        if (el && !isInitialized && doc && !isLoadingLoro) {
-            isLoadingLoro = true;
+        if (el && !isInitialized && doc && !isLoading) {
+            isLoading = true;
             initializeEditor().finally(() => {
-                isLoadingLoro = false;
+                isLoading = false;
             });
         }
     });
@@ -183,10 +174,10 @@
     $effect(() => {
         const doc = document;
 
-        if (doc && editor && loroDoc && isInitialized && doc.id !== currentDocId) {
-            isLoadingLoro = true;
+        if (doc && editor && ydoc && isInitialized && doc.id !== currentDocId) {
+            isLoading = true;
             initializeEditor().finally(() => {
-                isLoadingLoro = false;
+                isLoading = false;
             });
         }
     });
@@ -206,12 +197,12 @@
             editor.destroy();
         }
 
-        loroDoc = null;
+        ydoc = null;
     });
 </script>
 
 <div class="editor-instance" style="padding-bottom: {keyboardOpen ? keyboardHeight : 0}px;">
-    {#if isLoadingLoro}
+    {#if isLoading}
         <div class="loading-editor">
             <p>Loading editor...</p>
         </div>

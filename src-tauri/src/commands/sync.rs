@@ -1,6 +1,4 @@
-use crate::crdt::CrdtDocument;
 use crate::db::AppState;
-use crate::indexer;
 use crate::network::peer_manager;
 use crate::network::sync_protocol::SyncMessage;
 use crate::sync_manager::SyncPeer;
@@ -10,78 +8,84 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::Emitter;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CrdtStateResult {
-    pub doc_id: String,
-    pub crdt_state: Vec<u8>,
-}
+// ── New Yjs-based document ledger commands ────────────────────────────────────
 
+/// Load all raw Yjs update blobs for a document in insertion order.
+/// The frontend applies them sequentially to hydrate the in-memory Y.Doc.
 #[tauri::command]
-pub fn get_crdt_state(
+pub fn load_document_ledger(
     state: tauri::State<'_, AppState>,
     doc_id: String,
-) -> Result<CrdtStateResult, String> {
+) -> Result<Vec<Vec<u8>>, String> {
     let db = state.db.lock();
-    let crdt_state: Vec<u8> = db
-        .query_row(
-            "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-            params![&doc_id],
-            |row| row.get(0),
+    let mut stmt = db
+        .prepare(
+            "SELECT update_blob FROM document_updates WHERE doc_id = ? ORDER BY id ASC",
         )
-        .unwrap_or_default();
-    Ok(CrdtStateResult { doc_id, crdt_state })
+        .map_err(|e| e.to_string())?;
+
+    let updates: Vec<Vec<u8>> = stmt
+        .query_map(params![&doc_id], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(updates)
 }
 
+/// Persist one Yjs binary update chunk and update the document title.
+/// Called for every local edit event.
 #[tauri::command]
-pub fn save_crdt_update(
+pub fn commit_local_update(
     state: tauri::State<'_, AppState>,
     doc_id: String,
-    update: Vec<u8>,
-) -> Result<Vec<u8>, String> {
-    let current_state: Vec<u8> = {
-        let db = state.db.lock();
-        db.query_row(
-            "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-            params![&doc_id],
-            |row| row.get(0),
-        )
-        .unwrap_or_default()
-    };
-
-    let mut doc = CrdtDocument::new();
-    if !current_state.is_empty() {
-        doc.load_from_state(&current_state)?;
-    }
-    doc.apply_update(&update)?;
-    let new_state = doc.export_state();
-
+    update_blob: Vec<u8>,
+    title: String,
+) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
 
-    {
-        let db = state.db.lock();
-        db.execute(
-            "UPDATE documents SET crdt_state = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
-            params![&new_state, now, &doc_id],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+    let db = state.db.lock();
 
-    indexer::update_document_index(&state.db.lock(), &doc_id, &new_state)?;
+    db.execute(
+        "INSERT INTO document_updates (doc_id, update_blob, timestamp, origin_peer_id) VALUES (?, ?, ?, NULL)",
+        params![&doc_id, &update_blob, now],
+    )
+    .map_err(|e| e.to_string())?;
 
+    db.execute(
+        "UPDATE documents SET title = ?, updated_at = ? WHERE id = ?",
+        params![&title, now, &doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Broadcast a raw Yjs update blob to all gossip peers.
+/// Does NOT write to the local DB — commit_local_update handles persistence.
+#[tauri::command]
+pub fn broadcast_p2p_update(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    update_blob: Vec<u8>,
+) -> Result<(), String> {
     if let Some(broadcaster) = &state.gossip_broadcaster {
         let broadcaster = broadcaster.clone();
         let doc_id_clone = doc_id.clone();
-        let update_clone = update.clone();
+        let update_clone = update_blob.clone();
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(r) => r,
-                Err(e) => { eprintln!("Failed to create runtime: {}", e); return; }
+                Err(e) => {
+                    eprintln!("Failed to create runtime: {}", e);
+                    return;
+                }
             };
             rt.block_on(async move {
-                let msg = crate::network::sync_protocol::SyncMessage::SendDocDelta {
+                let msg = SyncMessage::SendDocDelta {
                     doc_id: doc_id_clone,
                     delta: update_clone,
                 };
@@ -89,38 +93,10 @@ pub fn save_crdt_update(
             });
         });
     }
-
-    Ok(new_state)
+    Ok(())
 }
 
-#[tauri::command]
-pub fn export_document_update_since(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-    since_version: Vec<u8>,
-) -> Result<Vec<u8>, String> {
-    let current_state: Vec<u8> = {
-        let db = state.db.lock();
-        db.query_row(
-            "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-            params![&doc_id],
-            |row| row.get(0),
-        )
-        .unwrap_or_default()
-    };
-
-    if current_state.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut doc = crate::crdt::CrdtDocument::new();
-    doc.load_from_state(&current_state)?;
-
-    let sv: loro::VersionVector = serde_json::from_slice(&since_version)
-        .map_err(|e| format!("Invalid state vector: {}", e))?;
-
-    doc.export_update_since(&sv)
-}
+// ── Peer / sync management (unchanged) ───────────────────────────────────────
 
 #[tauri::command]
 pub fn get_node_id(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
@@ -152,7 +128,9 @@ pub async fn get_sync_peers(state: tauri::State<'_, AppState>) -> Result<Vec<Syn
 
     let sync_manager = state.sync_manager.lock().await;
     for peer in &db_peers {
-        let _ = sync_manager.add_peer(peer.node_id.clone(), peer.device_name.clone()).await;
+        let _ = sync_manager
+            .add_peer(peer.node_id.clone(), peer.device_name.clone())
+            .await;
     }
     Ok(sync_manager.get_peers().await)
 }
@@ -178,6 +156,8 @@ pub fn set_sync_enabled(state: tauri::State<'_, AppState>, enabled: bool) -> Res
     Ok(())
 }
 
+/// Trigger a full catch-up QUIC sync with all known peers.
+/// Requests all updates for every local document and stores received blobs.
 #[tauri::command]
 pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let sync_manager = state.sync_manager.lock().await;
@@ -199,17 +179,17 @@ pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), Strin
 
     let db = state.db.clone();
     let app = state.app_handle.clone();
-    let data_path = state.data_dir.to_string_lossy().to_string();
 
     for peer in peers {
         let node_id = peer.node_id.clone();
         let app_clone = app.clone();
         let db_clone = db.clone();
         let endpoint_clone = endpoint.clone();
-        let data_clone = data_path.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = sync_with_peer(&endpoint_clone, &node_id, &db_clone, &app_clone, &data_clone).await {
+            if let Err(e) =
+                sync_with_peer(&endpoint_clone, &node_id, &db_clone, &app_clone).await
+            {
                 eprintln!("Failed to sync with peer {}: {}", node_id, e);
             }
         });
@@ -223,11 +203,10 @@ async fn sync_with_peer(
     node_id: &str,
     db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
     app: &tauri::AppHandle,
-    data_path: &str,
 ) -> Result<(), String> {
     use iroh::PublicKey;
 
-    let peer_key = PublicKey::from_z32(&node_id)
+    let peer_key = PublicKey::from_z32(node_id)
         .map_err(|e| format!("Invalid peer node ID: {}", e))?;
 
     let conn = endpoint
@@ -240,6 +219,7 @@ async fn sync_with_peer(
         .await
         .map_err(|e| format!("Failed to open bi-stream: {}", e))?;
 
+    // Collect all local doc IDs
     let doc_ids: Vec<String> = {
         let db_lock = db.lock();
         let result: Result<Vec<String>, _> = db_lock
@@ -251,21 +231,11 @@ async fn sync_with_peer(
         result.map_err(|e| e.to_string())?
     };
 
+    // Request all docs from peer (no state_vector needed — Yjs handles merging on JS side)
     for doc_id in &doc_ids {
-        let state_vector: Vec<u8> = {
-            let db_lock = db.lock();
-            db_lock
-                .query_row(
-                    "SELECT crdt_state FROM documents WHERE id = ?",
-                    params![doc_id],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .unwrap_or_default()
-        };
-
         let msg = SyncMessage::RequestDoc {
             doc_id: doc_id.clone(),
-            state_vector,
+            state_vector: vec![],
         };
         send.write_all(&msg.encode())
             .await
@@ -275,18 +245,31 @@ async fn sync_with_peer(
     send.finish().map_err(|e| e.to_string())?;
 
     loop {
-        match recv.read_to_end(1024 * 1024).await {
+        match recv.read_to_end(4 * 1024 * 1024).await {
             Ok(data) if data.is_empty() => break,
             Ok(data) => {
                 if let Ok(msg) = SyncMessage::decode(&data) {
                     match msg {
-                        SyncMessage::SendDocDelta { doc_id, delta } => {
-                            let _ = apply_crdt_delta_sync(db, &doc_id, &delta).await;
-                            let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
+                        SyncMessage::SendDocUpdates { doc_id, updates } => {
+                            for update in &updates {
+                                let _ = crate::store_remote_update(db, &doc_id, update, Some(node_id));
+                                let _ = app.emit(
+                                    "remote_network_update",
+                                    serde_json::json!({
+                                        "doc_id": doc_id,
+                                        "update_blob": update,
+                                        "origin": node_id
+                                    }),
+                                );
+                            }
                         }
-                        SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
-                            let _ = save_blob_to_disk_sync(data_path, &hash, &mime_type, &blob_data);
-                            let _ = update_attachment_db_sync(db, &hash, &mime_type, data_path);
+                        // Legacy single-delta response (forward compat)
+                        SyncMessage::SendDocDelta { doc_id, delta } => {
+                            let _ = crate::store_remote_update(db, &doc_id, &delta, Some(node_id));
+                            let _ = app.emit(
+                                "remote_network_update",
+                                serde_json::json!({ "doc_id": doc_id }),
+                            );
                         }
                         SyncMessage::DocSyncComplete { doc_id } => {
                             let _ = app.emit("sync-complete", doc_id);
@@ -305,89 +288,8 @@ async fn sync_with_peer(
     Ok(())
 }
 
-async fn apply_crdt_delta_sync(
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    doc_id: &str,
-    delta: &[u8],
-) -> Result<(), String> {
-    let current_state: Vec<u8> = {
-        let db_lock = db.lock();
-        db_lock
-            .query_row(
-                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-                params![doc_id],
-                |row| row.get(0),
-            )
-            .unwrap_or_default()
-    };
-
-    let mut doc = CrdtDocument::new();
-    if !current_state.is_empty() {
-        doc.load_from_state(&current_state)?;
-    }
-    doc.apply_update(delta)?;
-    let new_state = doc.export_state();
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    {
-        let db_lock = db.lock();
-        db_lock
-            .execute(
-                "UPDATE documents SET crdt_state = ?, updated_at = ? WHERE id = ?",
-                params![&new_state, now, doc_id],
-            )
-            .map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
-}
-
-fn save_blob_to_disk_sync(data_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
-    let ext = match mime_type {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        _ => "bin",
-    };
-    let filename = format!("{}.{}", hash, ext);
-    let attachments_dir = std::path::PathBuf::from(data_path).join("attachments");
-    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-    let full_path = attachments_dir.join(&filename);
-    std::fs::write(&full_path, data).map_err(|e| e.to_string())?;
-    Ok(format!("attachments/{}", filename))
-}
-
-fn update_attachment_db_sync(
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    hash: &str,
-    mime_type: &str,
-    _data_path: &str,
-) -> Result<(), String> {
-    let ext = match mime_type {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        _ => "bin",
-    };
-    let filename = format!("{}.{}", hash, ext);
-    let relative_path = format!("attachments/{}", filename);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-    let db_lock = db.lock();
-    db_lock.execute(
-        "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
-        rusqlite::params![hash, mime_type, &relative_path, now],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+// ── Internal helpers re-exported for use in lib.rs ───────────────────────────
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NodeIdResult {
+    pub node_id: Option<String>,
 }

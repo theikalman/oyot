@@ -38,15 +38,12 @@
             const newDoc: Document = await invoke('create_document', {
                 docType: 'note',
                 title: newDocTitle.trim(),
-                crdtState: []
             });
 
             const summary: DocumentSummary = {
                 id: newDoc.id,
                 doc_type: newDoc.doc_type,
                 title: newDoc.title,
-                todo_count: 0,
-                completed_todo_count: 0,
                 created_at: newDoc.created_at,
                 updated_at: newDoc.updated_at
             };
