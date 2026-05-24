@@ -1,30 +1,24 @@
-use loro::{ContainerID, ExportMode, LoroDoc, VersionVector};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocumentMetadata {
-    pub title: String,
-    pub todo_count: i32,
-    pub completed_todo_count: i32,
-}
+use yrs::updates::decoder::Decode;
+use yrs::{Doc, ReadTxn, Transact};
 
 pub struct CrdtDocument {
-    doc: LoroDoc,
+    doc: Doc,
 }
 
 impl CrdtDocument {
     pub fn new() -> Self {
-        Self {
-            doc: LoroDoc::new(),
-        }
+        Self { doc: Doc::new() }
     }
 
     pub fn load_from_state(&mut self, blob: &[u8]) -> Result<(), String> {
         if blob.is_empty() {
             return Ok(());
         }
-        let new_doc = LoroDoc::from_snapshot(blob).map_err(|e| e.to_string())?;
-        *self = Self { doc: new_doc };
+        let update =
+            yrs::Update::decode_v1(blob).map_err(|e| format!("Failed to decode state: {}", e))?;
+        let mut txn = self.doc.transact_mut();
+        txn.apply_update(update)
+            .map_err(|e| format!("Failed to apply state: {}", e))?;
         Ok(())
     }
 
@@ -32,67 +26,22 @@ impl CrdtDocument {
         if update.is_empty() {
             return Ok(());
         }
-        self.doc.import(update).map_err(|e| e.to_string())?;
+        let update = yrs::Update::decode_v1(update)
+            .map_err(|e| format!("Failed to decode update: {}", e))?;
+        let mut txn = self.doc.transact_mut();
+        txn.apply_update(update)
+            .map_err(|e| format!("Failed to apply update: {}", e))?;
         Ok(())
     }
 
     pub fn export_state(&self) -> Vec<u8> {
-        self.doc.export(ExportMode::Snapshot).unwrap_or_default()
+        let txn = self.doc.transact();
+        txn.encode_state_as_update_v1(&yrs::StateVector::default())
     }
 
-    pub fn export_update_since(&self, clock: &VersionVector) -> Result<Vec<u8>, String> {
-        self.doc
-            .export(ExportMode::updates(clock))
-            .map_err(|e| e.to_string())
-    }
-
-    fn get_text_by_name(&self, name: &str) -> String {
-        let cid = ContainerID::new_root(name.into(), loro::ContainerType::Text);
-        let text = self.doc.get_text(&cid);
-        let mut result = String::new();
-        text.iter(|s| {
-            result.push_str(s);
-            true
-        });
-        result
-    }
-
-    pub fn get_metadata(&self) -> DocumentMetadata {
-        let title = self.get_text_by_name("title");
-        let todo_count = self.count_todos();
-        let completed_todo_count = self.count_completed_todos();
-
-        DocumentMetadata {
-            title: if title.is_empty() {
-                "Untitled".to_string()
-            } else {
-                title
-            },
-            todo_count,
-            completed_todo_count,
-        }
-    }
-
-    fn count_todos(&self) -> i32 {
-        let cid = ContainerID::new_root("todos".into(), loro::ContainerType::List);
-        let list = self.doc.get_list(&cid);
-        list.len() as i32
-    }
-
-    fn count_completed_todos(&self) -> i32 {
-        let cid = ContainerID::new_root("todos".into(), loro::ContainerType::List);
-        let list = self.doc.get_list(&cid);
-        let mut count = 0i32;
-        for i in 0..list.len() {
-            if let Some(loro::ValueOrContainer::Value(loro::LoroValue::Map(map))) = list.get(i) {
-                if let Some(loro::LoroValue::Bool(done)) = map.get("done") {
-                    if *done {
-                        count += 1;
-                    }
-                }
-            }
-        }
-        count
+    pub fn export_update_since(&self, sv: &yrs::StateVector) -> Result<Vec<u8>, String> {
+        let txn = self.doc.transact();
+        Ok(txn.encode_state_as_update_v1(sv))
     }
 }
 

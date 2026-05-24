@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { exportLoroDocSnapshot } from '$lib/loro/LoroEditorExtension';
+import { exportLoroDocSnapshot } from '$lib/collab/LoroEditorExtension';
 import { toasts } from '$lib/services/toast';
 import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';

@@ -143,16 +143,11 @@ pub fn create_document(
     };
     let now = current_timestamp();
 
-    let empty_doc = loro::LoroDoc::new();
-    let crdt_state = empty_doc
-        .export(loro::ExportMode::Snapshot)
-        .map_err(|e| e.to_string())?;
-
     {
         let db = state.db.lock();
         db.execute(
             "INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, &crdt_state, now, now],
+            params![&doc_id, &doc_type, &title, &[] as &[u8], now, now],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -309,16 +304,13 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
         return Ok(doc);
     }
 
-    let empty_doc = loro::LoroDoc::new();
-    let empty_content = empty_doc
-        .export(loro::ExportMode::Snapshot)
-        .map_err(|e| e.to_string())?;
+    let empty_content: &[u8] = &[];
     let now = current_timestamp();
     {
         let db = state.db.lock();
         db.execute(
             "INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at) VALUES (?, 'journal', ?, ?, ?, ?)",
-            params![&doc_id, &today_title, &empty_content, now, now],
+            params![&doc_id, &today_title, empty_content, now, now],
         )
         .map_err(|e| e.to_string())?;
     }

@@ -116,8 +116,9 @@ pub fn export_document_update_since(
     let mut doc = crate::crdt::CrdtDocument::new();
     doc.load_from_state(&current_state)?;
 
-    let sv: loro::VersionVector = serde_json::from_slice(&since_version)
-        .map_err(|e| format!("Invalid state vector: {}", e))?;
+    use yrs::updates::decoder::Decode;
+    let sv = yrs::StateVector::decode_v1(&since_version)
+        .unwrap_or_default();
 
     doc.export_update_since(&sv)
 }

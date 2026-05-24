@@ -5,7 +5,6 @@
     import { currentDocument, appStore } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
     import type { Document } from '$lib/types';
-    import type { LoroDocType } from 'loro-prosemirror';
     import { Toolbar, EditorHeader } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
     import { createSaveService, type EditorSaveService } from './EditorSaveService';

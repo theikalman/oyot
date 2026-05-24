@@ -30,7 +30,7 @@
         createInitialContent,
         exportLoroDocSnapshot,
         addLoroPluginsToEditor,
-    } from '$lib/loro/LoroEditorExtension';
+    } from '$lib/collab/LoroEditorExtension';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -76,74 +76,84 @@
             return false;
         }
 
-        if (editor) {
-            editor.destroy();
-            editor = null;
-        }
-        if (loroDoc) {
-            loroDoc = null;
-        }
-
-        const newLoroDoc = await loadLoroDocFromState(
-            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array()
-        );
-
-        const title = document?.title ?? 'Untitled';
-        let initialContent: object = createInitialContent(title) as object;
-
-        const ed = new Editor({
-            element,
-            extensions: [
-                StarterKit,
-                ResizableImage.configure({
-                    inline: false,
-                    allowBase64: true
-                }),
-                ImageExtension,
-                Placeholder.configure({
-                    placeholder: 'Start writing...'
-                }),
-                TaskList,
-                TaskItem.configure({
-                    nested: true
-                }),
-                Table.configure({
-                    resizable: true
-                }),
-                TableRow,
-                TableHeader,
-                TableCell,
-                Typography,
-                DocumentLinkNode,
-                SlashCommand,
-                ScrollOnFocus,
-            ],
-            content: initialContent,
-            editable: true,
-            onUpdate: () => {
-                if (autoSave && editor) {
-                    onContentChange?.();
-                }
+        try {
+            if (editor) {
+                editor.destroy();
+                editor = null;
             }
-        });
+            if (loroDoc) {
+                loroDoc = null;
+            }
 
-        ed.view.dom.addEventListener('click', handleImageClick);
+            const newLoroDoc = loadLoroDocFromState(
+                document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array()
+            );
 
-        registerDocumentLinkCommand(ed);
-        registerDateCommand(ed);
-        registerTodoCommand(ed);
-        registerImageCommand(ed);
+            const title = document?.title ?? 'Untitled';
+            // For new documents (empty Yjs fragment) seed the editor with a title heading.
+            // For existing documents the content will be loaded from the Yjs fragment by
+            // ySyncPlugin's _forceRerender after it is registered.
+            const fragment = newLoroDoc.getXmlFragment('prosemirror');
+            const isNewDoc = fragment.length === 0;
+            const initialContent: object | null = isNewDoc ? createInitialContent(title) as object : null;
 
-        const presenceStore = await createPresenceStore(newLoroDoc);
-        await addLoroPluginsToEditor(ed, newLoroDoc, presenceStore);
+            const ed = new Editor({
+                element,
+                extensions: [
+                    StarterKit,
+                    ResizableImage.configure({
+                        inline: false,
+                        allowBase64: true
+                    }),
+                    ImageExtension,
+                    Placeholder.configure({
+                        placeholder: 'Start writing...'
+                    }),
+                    TaskList,
+                    TaskItem.configure({
+                        nested: true
+                    }),
+                    Table.configure({
+                        resizable: true
+                    }),
+                    TableRow,
+                    TableHeader,
+                    TableCell,
+                    Typography,
+                    DocumentLinkNode,
+                    SlashCommand,
+                    ScrollOnFocus,
+                ],
+                content: initialContent,
+                editable: true,
+                onUpdate: () => {
+                    if (autoSave && editor) {
+                        onContentChange?.();
+                    }
+                }
+            });
 
-        loroDoc = newLoroDoc;
-        editor = ed;
-        isInitialized = true;
-        currentDocId = document?.id ?? null;
+            ed.view.dom.addEventListener('click', handleImageClick);
 
-        onEditorReady?.(ed, newLoroDoc);
-        return true;
+            registerDocumentLinkCommand(ed);
+            registerDateCommand(ed);
+            registerTodoCommand(ed);
+            registerImageCommand(ed);
+
+            const presenceStore = await createPresenceStore(newLoroDoc);
+            await addLoroPluginsToEditor(ed, newLoroDoc, presenceStore);
+
+            loroDoc = newLoroDoc;
+            editor = ed;
+            isInitialized = true;
+            currentDocId = document?.id ?? null;
+
+            onEditorReady?.(ed, newLoroDoc);
+            return true;
+        } catch (err) {
+            console.error('[EditorInstance] Failed to initialize editor:', err);
+            return false;
+        }
     }
 
     function handleImageClick(e: MouseEvent) {

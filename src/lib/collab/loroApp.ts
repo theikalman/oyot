@@ -1,25 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-interface LoroContainer {
-    toString(): string;
-    insert(index: number, value: string): void;
-    delete(index: number, len: number): void;
-    length: number;
-    get(index: number): any;
-}
-
-interface LoroDocInterface {
-    free(): void;
-    getText(cid: string): LoroContainer;
-    getList(cid: string): LoroContainer;
-    fromSnapshot(snapshot: Uint8Array): any;
-    import(data: Uint8Array): void;
-    export(mode: { mode: 'update' } | { mode: 'snapshot' }): Uint8Array;
-    exportFrom(version: any): Uint8Array;
-    exportSnapshot(): Uint8Array;
-    oplogVersion(): any;
-    subscribe(f: (event: any) => void): void;
-}
+import * as Y from 'yjs';
 
 export interface DocumentMetadata {
     title: string;
@@ -27,73 +6,56 @@ export interface DocumentMetadata {
     completed_todo_count: number;
 }
 
-let LoroDocClass: any = null;
-
-async function getLoroDocClass(): Promise<any> {
-    if (!LoroDocClass) {
-        const module = await import('loro-wasm');
-        LoroDocClass = module.LoroDoc;
-    }
-    return LoroDocClass;
-}
-
 export class LoroApp {
-    private doc: LoroDocInterface | null = null;
+    private doc: Y.Doc | null = null;
     private isInitialized: boolean = false;
 
     async init(): Promise<void> {
         if (this.isInitialized) return;
-        const Loro = await getLoroDocClass();
-        this.doc = new Loro();
+        this.doc = new Y.Doc();
         this.isInitialized = true;
     }
 
     loadDocument(crdtState: Uint8Array): void {
-        if (!this.doc || crdtState.length === 0) {
-            return;
-        }
-        const loaded = LoroDocClass.fromSnapshot(crdtState);
-        this.doc.free();
-        this.doc = loaded;
+        if (!this.doc || crdtState.length === 0) return;
+        Y.applyUpdate(this.doc, crdtState);
     }
 
     applyUpdate(update: Uint8Array): void {
         if (!this.doc || update.length === 0) return;
-        this.doc.import(update);
+        Y.applyUpdate(this.doc, update);
     }
 
     getUpdate(): Uint8Array {
         if (!this.doc) return new Uint8Array();
-        return this.doc.export({ mode: 'update' });
+        return Y.encodeStateAsUpdate(this.doc);
     }
 
     getUpdatesSince(version: Uint8Array): Uint8Array {
         if (!this.doc) return new Uint8Array();
-        if (version.length === 0) {
-            return this.getUpdate();
-        }
-        return this.doc.exportFrom(version);
+        if (version.length === 0) return this.getUpdate();
+        return Y.encodeStateAsUpdate(this.doc, version);
     }
 
     getStateVector(): Uint8Array {
         if (!this.doc) return new Uint8Array();
-        const vv = this.doc.oplogVersion();
-        return vv.encode();
+        return Y.encodeStateVector(this.doc);
     }
 
     exportSnapshot(): Uint8Array {
         if (!this.doc) return new Uint8Array();
-        return this.doc.exportSnapshot();
+        return Y.encodeStateAsUpdate(this.doc);
     }
 
-    getText(container: string): LoroContainer {
-        if (!this.doc) return { toString: () => '', insert: () => {}, delete: () => {}, length: 0, get: () => null } as unknown as LoroContainer;
-        return this.doc.getText(container) as unknown as LoroContainer;
+    getText(container: string): Y.Text {
+        if (!this.doc) {
+            return new Y.Doc().getText(container);
+        }
+        return this.doc.getText(container);
     }
 
     getTextAsString(container: string): string {
-        const text = this.getText(container);
-        return text.toString();
+        return this.getText(container).toString();
     }
 
     getJsonContent(): string {
@@ -126,21 +88,17 @@ export class LoroApp {
 
     private countTodos(): number {
         if (!this.doc) return 0;
-        const list = this.doc.getList('todos');
-        return list.length;
+        return this.doc.getArray('todos').length;
     }
 
     private countCompletedTodos(): number {
         if (!this.doc) return 0;
-        const list = this.doc.getList('todos');
+        const list = this.doc.getArray<Y.Map<unknown>>('todos');
         let count = 0;
         for (let i = 0; i < list.length; i++) {
             const item = list.get(i);
-            if (item && typeof item === 'object' && 'map' in item) {
-                const map = item.map as Record<string, unknown>;
-                if (map.done === true) {
-                    count++;
-                }
+            if (item instanceof Y.Map && item.get('done') === true) {
+                count++;
             }
         }
         return count;
@@ -149,21 +107,21 @@ export class LoroApp {
     setTitle(title: string): void {
         if (!this.doc) return;
         const text = this.doc.getText('title');
-        const len = text.toString().length;
+        const len = text.length;
         if (len > 0) {
             text.delete(0, len);
         }
         text.insert(0, title);
     }
 
-    subscribe(callback: (event: any) => void): void {
+    subscribe(callback: (update: Uint8Array) => void): void {
         if (!this.doc) return;
-        this.doc.subscribe(callback);
+        this.doc.on('update', callback);
     }
 
     destroy(): void {
         if (this.doc) {
-            this.doc.free();
+            this.doc.destroy();
             this.doc = null;
         }
         this.isInitialized = false;
