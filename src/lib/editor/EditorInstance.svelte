@@ -90,7 +90,7 @@
         const ed = new Editor({
             element,
             extensions: [
-                StarterKit,
+                StarterKit.configure({ undoRedo: false }),
                 Collaboration.configure({ document: newYdoc }),
                 ResizableImage.configure({
                     inline: false,
