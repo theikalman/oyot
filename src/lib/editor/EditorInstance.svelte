@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onDestroy } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
@@ -13,7 +13,6 @@
     import TableCell from '@tiptap/extension-table-cell';
     import TableHeader from '@tiptap/extension-table-header';
     import Typography from '@tiptap/extension-typography';
-    import { Extension } from '@tiptap/core';
     import Collaboration from '@tiptap/extension-collaboration';
     import * as Y from 'yjs';
     import { SlashCommand } from '$lib/tiptap/SlashCommand';
@@ -27,18 +26,6 @@
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
     import { loadYjsDocFromUpdates } from '$lib/yjs/yjsApp';
-
-    const ScrollOnFocus = Extension.create({
-        name: 'scrollOnFocus',
-        onSelectionUpdate() {
-            const vp = window.visualViewport;
-            if (vp && vp.height < initialViewportHeight - 100) {
-                requestAnimationFrame(() => {
-                    this.editor.commands.scrollIntoView();
-                });
-            }
-        }
-    });
 
     interface Props {
         document: any | null;
@@ -58,10 +45,6 @@
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
     let isLoading = $state.raw(false);
-
-    let initialViewportHeight = 0;
-    let keyboardOpen = $state(false);
-    let keyboardHeight = $state(0);
 
     async function initializeEditor() {
         if (!element) return false;
@@ -113,7 +96,6 @@
                 Typography,
                 DocumentLinkNode,
                 SlashCommand,
-                ScrollOnFocus,
             ],
             editable: true,
             onUpdate: () => {
@@ -152,13 +134,6 @@
         }
     }
 
-    function handleViewportChange() {
-        const vp = window.visualViewport;
-        if (!vp) return;
-        keyboardOpen = vp.height < initialViewportHeight - 100;
-        keyboardHeight = keyboardOpen ? initialViewportHeight - vp.height : 0;
-    }
-
     $effect(() => {
         const el = element;
         const doc = document;
@@ -182,16 +157,7 @@
         }
     });
 
-    onMount(() => {
-        initialViewportHeight = window.innerHeight;
-        window.visualViewport?.addEventListener('resize', handleViewportChange);
-        window.visualViewport?.addEventListener('scroll', handleViewportChange);
-    });
-
     onDestroy(() => {
-        window.visualViewport?.removeEventListener('resize', handleViewportChange);
-        window.visualViewport?.removeEventListener('scroll', handleViewportChange);
-
         if (editor) {
             editor.view.dom.removeEventListener('click', handleImageClick);
             editor.destroy();
@@ -201,7 +167,7 @@
     });
 </script>
 
-<div class="editor-instance" style="padding-bottom: {keyboardOpen ? keyboardHeight : 0}px;">
+<div class="editor-instance">
     {#if isLoading}
         <div class="loading-editor">
             <p>Loading editor...</p>
