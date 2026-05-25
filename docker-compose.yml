@@ -1,0 +1,17 @@
+version: '3.9'
+
+services:
+  signaling:
+    build:
+      context: ./signaling-server
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "3001"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

@@ -1,31 +1,46 @@
 mod commands;
-mod crdt;
 mod db;
+mod db_snapshot;
+mod identity;
 mod indexer;
 mod network;
-mod sync_manager;
+mod pairing;
 
 use crate::commands::*;
-use db::AppState;
-use futures_lite::StreamExt;
-use iroh::{Endpoint, EndpointId};
-use iroh_gossip::api::Event;
-use network::gossip_broadcaster::GossipBroadcaster;
-use network::sync_protocol::SyncMessage;
+use crate::db::AppState;
+use crate::network::peer_connection::PeerEvent;
+use crate::network::webrtc_manager::RtcEvent;
+use rusqlite::Connection;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
-pub fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
+pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
     db.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS documents (
-            id TEXT PRIMARY KEY,
+            id TEXT PRIMARY KEY NOT NULL,
             type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
             title TEXT NOT NULL,
-            crdt_state BLOB NOT NULL,
-            is_deleted INTEGER DEFAULT 0,
+            crdt_state BLOB NOT NULL DEFAULT '',
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            is_deleted INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS yjs_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id TEXT NOT NULL,
+            update_blob BLOB NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS yjs_snapshots (
+            document_id TEXT PRIMARY KEY NOT NULL,
+            snapshot_blob BLOB NOT NULL,
+            last_update_id INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS document_index (
@@ -48,386 +63,95 @@ pub fn setup_database_tables(db: &rusqlite::Connection) -> Result<(), String> {
             device_name TEXT NOT NULL,
             last_synchronized INTEGER
         );
+
+        CREATE TABLE IF NOT EXISTS identity (
+            user_id TEXT PRIMARY KEY,
+            node_id TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL DEFAULT 'My Device'
+        );
+
+        CREATE TABLE IF NOT EXISTS device_pairs (
+            user_id TEXT NOT NULL,
+            peer_node_id TEXT NOT NULL,
+            peer_display_name TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            last_synchronized INTEGER,
+            PRIMARY KEY (user_id, peer_node_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_yjs_updates_doc ON yjs_updates(document_id);
+        CREATE INDEX IF NOT EXISTS idx_device_pairs_room ON device_pairs(room_id);
+        CREATE INDEX IF NOT EXISTS idx_device_pairs_user ON device_pairs(user_id);
         ",
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;
     Ok(())
 }
 
-fn init_iroh_endpoint_and_gossip() -> Result<(iroh::Endpoint, Option<Arc<GossipBroadcaster>>), String> {
-    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-    rt.block_on(async {
-        use iroh_gossip::net::Gossip;
-        use network::gossip_broadcaster::{bytes_to_topic_id, GossipBroadcaster};
-
-        let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
-            .bind()
-            .await
-            .map_err(|e| format!("Failed to bind Iroh endpoint: {}", e))?;
-
-        let gossip = Gossip::builder().spawn(endpoint.clone());
-        let topic_bytes = bytes_to_topic_id("oyot-default-sync-v1");
-        let broadcaster = GossipBroadcaster::new(gossip, topic_bytes);
-
-        Ok((endpoint, Some(Arc::new(broadcaster))))
-    })
+fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
+    let config_path = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("config.json"),
+        Err(_) => return serde_json::Value::Object(Default::default()),
+    };
+    let content = match std::fs::read_to_string(config_path).ok() {
+        Some(c) => c,
+        None => return serde_json::Value::Object(Default::default()),
+    };
+    serde_json::from_str(&content).unwrap_or(serde_json::Value::Object(Default::default()))
 }
 
 fn spawn_sync_tasks(
-    endpoint: Option<Arc<Endpoint>>,
-    gossip: Option<Arc<GossipBroadcaster>>,
-    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    data_path: String,
     app: tauri::AppHandle,
+    webrtc_manager: Arc<crate::network::webrtc_manager::WebRtcManager>,
+    peer_registry: Arc<crate::network::peer_connection::PeerRegistry>,
 ) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-
         rt.block_on(async {
-            if let Some(endpoint) = endpoint {
-                let db_clone = db.clone();
-                let data_clone = data_path.clone();
-                let app_clone = app.clone();
-                tokio::spawn(async move {
-                    accept_incoming_connections(&endpoint, db_clone, data_clone, &app_clone).await;
-                });
-            }
+            let app_clone = app.clone();
+            let mut rtc_events = webrtc_manager.subscribe();
+            tokio::spawn(async move {
+                while let Ok(event) = rtc_events.recv().await {
+                    match event {
+                        RtcEvent::PeerConnected(peer_id) => {
+                            let _ = app_clone.emit("peer-connected", peer_id);
+                        }
+                        RtcEvent::PeerDisconnected(peer_id) => {
+                            let _ = app_clone.emit("peer-disconnected", peer_id);
+                        }
+                        RtcEvent::DataReceived { from, doc_id } => {
+                            let _ = app_clone.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from }));
+                        }
+                        RtcEvent::Error { peer_id, error } => {
+                            eprintln!("WebRTC error for peer {}: {}", peer_id, error);
+                        }
+                    }
+                }
+            });
 
-            if let Some(gossip) = gossip {
-                let db_clone = db.clone();
-                let data_clone = data_path.clone();
-                let app_clone = app.clone();
-                tokio::spawn(async move {
-                    handle_gossip_messages(gossip, db_clone, data_clone, app_clone).await;
-                });
-            }
+            let app_clone2 = app.clone();
+            let mut peer_events = peer_registry.subscribe();
+            tokio::spawn(async move {
+                while let Ok(event) = peer_events.recv().await {
+                    match event {
+                        PeerEvent::Connected(peer_id) => {
+                            let _ = app_clone2.emit("peer-connected", peer_id);
+                        }
+                        PeerEvent::Disconnected(peer_id) => {
+                            let _ = app_clone2.emit("peer-disconnected", peer_id);
+                        }
+                        PeerEvent::Message { from, doc_id: _ } => {
+                            let _ = app_clone2.emit("sync-received", serde_json::json!({ "from": from }));
+                        }
+                    }
+                }
+            });
 
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
             }
         });
     });
-}
-
-async fn accept_incoming_connections(
-    endpoint: &Arc<Endpoint>,
-    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    data_path: String,
-    app: &tauri::AppHandle,
-) {
-    loop {
-        if let Some(incoming) = endpoint.accept().await {
-            let db = db.clone();
-            let data_path = data_path.clone();
-            let app = app.clone();
-
-            tokio::spawn(async move {
-                if let Err(e) = handle_connection(incoming, db, data_path, app).await {
-                    eprintln!("Error handling connection: {}", e);
-                }
-            });
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    }
-}
-
-async fn handle_connection(
-    incoming: iroh::endpoint::Incoming,
-    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    data_path: String,
-    app: tauri::AppHandle,
-) -> Result<(), String> {
-    let accepting = incoming.accept().map_err(|e| format!("Accept error: {}", e))?;
-
-    let conn = accepting
-        .await
-        .map_err(|e| format!("Connection error: {}", e))?;
-
-    let remote_id = conn.remote_id();
-    let (mut send, mut recv) = conn
-        .accept_bi()
-        .await
-        .map_err(|e| format!("Failed to accept bi-stream: {}", e))?;
-
-    let buf = recv
-        .read_to_end(1024 * 1024)
-        .await
-        .map_err(|e| format!("Read error: {}", e))?;
-
-    if buf.is_empty() {
-        return Ok(());
-    }
-
-    let msg = SyncMessage::decode(&buf).map_err(|e| format!("Decode error: {}", e))?;
-
-    match msg {
-        SyncMessage::RequestDoc { doc_id, state_vector: _ } => {
-            handle_doc_request(&mut send, &db, &doc_id, &app).await?;
-        }
-        SyncMessage::RequestBlob { hash } => {
-            handle_blob_request(&mut send, &db, &data_path, &hash).await?;
-        }
-        _ => {
-            eprintln!("Unexpected message type received");
-        }
-    }
-
-    let _ = app.emit("peer-connected", remote_id.to_string());
-
-    Ok(())
-}
-
-async fn handle_doc_request(
-    send: &mut iroh::endpoint::SendStream,
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    doc_id: &str,
-    app: &tauri::AppHandle,
-) -> Result<(), String> {
-    let crdt_state: Vec<u8> = {
-        let db_lock = db.lock();
-        db_lock
-            .query_row(
-                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-                [doc_id],
-                |row| row.get(0),
-            )
-            .unwrap_or_default()
-    };
-
-    let response = SyncMessage::SendDocDelta {
-        doc_id: doc_id.to_string(),
-        delta: crdt_state,
-    };
-
-    let encoded = response.encode();
-    send.write_all(&encoded)
-        .await
-        .map_err(|e| format!("Write error: {}", e))?;
-    let _ = send.finish();
-
-    let _ = app.emit("sync-complete", doc_id);
-
-    Ok(())
-}
-
-async fn handle_blob_request(
-    send: &mut iroh::endpoint::SendStream,
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    data_path: &str,
-    hash: &str,
-) -> Result<(), String> {
-    let (data, mime_type): (Option<Vec<u8>>, Option<String>) = {
-        let db_lock = db.lock();
-        let result: Option<(String, String)> = db_lock
-            .query_row(
-                "SELECT local_path, mime_type FROM attachments WHERE hash = ? AND is_fully_downloaded = 1",
-                [hash],
-                |row| {
-                    let local_path: String = row.get(0)?;
-                    let mime_type: String = row.get(1)?;
-                    Ok((local_path, mime_type))
-                },
-            )
-            .ok();
-
-        if let Some((local_path, mime_type)) = result {
-            let full_path = std::path::PathBuf::from(data_path).join(&local_path);
-            let data = std::fs::read(&full_path).ok();
-            (data, Some(mime_type))
-        } else {
-            (None, None)
-        }
-    };
-
-    let response = if let (Some(data), Some(mime)) = (data, mime_type) {
-        SyncMessage::SendBlob {
-            hash: hash.to_string(),
-            data,
-            mime_type: mime,
-        }
-    } else {
-        SyncMessage::BlobReceived {
-            hash: hash.to_string(),
-        }
-    };
-
-    let encoded = response.encode();
-    send.write_all(&encoded)
-        .await
-        .map_err(|e| format!("Write error: {}", e))?;
-    let _ = send.finish();
-
-    Ok(())
-}
-
-async fn handle_gossip_messages(
-    gossip: Arc<GossipBroadcaster>,
-    db: Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    data_path: String,
-    app: tauri::AppHandle,
-) {
-    let gossip_net = gossip.gossip().clone();
-    let topic_id = gossip.topic_id();
-    let db_clone = db.clone();
-    let data_clone = data_path.clone();
-    let app_clone = app.clone();
-
-    let topic = match gossip_net.subscribe(topic_id, vec![]).await {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Failed to subscribe to gossip topic: {}", e);
-            return;
-        }
-    };
-
-    let (_sender, mut receiver) = topic.split();
-
-    while let Some(result) = receiver.next().await {
-        match result {
-            Ok(Event::Received(msg)) => {
-                let db = db_clone.clone();
-                let data_path = data_clone.clone();
-                let app = app_clone.clone();
-                let from = msg.delivered_from;
-                if let Err(e) = process_gossip_message(&db, &data_path, &app, from, msg.content.as_ref()).await {
-                    eprintln!("Error processing gossip: {}", e);
-                }
-            }
-            Ok(Event::NeighborUp(who)) => {
-                let _ = app_clone.emit("peer-connected", who.to_string());
-            }
-            Ok(Event::NeighborDown(who)) => {
-                let _ = app_clone.emit("peer-disconnected", who.to_string());
-            }
-            Ok(Event::Lagged) => {
-                eprintln!("Gossip receiver lagged behind");
-            }
-            Err(e) => {
-                eprintln!("Gossip receive error: {}", e);
-            }
-        }
-    }
-}
-
-async fn process_gossip_message(
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    data_path: &str,
-    app: &tauri::AppHandle,
-    from: EndpointId,
-    data: &[u8],
-) -> Result<(), String> {
-    if let Ok(msg) = SyncMessage::decode(data) {
-        match msg {
-            SyncMessage::SendDocDelta { doc_id, delta } => {
-                let _ = apply_crdt_delta(db, &doc_id, &delta).await;
-                let _ = app.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from.to_string() }));
-            }
-            SyncMessage::SendBlob { hash, data: blob_data, mime_type } => {
-                let _ = save_blob_to_disk(data_path, &hash, &mime_type, &blob_data);
-                let _ = update_attachment_db(db, &hash, &mime_type, data_path);
-                let _ = app.emit("blob-received", serde_json::json!({ "hash": hash }));
-            }
-            SyncMessage::BlobReceived { hash } => {
-                let _ = app.emit("blob-request-ack", serde_json::json!({ "hash": hash }));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-async fn apply_crdt_delta(
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    doc_id: &str,
-    delta: &[u8],
-) -> Result<(), String> {
-    let current_state: Vec<u8> = {
-        let db_lock = db.lock();
-        db_lock
-            .query_row(
-                "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
-                [doc_id],
-                |row| row.get(0),
-            )
-            .unwrap_or_default()
-    };
-
-    let mut doc = crate::crdt::CrdtDocument::new();
-    if !current_state.is_empty() {
-        doc.load_from_state(&current_state)?;
-    }
-    doc.apply_update(delta)?;
-    let new_state = doc.export_state();
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    {
-        let db_lock = db.lock();
-        db_lock
-            .execute(
-                "UPDATE documents SET crdt_state = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
-                rusqlite::params![&new_state, now, doc_id],
-            )
-            .map_err(|e| e.to_string())?;
-    }
-
-    crate::indexer::update_document_index(&db.lock(), doc_id, &new_state)?;
-
-    Ok(())
-}
-
-fn save_blob_to_disk(data_path: &str, hash: &str, mime_type: &str, data: &[u8]) -> Result<String, String> {
-    let ext = match mime_type {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        _ => "bin",
-    };
-    let filename = format!("{}.{}", hash, ext);
-
-    let attachments_dir = std::path::PathBuf::from(data_path).join("attachments");
-    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-
-    let full_path = attachments_dir.join(&filename);
-    std::fs::write(&full_path, data).map_err(|e| e.to_string())?;
-
-    Ok(format!("attachments/{}", filename))
-}
-
-fn update_attachment_db(
-    db: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
-    hash: &str,
-    mime_type: &str,
-    _data_path: &str,
-) -> Result<(), String> {
-    let ext = match mime_type {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        _ => "bin",
-    };
-    let filename = format!("{}.{}", hash, ext);
-    let relative_path = format!("attachments/{}", filename);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    let db_lock = db.lock();
-    db_lock.execute(
-        "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
-        rusqlite::params![hash, mime_type, &relative_path, now],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -437,48 +161,24 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let app_data_dir = app.handle().path().app_data_dir()
-                .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-            let data_path = app_data_dir.to_string_lossy().to_string();
+            let config = read_config(app.handle());
+            let signaling_url = config
+                .get("signaling_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
-            let mut state = AppState::new(app.handle().clone())?;
+            let state = AppState::new(app.handle().clone(), signaling_url)?;
 
             {
                 let db = state.db.lock();
                 setup_database_tables(&db)?;
             }
 
-            match init_iroh_endpoint_and_gossip() {
-                Ok((endpoint, gossip)) => {
-                    let node_id = endpoint.id().to_string();
-                    let mut sync_manager = state.sync_manager.blocking_lock();
-                    sync_manager.set_node_id(node_id.clone());
-                    drop(sync_manager);
-
-                    state.iroh_endpoint = Some(Arc::new(endpoint));
-
-                    state.gossip_broadcaster = gossip;
-
-                    spawn_sync_tasks(
-                        state.iroh_endpoint.clone(),
-                        state.gossip_broadcaster.clone(),
-                        state.db.clone(),
-                        data_path,
-                        app.handle().clone(),
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to initialize Iroh endpoint: {}", e);
-                    let data_path = state.data_dir.to_string_lossy().to_string();
-                    spawn_sync_tasks(
-                        None,
-                        None,
-                        state.db.clone(),
-                        data_path,
-                        app.handle().clone(),
-                    );
-                }
-            }
+            spawn_sync_tasks(
+                app.handle().clone(),
+                state.webrtc_manager.clone(),
+                state.peer_registry.clone(),
+            );
 
             app.manage(state);
             Ok(())
@@ -495,6 +195,8 @@ pub fn run() {
             get_or_create_today_journal,
             get_theme,
             save_theme,
+            get_signaling_url,
+            save_signaling_url,
             save_image,
             delete_image,
             cleanup_orphaned_images,
@@ -504,15 +206,23 @@ pub fn run() {
             list_pending_attachments,
             get_local_blob_url,
             get_all_attachment_hashes,
-            get_crdt_state,
-            save_crdt_update,
-            export_document_update_since,
+            get_yjs_state,
+            save_yjs_update,
+            load_document,
+            get_identity,
+            set_display_name,
             get_node_id,
-            add_sync_peer,
-            get_sync_peers,
-            remove_sync_peer,
-            set_sync_enabled,
-            trigger_sync
+            get_user_id,
+            list_paired_devices,
+            remove_pair,
+            save_pair,
+            derive_room_id,
+            update_pair_sync_time,
+            initiate_offer,
+            trigger_sync,
+            create_snapshot,
+            get_all_updates,
+            get_signaling_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

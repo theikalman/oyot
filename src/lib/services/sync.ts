@@ -16,22 +16,22 @@ let cleanupFns: Array<() => void> = [];
 export async function initializeSync(): Promise<SyncState> {
     try {
         const [nodeId, peers] = await Promise.all([
-            invoke<string | null>('get_node_id'),
+            invoke<string>('get_node_id'),
             invoke<SyncPeer[]>('get_sync_peers')
         ]);
 
-        syncStore.setNodeId(nodeId || '');
+        syncStore.setNodeId(nodeId);
         syncStore.setPeers(peers);
         syncStore.setEnabled(true);
         syncStore.setStatus('synced');
 
-        const unlistenConnected = listen('peer-connected', (event) => {
-            const peerNodeId = event.payload as string;
+        const unlistenConnected = listen<string>('peer-connected', (event) => {
+            const peerNodeId = event.payload;
             syncStore.markPeerOnline(peerNodeId);
             syncStore.setStatus('synced');
         });
 
-        const unlistenDisconnected = listen('peer-disconnected', () => {
+        const unlistenDisconnected = listen<string>('peer-disconnected', () => {
             syncStore.setStatus('offline');
         });
 
@@ -44,7 +44,7 @@ export async function initializeSync(): Promise<SyncState> {
         unlistenSyncComplete.then(fn => cleanupFns.push(fn));
 
         return {
-            nodeId: nodeId || '',
+            nodeId,
             peers,
             status: 'synced',
             isEnabled: true
@@ -66,7 +66,7 @@ export function getSyncCleanup(): () => void {
 
 export async function addPeer(nodeId: string, deviceName: string): Promise<void> {
     try {
-        await invoke('add_sync_peer', { nodeId, deviceName });
+        await invoke('add_sync_peer', { peerId: nodeId, deviceName });
         toasts.success('Device added successfully');
     } catch (error) {
         console.error('Failed to add peer:', error);
@@ -77,7 +77,7 @@ export async function addPeer(nodeId: string, deviceName: string): Promise<void>
 
 export async function removePeer(nodeId: string): Promise<void> {
     try {
-        await invoke('remove_sync_peer', { nodeId });
+        await invoke('remove_sync_peer', { peerId: nodeId });
         syncStore.removePeer(nodeId);
         toasts.success('Device removed');
     } catch (error) {
@@ -109,6 +109,25 @@ export async function triggerManualSync(): Promise<void> {
         console.error('Failed to trigger sync:', error);
         syncStore.setStatus('offline');
         toasts.error('Failed to sync');
+        throw error;
+    }
+}
+
+export async function getSignalingUrl(): Promise<string | null> {
+    try {
+        return await invoke<string | null>('get_signaling_url') ?? null;
+    } catch {
+        return null;
+    }
+}
+
+export async function saveSignalingUrl(url: string): Promise<void> {
+    try {
+        await invoke('save_signaling_url', { url });
+        toasts.success('Signaling URL saved');
+    } catch (error) {
+        console.error('Failed to save signaling URL:', error);
+        toasts.error('Failed to save signaling URL');
         throw error;
     }
 }

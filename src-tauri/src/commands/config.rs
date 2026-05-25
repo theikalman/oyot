@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     let config_path = match app.path().app_data_dir() {
@@ -36,5 +36,20 @@ pub fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     }
     let mut json = read_config(&app);
     json["theme"] = serde_json::json!(theme);
+    write_config(&app, json)
+}
+
+#[tauri::command]
+pub fn get_signaling_url(app: tauri::AppHandle) -> Option<String> {
+    let json = read_config(&app);
+    json.get("signaling_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+#[tauri::command]
+pub fn save_signaling_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let mut json = read_config(&app);
+    json["signaling_url"] = serde_json::json!(url);
     write_config(&app, json)
 }

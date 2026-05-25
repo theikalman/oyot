@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { exportLoroDocSnapshot } from '$lib/loro/LoroEditorExtension';
+import * as Y from 'yjs';
 import { toasts } from '$lib/services/toast';
 import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';
@@ -11,7 +11,7 @@ export interface SaveServiceOptions {
 }
 
 export class EditorSaveService {
-    private loroDoc: any = null;
+    private ydoc: Y.Doc | null = null;
     private currentDoc: Document | null = null;
     private saveTimeout: ReturnType<typeof setTimeout> | null = null;
     private debounceMs: number;
@@ -25,8 +25,8 @@ export class EditorSaveService {
         this.onSaved = options.onSaved;
     }
 
-    setLoroDoc(doc: any): void {
-        this.loroDoc = doc;
+    setYDoc(ydoc: Y.Doc): void {
+        this.ydoc = ydoc;
     }
 
     setDocument(doc: Document | null): void {
@@ -34,7 +34,7 @@ export class EditorSaveService {
     }
 
     triggerSave(): void {
-        if (this.isDestroyed || !this.currentDoc || !this.loroDoc) return;
+        if (this.isDestroyed || !this.currentDoc || !this.ydoc) return;
 
         if (this.saveTimeout) {
             clearTimeout(this.saveTimeout);
@@ -46,7 +46,7 @@ export class EditorSaveService {
     }
 
     async forceSave(): Promise<Document | null> {
-        if (this.isDestroyed || !this.currentDoc || !this.loroDoc) {
+        if (this.isDestroyed || !this.currentDoc || !this.ydoc) {
             return null;
         }
 
@@ -59,36 +59,27 @@ export class EditorSaveService {
     }
 
     private async performSave(): Promise<Document | null> {
-        if (!this.loroDoc || !this.currentDoc) return null;
+        if (!this.ydoc || !this.currentDoc) return null;
 
         this.onSaving?.();
 
         try {
-            const snapshot = exportLoroDocSnapshot(this.loroDoc);
-            const crdtState = Array.from(snapshot);
+            const snapshot = Y.encodeStateAsUpdate(this.ydoc);
+            const mergedState = Array.from(snapshot);
+            const update = Array.from(snapshot);
 
-            if (snapshot.length === 0) {
-                console.warn('[EditorSaveService] No snapshot to save, skipping');
+            if (update.length === 0) {
+                console.warn('[EditorSaveService] No update to save, skipping');
                 return null;
             }
 
-            const updatedDoc: Document = await invoke('save_crdt_update', {
+            await invoke('save_yjs_update', {
                 docId: this.currentDoc.id,
-                update: crdtState
+                update,
+                mergedState,
             });
 
-            appStore.updateDocumentInList({
-                id: updatedDoc.id,
-                doc_type: updatedDoc.doc_type,
-                title: updatedDoc.title,
-                todo_count: 0,
-                completed_todo_count: 0,
-                created_at: updatedDoc.created_at,
-                updated_at: updatedDoc.updated_at
-            });
-            this.onSaved?.(updatedDoc);
-
-            return updatedDoc;
+            return this.currentDoc;
         } catch (error) {
             console.error('Failed to save document:', error);
             toasts.error('Failed to save document');
@@ -102,7 +93,7 @@ export class EditorSaveService {
             clearTimeout(this.saveTimeout);
             this.saveTimeout = null;
         }
-        this.loroDoc = null;
+        this.ydoc = null;
         this.currentDoc = null;
     }
 }
