@@ -11,6 +11,7 @@ pub struct Document {
     pub title: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub crdt_state: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -82,6 +83,7 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
         title: row.get(2)?,
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
+        crdt_state: row.get(5)?,
     })
 }
 
@@ -116,7 +118,7 @@ pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData,
 pub fn get_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result<Document, String> {
     let db = state.db.lock();
     db.query_row(
-        "SELECT id, type, title, created_at, updated_at FROM documents WHERE id = ? AND is_deleted = 0",
+        "SELECT id, type, title, created_at, updated_at, crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
         params![doc_id],
         row_to_document,
     )
@@ -287,7 +289,7 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
     let existing = {
         let db = state.db.lock();
         db.query_row(
-            "SELECT id, type, title, created_at, updated_at FROM documents WHERE type = 'journal' AND title = ? AND is_deleted = 0",
+            "SELECT id, type, title, created_at, updated_at, crdt_state FROM documents WHERE type = 'journal' AND title = ? AND is_deleted = 0",
             params![&today_title],
             row_to_document,
         ).ok()

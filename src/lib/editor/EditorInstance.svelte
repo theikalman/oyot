@@ -95,7 +95,9 @@
         const ed = new Editor({
             element,
             extensions: [
-                StarterKit,
+                StarterKit.configure({
+                    undoRedo: false,
+                }),
                 collabExt,
                 ResizableImage.configure({
                     inline: false,

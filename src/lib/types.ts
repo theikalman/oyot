@@ -4,6 +4,7 @@ export interface Document {
     title: string;
     created_at: number;
     updated_at: number;
+    crdt_state?: number[] | null;
 }
 
 export interface DocumentSummary {
