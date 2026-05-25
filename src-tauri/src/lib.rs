@@ -21,7 +21,7 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             id TEXT PRIMARY KEY NOT NULL,
             type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
             title TEXT NOT NULL,
-            crdt_state BLOB NOT NULL DEFAULT '',
+            crdt_state BLOB,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             is_deleted INTEGER DEFAULT 0
@@ -218,11 +218,14 @@ pub fn run() {
             save_pair,
             derive_room_id,
             update_pair_sync_time,
-            initiate_offer,
             trigger_sync,
             create_snapshot,
             get_all_updates,
             get_signaling_status,
+            get_sync_peers,
+            add_sync_peer,
+            remove_sync_peer,
+            set_sync_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

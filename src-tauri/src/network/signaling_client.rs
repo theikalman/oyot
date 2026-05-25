@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,8 +20,8 @@ pub struct PeerEntry {
 pub struct SignalingClient {
     node_id: Arc<TokioMutex<Option<String>>>,
     user_id: Arc<TokioMutex<Option<String>>>,
-    server_url: Arc<TokioMutex<Option<String>>,
-    is_connected: Arc<TokioMutex<bool>>,
+    server_url: Arc<TokioMutex<Option<String>>>,
+    is_connected: Arc<StdMutex<bool>>,
     pub outbound: mpsc::Sender<SignalingMessage>,
     pub inbound: broadcast::Sender<SignalingMessage>,
 }
@@ -35,7 +35,7 @@ impl SignalingClient {
             node_id: Arc::new(TokioMutex::new(None)),
             user_id: Arc::new(TokioMutex::new(None)),
             server_url: Arc::new(TokioMutex::new(server_url)),
-            is_connected: Arc::new(TokioMutex::new(false)),
+            is_connected: Arc::new(StdMutex::new(false)),
             outbound: outbound_tx,
             inbound: inbound_tx,
         }
@@ -66,11 +66,11 @@ impl SignalingClient {
     }
 
     pub fn is_connected(&self) -> bool {
-        *self.is_connected.lock()
+        *self.is_connected.lock().unwrap()
     }
 
     pub fn set_connected(&self, connected: bool) {
-        *self.is_connected.lock() = connected;
+        *self.is_connected.lock().unwrap() = connected;
     }
 
     pub async fn send_message(&self, msg: SignalingMessage) -> Result<(), String> {

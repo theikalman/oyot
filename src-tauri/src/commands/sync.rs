@@ -116,11 +116,6 @@ pub fn load_document(
 }
 
 #[tauri::command]
-pub fn get_node_id(state: tauri::State<'_, AppState>) -> String {
-    state.webrtc_manager.node_id().to_string()
-}
-
-#[tauri::command]
 pub async fn add_sync_peer(
     state: tauri::State<'_, AppState>,
     peer_id: String,
