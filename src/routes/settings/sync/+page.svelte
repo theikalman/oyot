@@ -1,132 +1,163 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import { syncStore, nodeId, syncPeers } from '$lib/stores/app';
-    import { NodeIdCard, SyncControls, PeerList, AddPeerForm } from '$lib/settings';
-    import { addPeer, removePeer, toggleSyncEnabled, triggerManualSync, formatLastSync, initializeSync } from '$lib/services';
-    import QRCode from 'qrcode';
+    import { onMount, onDestroy } from 'svelte';
+    import { invoke } from '@tauri-apps/api/core';
+    import {
+        syncStore,
+        identity,
+        signalingStatus,
+        onlinePeers,
+        pairedDevices,
+        connectedPeers,
+        pendingOffer,
+        type OnlinePeer,
+        type UserIdentity,
+        type DevicePair,
+        type ConnectedPeer,
+    } from '$lib/stores/sync';
+    import {
+        initSync,
+        connectSignaling,
+        requestConnection,
+        acceptConnection,
+        disconnectPeer,
+        getCleanup,
+    } from '$lib/services/WebRtcSyncService';
+    import { IdentityCard } from '$lib/settings';
+    import { SignalingConfig } from '$lib/settings';
+    import { DiscoveryList } from '$lib/settings';
+    import { ConnectedPeerList } from '$lib/settings';
+    import { PairingDialog } from '$lib/settings';
 
-    let localNodeId = $state<string | null>(null);
-    let peers = $state<typeof $syncPeers>([]);
-    let isSyncEnabled = $state(true);
-    let isSyncing = $state(false);
-    let isLoading = $state(true);
+    let localIdentity: UserIdentity | null = $state(null);
+    let status = $state<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+    let peers = $state<OnlinePeer[]>([]);
+    let paired = $state<DevicePair[]>([]);
+    let connected = $state<ConnectedPeer[]>([]);
+    let pending: { from: string; sdp: string; room_id: string } | null = $state(null);
+    let signalingUrl = $state<string | null>(null);
     let copySuccess = $state(false);
-    let showQrCode = $state(false);
-    let qrCodeDataUrl = $state<string | null>(null);
 
     onMount(() => {
-        initializeSync().catch(console.error);
+        let cleanup: (() => void) | null = null;
+        (async () => {
+            await initSync();
+            cleanup = getCleanup();
+        })();
 
-        const unsubNodeId = nodeId.subscribe(v => localNodeId = v);
-        const unsubPeers = syncPeers.subscribe(v => peers = v);
-        const unsubSyncEnabled = syncStore.subscribe(s => isSyncEnabled = s.isEnabled);
-
-        if (localNodeId) {
-            generateQrCode(localNodeId);
-        }
-
-        isLoading = false;
+        const un1 = identity.subscribe(v => { localIdentity = v; });
+        const un2 = signalingStatus.subscribe(v => { status = v; });
+        const un3 = onlinePeers.subscribe(v => { peers = v; });
+        const un4 = pairedDevices.subscribe(v => { paired = v; });
+        const un5 = connectedPeers.subscribe(v => { connected = v; });
+        const un6 = pendingOffer.subscribe(v => { pending = v; });
+        const un7 = syncStore.subscribe(s => { signalingUrl = s.signalingUrl; });
 
         return () => {
-            unsubNodeId();
-            unsubPeers();
-            unsubSyncEnabled();
+            un1(); un2(); un3(); un4(); un5(); un6(); un7();
+            if (cleanup) cleanup();
         };
     });
 
-    async function generateQrCode(text: string) {
-        try {
-            qrCodeDataUrl = await QRCode.toDataURL(text, {
-                width: 200,
-                margin: 2,
-                color: { dark: '#333333', light: '#ffffff' }
-            });
-        } catch (error) {
-            console.error('Failed to generate QR code:', error);
-            qrCodeDataUrl = null;
-        }
-    }
+    onDestroy(() => {
+        getCleanup()();
+    });
 
     async function copyNodeId() {
-        if (!localNodeId) return;
+        if (!localIdentity?.node_id) return;
         try {
-            await navigator.clipboard.writeText(localNodeId);
+            await navigator.clipboard.writeText(localIdentity.node_id);
             copySuccess = true;
             setTimeout(() => copySuccess = false, 2000);
-        } catch (error) {
-            console.error('Failed to copy:', error);
+        } catch (e) {
+            console.error('Failed to copy:', e);
         }
     }
 
-    async function handleAddPeer(nodeIdValue: string, deviceName: string) {
+    async function handleSaveSignalingUrl(newUrl: string) {
         try {
-            await addPeer(nodeIdValue, deviceName);
-        } catch {
-            // Error already handled in service
+            await invoke('save_signaling_url', { url: newUrl });
+            syncStore.setSignalingUrl(newUrl);
+            await connectSignaling(newUrl);
+        } catch (e) {
+            console.error('Failed to save signaling URL:', e);
         }
     }
 
-    async function handleRemovePeer(nodeIdValue: string) {
+    async function handleConnect(peer: OnlinePeer) {
+        await requestConnection(peer);
+        await invoke('save_pair', {
+            peerNodeId: peer.id,
+            peerDisplayName: peer.display_name,
+            roomId: '',
+        });
+        const updated = await invoke<DevicePair[]>('list_paired_devices');
+        syncStore.setPairedDevices(updated);
+    }
+
+    async function handleAcceptOffer() {
+        if (!pending) return;
+        await acceptConnection(pending.from, pending.sdp, pending.room_id);
+        await invoke('save_pair', {
+            peerNodeId: pending.from,
+            peerDisplayName: 'Peer',
+            roomId: pending.room_id,
+        });
+        const updated = await invoke<DevicePair[]>('list_paired_devices');
+        syncStore.setPairedDevices(updated);
+        syncStore.setPendingOffer(null);
+    }
+
+    function handleDeclineOffer() {
+        syncStore.setPendingOffer(null);
+    }
+
+    async function handleDisconnect(roomId: string) {
+        disconnectPeer(roomId);
+    }
+
+    async function handleRemovePeer(peerNodeId: string) {
         try {
-            await removePeer(nodeIdValue);
-        } catch {
-            // Error already handled in service
+            await invoke('remove_pair', { peerNodeId });
+            const updated = await invoke<DevicePair[]>('list_paired_devices');
+            syncStore.setPairedDevices(updated);
+        } catch (e) {
+            console.error('Failed to remove pair:', e);
         }
     }
 
-    async function handleToggleSync() {
-        try {
-            await toggleSyncEnabled(!isSyncEnabled);
-        } catch {
-            // Error already handled in service
-        }
-    }
-
-    async function handleTriggerSync() {
-        isSyncing = true;
-        try {
-            await triggerManualSync();
-        } catch {
-            // Error already handled in service
-        } finally {
-            isSyncing = false;
-        }
-    }
-
-    let onlineCount = $derived(peers.filter((p: { is_online: boolean }) => p.is_online).length);
+    let isConnected = $derived(status === 'connected');
 </script>
 
 <div class="sync-page">
-    {#if isLoading}
-        <div class="loading">Loading...</div>
-    {:else}
-        <NodeIdCard
-            nodeId={localNodeId}
-            {qrCodeDataUrl}
-            {showQrCode}
-            {copySuccess}
-            onToggleQr={() => showQrCode = !showQrCode}
-            onCopy={copyNodeId}
-        />
+    <IdentityCard
+        identity={localIdentity}
+        onCopy={copyNodeId}
+        {copySuccess}
+    />
 
-        <SyncControls
-            {isSyncEnabled}
-            {isSyncing}
-            {onlineCount}
-            totalPeers={peers.length}
-            onToggleSync={handleToggleSync}
-            onTriggerSync={handleTriggerSync}
-        />
+    <SignalingConfig
+        {signalingUrl}
+        {isConnected}
+        onSave={handleSaveSignalingUrl}
+    />
 
-        <AddPeerForm
-            isAdding={false}
-            onSubmit={handleAddPeer}
-        />
+    {#if isConnected}
+        <DiscoveryList {peers} onConnect={handleConnect} />
+    {/if}
 
-        <PeerList
-            {peers}
-            {formatLastSync}
-            onRemovePeer={handleRemovePeer}
+    <ConnectedPeerList
+        pairedDevices={paired}
+        connectedPeers={connected}
+        onDisconnect={handleDisconnect}
+        onRemove={handleRemovePeer}
+    />
+
+    {#if pending}
+        <PairingDialog
+            from={pending.from}
+            displayName="Unknown Device"
+            onAccept={handleAcceptOffer}
+            onDecline={handleDeclineOffer}
         />
     {/if}
 </div>
@@ -136,11 +167,5 @@
         max-width: 600px;
         margin: 0 auto;
         padding: 24px;
-    }
-
-    .loading {
-        text-align: center;
-        padding: 48px;
-        color: var(--text-muted);
     }
 </style>

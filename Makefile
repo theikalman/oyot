@@ -1,11 +1,16 @@
 .PHONY: help install dev build run clean check fmt clippy \
-        release release-android release-ios release-tag install-android
+        release release-android release-ios release-tag install-android \
+        signal-up signal-down signal-logs signal-build signal-dev
 
 # Only apply custom Rust path on macOS (Apple Silicon) — not needed on CI or Linux/Windows
-ifeq ($(shell uname -s),Darwin)
+ifneq ($(filter darwin,Darwin),)
 RUST_PATH := /opt/homebrew/opt/rustup/bin:$(HOME)/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 export PATH := $(RUST_PATH):$(PATH)
 endif
+
+# Signaling server port
+SIGNALING_PORT ?= 3001
+export SIGNALING_PORT
 
 # Android SDK — override by setting env vars before calling make
 ANDROID_HOME ?= $(HOME)/Android
@@ -25,6 +30,13 @@ help:
 	@echo "  make fmt              - Format code"
 	@echo "  make clippy           - Run Rust linter"
 	@echo ""
+	@echo "Signaling server commands:"
+	@echo "  make signal-build      - Build signaling server Docker image"
+	@echo "  make signal-up         - Start signaling server in Docker (port $(SIGNALING_PORT))"
+	@echo "  make signal-down       - Stop signaling server"
+	@echo "  make signal-logs       - Follow signaling server logs"
+	@echo "  make signal-dev        - Run signaling server in dev mode (no Docker)"
+	@echo ""
 	@echo "Release commands:"
 	@echo "  make release                    - Build current platform → dist/"
 	@echo "  make release-android            - Build Android APK → dist/android/"
@@ -33,6 +45,30 @@ help:
 
 install:
 	npm install
+
+# ---------------------------------------------------------------------------
+# Signaling server (Docker)
+# ---------------------------------------------------------------------------
+
+signal-build:
+	docker compose build signaling
+
+signal-up:
+	docker compose up -d signaling
+	@echo "Signaling server started on ws://localhost:$(SIGNALING_PORT)"
+
+signal-down:
+	docker compose down signaling
+
+signal-logs:
+	docker compose logs -f signaling
+
+signal-dev:
+	cd signaling-server && npm install && npm run dev
+
+# ---------------------------------------------------------------------------
+# App targets
+# ---------------------------------------------------------------------------
 
 dev:
 	env RUST_BACKTRACE=full npm run tauri dev
