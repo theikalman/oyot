@@ -7,12 +7,14 @@ services:
       dockerfile: Dockerfile
     image: oyot-backend:${TAG:-latest}
     ports:
-      - "443:3001"
+      - "3001:3001"
+      - "3002:3002"
     environment:
-      PORT: "443"
+      PORT: "3001"
+      HTTP_PORT: "3002"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "3001"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/health"]
       interval: 10s
       timeout: 5s
       retries: 3
