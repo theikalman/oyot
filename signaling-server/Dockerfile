@@ -9,6 +9,6 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-EXPOSE 3001
+EXPOSE 3001 3002
 
 CMD ["npm", "start"]
