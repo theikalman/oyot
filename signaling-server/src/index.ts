@@ -193,6 +193,7 @@ wss.on('error', (err) => {
 
 httpServer.listen(HEALTH_PORT, () => {
   console.log(`HTTP healthcheck listening on http://0.0.0.0:${HEALTH_PORT}/health`);
+});
 
 httpServer.on('error', (err) => {
   console.error(`HTTP server error: ${err.message}`);
