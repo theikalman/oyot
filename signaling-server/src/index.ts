@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || '3002', 10);
 const PING_INTERVAL = 30000;
 
 interface Peer {
@@ -173,16 +174,15 @@ wss.on('connection', (ws) => {
 });
 
 wss.on('listening', () => {
-  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
+  console.log(`Signaling server listening on ws://127.0.0.1:3001`);
 });
 
 wss.on('error', (err) => {
   console.error('Server error:', err.message);
 });
 
-httpServer.listen(PORT, HOST, () => {
-  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
-  console.log(`HTTP healthcheck available at http://${HOST}:${PORT}/health`);
+httpServer.listen(HEALTH_PORT, () => {
+  console.log(`HTTP healthcheck listening on http://0.0.0.0:${HEALTH_PORT}/health`);
 });
 
 process.on('SIGTERM', () => {
