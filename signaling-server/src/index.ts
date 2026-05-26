@@ -1,3 +1,4 @@
+import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const HOST = process.env.HOST || '127.0.0.1';
@@ -134,7 +135,17 @@ function keepAlive(ws: WebSocket, pingInterval: ReturnType<typeof setInterval>):
   ws.on('close', () => clearInterval(pingInterval));
 }
 
-const wss = new WebSocketServer({ host: HOST, port: PORT });
+const httpServer = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', peers: peers.size }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws) => {
   const pingInterval = setInterval(() => {
@@ -169,6 +180,12 @@ wss.on('error', (err) => {
   console.error('Server error:', err.message);
 });
 
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
+  console.log(`HTTP healthcheck available at http://${HOST}:${PORT}/health`);
+});
+
 process.on('SIGTERM', () => {
+  httpServer.close();
   wss.close();
 });
