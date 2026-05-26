@@ -58,7 +58,7 @@ signal-build:
 	docker compose build signaling
 
 signal-up:
-	docker compose up -d signaling
+	docker compose up -d --build signaling
 	@echo "Signaling server started on ws://localhost:$(SIGNALING_PORT)"
 
 signal-down:

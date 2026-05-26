@@ -16,6 +16,10 @@ const httpServer = createServer((req, res) => {
   }
 });
 
+httpServer.on('error', (err) => {
+  console.error(`HTTP server error: ${err.message}`);
+});
+
 httpServer.listen(HTTP_PORT, HOST, () => {
   console.log(`Health check HTTP server listening on http://${HOST}:${HTTP_PORT}`);
 });
