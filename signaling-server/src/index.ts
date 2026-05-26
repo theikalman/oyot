@@ -1,8 +1,24 @@
+import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3002', 10);
 const PING_INTERVAL = 30000;
+
+const httpServer = createServer((req, res) => {
+  if (req.url === '/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', peers: peers.size }));
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+  }
+});
+
+httpServer.listen(HTTP_PORT, HOST, () => {
+  console.log(`Health check HTTP server listening on http://${HOST}:${HTTP_PORT}`);
+});
 
 interface Peer {
   id: string;
@@ -167,4 +183,9 @@ wss.on('listening', () => {
 
 wss.on('error', (err) => {
   console.error('Server error:', err.message);
+});
+
+process.on('SIGTERM', () => {
+  httpServer.close();
+  wss.close();
 });

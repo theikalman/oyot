@@ -1,8 +1,24 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const http_1 = require("http");
 const ws_1 = require("ws");
+const HOST = process.env.HOST || '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '3001', 10);
+const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3002', 10);
 const PING_INTERVAL = 30000;
+const httpServer = (0, http_1.createServer)((req, res) => {
+    if (req.url === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', peers: peers.size }));
+    }
+    else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+    }
+});
+httpServer.listen(HTTP_PORT, HOST, () => {
+    console.log(`Health check HTTP server listening on http://${HOST}:${HTTP_PORT}`);
+});
 const peers = new Map();
 function send(ws, msg) {
     if (ws.readyState === ws_1.WebSocket.OPEN) {
@@ -103,7 +119,7 @@ function handleMessage(ws, raw) {
 function keepAlive(ws, pingInterval) {
     ws.on('close', () => clearInterval(pingInterval));
 }
-const wss = new ws_1.WebSocketServer({ port: PORT });
+const wss = new ws_1.WebSocketServer({ host: HOST, port: PORT });
 wss.on('connection', (ws) => {
     const pingInterval = setInterval(() => {
         if (ws.readyState === ws_1.WebSocket.OPEN) {
@@ -126,8 +142,12 @@ wss.on('connection', (ws) => {
     ws.on('error', (err) => console.error('WS error:', err.message));
 });
 wss.on('listening', () => {
-    console.log(`Signaling server listening on ws://0.0.0.0:${PORT}`);
+    console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
 });
 wss.on('error', (err) => {
     console.error('Server error:', err.message);
+});
+process.on('SIGTERM', () => {
+    httpServer.close();
+    wss.close();
 });
