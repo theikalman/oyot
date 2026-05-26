@@ -156,6 +156,7 @@ healthServer.listen(HEALTH_PORT, HOST, () => {
   console.log(`HTTP healthcheck listening on http://${HOST}:${HEALTH_PORT}/health`);
 });
 
+/*
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws) => {
@@ -194,10 +195,9 @@ wss.on('error', (err) => {
 httpServer.listen(PORT, HOST, () => {
   console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
 });
+*/
 
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down...');
-  httpServer.close();
-  wss.close();
   healthServer.close();
 });
