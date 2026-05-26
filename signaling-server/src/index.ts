@@ -136,7 +136,9 @@ function keepAlive(ws: WebSocket, pingInterval: ReturnType<typeof setInterval>):
   ws.on('close', () => clearInterval(pingInterval));
 }
 
-const httpServer = http.createServer((req, res) => {
+const httpServer = http.createServer();
+
+const healthServer = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', peers: peers.size }));
@@ -144,6 +146,14 @@ const httpServer = http.createServer((req, res) => {
     res.writeHead(404);
     res.end();
   }
+});
+
+healthServer.on('error', (err) => {
+  console.error(`Health server error: ${err.message}`);
+});
+
+healthServer.listen(HEALTH_PORT, HOST, () => {
+  console.log(`HTTP healthcheck listening on http://${HOST}:${HEALTH_PORT}/health`);
 });
 
 const wss = new WebSocketServer({ server: httpServer });
@@ -183,9 +193,14 @@ wss.on('error', (err) => {
 
 httpServer.listen(HEALTH_PORT, () => {
   console.log(`HTTP healthcheck listening on http://0.0.0.0:${HEALTH_PORT}/health`);
+
+httpServer.on('error', (err) => {
+  console.error(`HTTP server error: ${err.message}`);
 });
 
 process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, shutting down...');
   httpServer.close();
   wss.close();
+  healthServer.close();
 });
