@@ -184,19 +184,15 @@ wss.on('connection', (ws) => {
 });
 
 wss.on('listening', () => {
-  console.log(`Signaling server listening on ws://127.0.0.1:3001`);
+  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
 });
 
 wss.on('error', (err) => {
   console.error('Server error:', err.message);
 });
 
-httpServer.listen(HEALTH_PORT, () => {
-  console.log(`HTTP healthcheck listening on http://0.0.0.0:${HEALTH_PORT}/health`);
-});
-
-httpServer.on('error', (err) => {
-  console.error(`HTTP server error: ${err.message}`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
 });
 
 process.on('SIGTERM', () => {
