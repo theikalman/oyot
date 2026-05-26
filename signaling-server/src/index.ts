@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 
+const HOST = process.env.HOST || '127.0.0.1';
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const PING_INTERVAL = 30000;
 
@@ -133,7 +134,7 @@ function keepAlive(ws: WebSocket, pingInterval: ReturnType<typeof setInterval>):
   ws.on('close', () => clearInterval(pingInterval));
 }
 
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ host: HOST, port: PORT });
 
 wss.on('connection', (ws) => {
   const pingInterval = setInterval(() => {
@@ -161,7 +162,7 @@ wss.on('connection', (ws) => {
 });
 
 wss.on('listening', () => {
-  console.log(`Signaling server listening on ws://0.0.0.0:${PORT}`);
+  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
 });
 
 wss.on('error', (err) => {

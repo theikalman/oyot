@@ -5,10 +5,11 @@ services:
     build:
       context: ./signaling-server
       dockerfile: Dockerfile
+    image: oyot-backend:${TAG:-latest}
     ports:
-      - "3001:3001"
+      - "443:3001"
     environment:
-      PORT: "3001"
+      PORT: "443"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "3001"]

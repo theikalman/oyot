@@ -51,6 +51,10 @@ install:
 # ---------------------------------------------------------------------------
 
 signal-build:
+	@git_hash=$$(git rev-parse --short HEAD); \
+	date=$$(date +%Y.%m.%d); \
+	export TAG=$${date}-$${git_hash}; \
+	echo "Building images with tag: $$TAG"; \
 	docker compose build signaling
 
 signal-up:
@@ -64,7 +68,9 @@ signal-logs:
 	docker compose logs -f signaling
 
 signal-dev:
-	cd signaling-server && npm install && npm run dev
+	cd signaling-server && \
+		npm install && \
+		env HOST=192.168.1.103 npm run dev
 
 # ---------------------------------------------------------------------------
 # App targets
