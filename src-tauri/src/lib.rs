@@ -174,6 +174,13 @@ pub fn run() {
                 setup_database_tables(&db)?;
             }
 
+            {
+                let db = state.db.lock();
+                let identity = crate::identity::get_or_create_identity(&db)
+                    .map_err(|e| format!("Failed to create identity: {}", e))?;
+                state.signaling_manager.set_user_id(identity.user_id);
+            }
+
             spawn_sync_tasks(
                 app.handle().clone(),
                 state.webrtc_manager.clone(),
@@ -197,6 +204,8 @@ pub fn run() {
             save_theme,
             get_signaling_url,
             save_signaling_url,
+            get_mqtt_broker_url,
+            save_mqtt_broker_url,
             save_image,
             delete_image,
             cleanup_orphaned_images,
@@ -226,6 +235,12 @@ pub fn run() {
             add_sync_peer,
             remove_sync_peer,
             set_sync_enabled,
+            mqtt_connect,
+            mqtt_disconnect,
+            mqtt_publish_offer,
+            mqtt_publish_answer,
+            mqtt_publish_ice_candidate,
+            get_mqtt_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

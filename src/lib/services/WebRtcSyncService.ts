@@ -1,199 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import * as Y from 'yjs';
-import { get as storeGet } from 'svelte/store';
-import { WebrtcProvider } from 'y-webrtc';
-import {
-    syncStore,
-    type UserIdentity,
-    type DevicePair,
-    type OnlinePeer,
-    type ConnectedPeer,
-} from '../stores/sync';
-
-interface SignalingMessage {
-    from: string;
-    to: string | null;
-    type: string;
-    payload: string;
-}
+import { syncStore, type UserIdentity, type DevicePair, type OnlinePeer, type ConnectedPeer } from '../stores/sync';
 
 interface ParsedOfferPayload {
     sdp: string;
     from: string;
 }
 
-const ydocsByRoom = new Map<string, Y.Doc>();
-const providersByRoom = new Map<string, WebrtcProvider>();
-let ws: WebSocket | null = null;
-let identity: UserIdentity | null = null;
-let cleanupFns: Array<() => void> = [];
-
-function parsePayload<T>(payload: string): T | null {
-    try {
-        return JSON.parse(payload);
-    } catch {
-        return null;
-    }
+interface RoomDoc {
+    ydoc: Y.Doc;
+    peer: OnlinePeer;
+    roomId: string;
 }
 
-export async function initSync(): Promise<void> {
-    try {
-        identity = await invoke<UserIdentity>('get_identity');
-        syncStore.setIdentity(identity);
-
-        const signalingUrl = await invoke<string | null>('get_signaling_url');
-        if (signalingUrl) {
-            syncStore.setSignalingUrl(signalingUrl);
-        }
-
-        const devices = await invoke<DevicePair[]>('list_paired_devices');
-        syncStore.setPairedDevices(devices);
-
-        await connectSignaling(signalingUrl);
-
-        setupEventListeners();
-    } catch (error) {
-        console.error('[WebRtcSync] Failed to init sync:', error);
-    }
-}
-
-export async function connectSignaling(url: string | null): Promise<void> {
-    if (!url || !identity) {
-        syncStore.setSignalingStatus('disconnected');
-        return;
-    }
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close();
-    }
-
-    syncStore.setSignalingStatus('connecting');
-
-    return new Promise((resolve, reject) => {
-        ws = new WebSocket(url);
-
-        ws.onopen = () => {
-            syncStore.setSignalingStatus('connected');
-
-            console.log(`[WebRtcSync] Connected to signaling server ${url}`);
-            console.log(`[WebRtcSync] Sending registration message`);
-            console.log(`[WebRtcSync] Identity: ${JSON.stringify(identity)}`);
-
-            const msg: SignalingMessage = {
-                from: identity!.node_id,
-                to: null,
-                type: 'register',
-                payload: JSON.stringify({
-                    nodeId: identity!.node_id,
-                    userId: identity!.user_id,
-                    displayName: identity!.display_name,
-                }),
-            };
-            ws!.send(JSON.stringify(msg));
-
-            ws!.send(JSON.stringify({
-                from: identity!.node_id,
-                to: null,
-                type: 'peer-list',
-                payload: '',
-            }));
-
-            resolve();
-        };
-
-        ws.onmessage = async (event) => {
-            await handleSignalingMessage(event.data);
-        };
-
-        ws.onclose = () => {
-            syncStore.setSignalingStatus('disconnected');
-        };
-
-        ws.onerror = () => {
-            syncStore.setSignalingStatus('error');
-            reject(new Error('WebSocket error'));
-        };
-
-        setTimeout(() => {
-            if (ws && ws.readyState === WebSocket.CONNECTING) {
-                ws.close();
-                syncStore.setSignalingStatus('error');
-                reject(new Error('Connection timeout'));
-            }
-        }, 10000);
-    });
-}
-
-async function handleSignalingMessage(data: string): Promise<void> {
-    let msg: SignalingMessage;
-    try {
-        msg = JSON.parse(data);
-    } catch {
-        return;
-    }
-
-    switch (msg.type) {
-        case 'peer-list-response': {
-            const peers = parsePayload<Array<{ id: string; userId: string; displayName: string }>>(msg.payload);
-            if (peers) {
-                const online = peers
-                    .filter(p => p.id !== identity?.node_id)
-                    .map(p => ({ id: p.id, user_id: p.userId, display_name: p.displayName }));
-                syncStore.setOnlinePeers(online);
-            }
-            break;
-        }
-
-        case 'peer-joined': {
-            const peer = parsePayload<{ id: string; userId: string; displayName: string }>(msg.payload);
-            if (peer && peer.id !== identity?.node_id) {
-                syncStore.updateOnlinePeer({
-                    id: peer.id,
-                    user_id: peer.userId,
-                    display_name: peer.displayName,
-                });
-            }
-            break;
-        }
-
-        case 'peer-left': {
-            syncStore.removeOnlinePeer(msg.payload);
-            break;
-        }
-
-        case 'offer': {
-            const offer = parsePayload<ParsedOfferPayload>(msg.payload);
-            if (!offer || offer.from === identity?.node_id) break;
-
-            const roomId = await calculateRoomId(identity!.user_id, offer.from);
-            syncStore.setPendingOffer({ from: offer.from, sdp: offer.sdp, room_id: roomId });
-            break;
-        }
-
-        case 'answer': {
-            const answer = parsePayload<ParsedOfferPayload>(msg.payload);
-            if (!answer) break;
-            handleAnswer(answer.from, answer.sdp);
-            break;
-        }
-
-        case 'ice-candidate': {
-            const cand = parsePayload<{ candidate: unknown; from: string }>(msg.payload);
-            if (cand) {
-                handleIceCandidate(cand.from, cand.candidate);
-            }
-            break;
-        }
-
-        case 'ping': {
-            ws?.send(JSON.stringify({ from: identity?.node_id, to: null, type: 'pong', payload: '' }));
-            break;
-        }
-    }
-}
-
+const roomDocs = new Map<string, RoomDoc>();
 const pendingConnections = new Map<string, RTCPeerConnection>();
+let identity: UserIdentity | null = null;
+let cleanupFns: UnlistenFn[] = [];
 
 async function calculateRoomId(userA: string, userB: string): Promise<string> {
     const ids = [userA, userB].sort();
@@ -206,6 +30,30 @@ async function calculateRoomId(userA: string, userB: string): Promise<string> {
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
     return hashHex;
+}
+
+export async function initSync(): Promise<void> {
+    try {
+        identity = await invoke<UserIdentity>('get_identity');
+        syncStore.setIdentity(identity);
+
+        const mqttBroker = await invoke<string | null>('get_mqtt_broker_url');
+        if (mqttBroker) {
+            syncStore.setSignalingUrl(mqttBroker);
+            await invoke('mqtt_connect', { brokerUrl: mqttBroker });
+            syncStore.setSignalingStatus('connected');
+        } else {
+            syncStore.setSignalingStatus('disconnected');
+        }
+
+        const devices = await invoke<DevicePair[]>('list_paired_devices');
+        syncStore.setPairedDevices(devices);
+
+        setupEventListeners();
+    } catch (error) {
+        console.error('[WebRtcSync] Failed to init sync:', error);
+        syncStore.setSignalingStatus('error');
+    }
 }
 
 async function handleAnswer(from: string, sdp: string): Promise<void> {
@@ -234,8 +82,6 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
     if (!identity) return;
 
     const roomId = await calculateRoomId(identity.user_id, peer.user_id);
-
-    console.log(`[WebRtcSync] Requesting connection to ${JSON.stringify(peer)}`);
     console.log(`[WebRtcSync] Requesting connection to ${peer.display_name} (${peer.id})`);
 
     const pc = new RTCPeerConnection({
@@ -243,30 +89,21 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
     });
     pendingConnections.set(peer.id, pc);
 
-    console.log(`[WebRtcSync] Created peer connection for ${peer.display_name} (${peer.id})`);
-
-    const channel = pc.createDataChannel('yjs-sync');
+    const channel = pc.createDataChannel('yjs-sync', { ordered: true });
     const ydoc = new Y.Doc();
-    ydocsByRoom.set(roomId, ydoc);
+    roomDocs.set(roomId, { ydoc, peer, roomId });
 
-    console.log(`[WebRtcSync] Created data channel for ${peer.display_name} (${peer.id})`);
-
-    setupDataChannel(channel, ydoc, roomId, peer);
-
-    console.log(`[WebRtcSync] Setting up ICE candidates for ${peer.display_name} (${peer.id})`);
+    setupDataChannel(channel, roomId);
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            ws?.send(JSON.stringify({
+            invoke('mqtt_publish_ice_candidate', {
+                peerId: peer.id,
+                candidate: JSON.stringify(event.candidate.toJSON()),
                 from: identity!.node_id,
-                to: peer.id,
-                type: 'ice-candidate',
-                payload: JSON.stringify({ candidate: event.candidate.toJSON(), from: identity!.node_id }),
-            }));
+            }).catch(console.error);
         }
     };
-
-    console.log(`[WebRtcSync] Setting up connection state for ${peer.display_name} (${peer.id})`);
 
     pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
@@ -281,19 +118,14 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
         }
     };
 
-    console.log(`[WebRtcSync] Creating offer for ${peer.display_name} (${peer.id})`);
-
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    console.log(`[WebRtcSync] Sending offer for ${peer.display_name} (${peer.id})`);
-
-    ws?.send(JSON.stringify({
+    await invoke('mqtt_publish_offer', {
+        peerId: peer.id,
+        sdp: JSON.stringify(offer),
         from: identity!.node_id,
-        to: peer.id,
-        type: 'offer',
-        payload: JSON.stringify({ sdp: JSON.stringify(offer), from: identity!.node_id }),
-    }));
+    }).catch(console.error);
 }
 
 export async function acceptConnection(from: string, sdp: string, roomId: string): Promise<void> {
@@ -306,22 +138,22 @@ export async function acceptConnection(from: string, sdp: string, roomId: string
 
     pc.ondatachannel = (event) => {
         const channel = event.channel;
-        let ydoc = ydocsByRoom.get(roomId);
-        if (!ydoc) {
-            ydoc = new Y.Doc();
-            ydocsByRoom.set(roomId, ydoc);
+        let roomDoc = roomDocs.get(roomId);
+        if (!roomDoc) {
+            const ydoc = new Y.Doc();
+            roomDoc = { ydoc, peer: { id: from, user_id: from, display_name: 'Peer' }, roomId };
+            roomDocs.set(roomId, roomDoc);
         }
-        setupDataChannel(channel, ydoc, roomId, { id: from, display_name: 'Peer' } as OnlinePeer);
+        setupDataChannel(channel, roomId);
     };
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            ws?.send(JSON.stringify({
+            invoke('mqtt_publish_ice_candidate', {
+                peerId: from,
+                candidate: JSON.stringify(event.candidate.toJSON()),
                 from: identity!.node_id,
-                to: from,
-                type: 'ice-candidate',
-                payload: JSON.stringify({ candidate: event.candidate.toJSON(), from: identity!.node_id }),
-            }));
+            }).catch(console.error);
         }
     };
 
@@ -342,20 +174,18 @@ export async function acceptConnection(from: string, sdp: string, roomId: string
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    ws?.send(JSON.stringify({
+    await invoke('mqtt_publish_answer', {
+        peerId: from,
+        sdp: JSON.stringify(answer),
         from: identity!.node_id,
-        to: from,
-        type: 'answer',
-        payload: JSON.stringify({ sdp: JSON.stringify(answer), from: identity!.node_id }),
-    }));
+    }).catch(console.error);
 }
 
-function setupDataChannel(
-    channel: RTCDataChannel,
-    ydoc: Y.Doc,
-    roomId: string,
-    peer: OnlinePeer
-): void {
+function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
+    const roomDoc = roomDocs.get(roomId);
+    if (!roomDoc) return;
+
+    const { ydoc, peer } = roomDoc;
     channel.binaryType = 'arraybuffer';
 
     channel.onmessage = (event) => {
@@ -391,12 +221,12 @@ function setupDataChannel(
 }
 
 function cleanupRoom(roomId: string): void {
-    ydocsByRoom.delete(roomId);
-    providersByRoom.delete(roomId);
+    roomDocs.delete(roomId);
+    pendingConnections.delete(roomId);
 }
 
 export function getYDocForRoom(roomId: string): Y.Doc | null {
-    return ydocsByRoom.get(roomId) ?? null;
+    return roomDocs.get(roomId)?.ydoc ?? null;
 }
 
 export function createYDoc(): Y.Doc {
@@ -417,23 +247,33 @@ export function disconnectPeer(roomId: string): void {
 }
 
 export function disconnectAll(): void {
-    for (const roomId of ydocsByRoom.keys()) {
+    for (const roomId of roomDocs.keys()) {
         cleanupRoom(roomId);
     }
     syncStore.setConnectedPeers([]);
-    if (ws) {
-        ws.close();
-        ws = null;
-    }
-    syncStore.setSignalingStatus('disconnected');
 }
 
-function setupEventListeners(): void {
-    listen('signaling-reconnected', () => {
-        if (identity) {
-            connectSignaling(storeGet(syncStore).signalingUrl);
-        }
+async function setupEventListeners(): Promise<void> {
+    const unlistenOffer = await listen<{ from: string; sdp: string; room_id: string }>('mqtt-offer-received', async (event) => {
+        const { from, sdp, room_id } = event.payload;
+        await acceptConnection(from, sdp, room_id);
     });
+
+    const unlistenAnswer = await listen<{ from: string; sdp: string }>('mqtt-answer-received', async (event) => {
+        const { from, sdp } = event.payload;
+        await handleAnswer(from, sdp);
+    });
+
+    const unlistenIce = await listen<{ from: string; candidate: string }>('mqtt-ice-candidate-received', async (event) => {
+        const { from, candidate } = event.payload;
+        handleIceCandidate(from, JSON.parse(candidate));
+    });
+
+    const unlistenStatus = await listen<string>('mqtt-status', (event) => {
+        syncStore.setSignalingStatus(event.payload as 'connected' | 'disconnected' | 'error');
+    });
+
+    cleanupFns = [unlistenOffer, unlistenAnswer, unlistenIce, unlistenStatus];
 }
 
 export function getCleanup(): () => void {

@@ -23,12 +23,12 @@
 </script>
 
 <section class="section">
-    <h2>Signaling Server</h2>
+    <h2>MQTT Broker</h2>
     {#if isEditing}
         <form class="signaling-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
             <input
                 type="text"
-                placeholder="ws://your-server:3001"
+                placeholder="mqtt://localhost:1883"
                 bind:value={inputUrl}
                 class="input"
             />
@@ -45,7 +45,7 @@
             <div class="status-row">
                 <span class="status-dot {isConnected ? 'connected' : 'disconnected'}"></span>
                 <span class="status-label">
-                    {isConnected ? 'Connected' : 'Disconnected'}
+                    {isConnected ? 'Connected to MQTT' : 'Disconnected'}
                 </span>
             </div>
         </div>

@@ -16,7 +16,6 @@
     } from '$lib/stores/sync';
     import {
         initSync,
-        connectSignaling,
         requestConnection,
         acceptConnection,
         disconnectPeer,
@@ -75,11 +74,11 @@
 
     async function handleSaveSignalingUrl(newUrl: string) {
         try {
-            await invoke('save_signaling_url', { url: newUrl });
+            await invoke('save_mqtt_broker_url', { url: newUrl });
             syncStore.setSignalingUrl(newUrl);
-            await connectSignaling(newUrl);
+            await invoke('mqtt_connect', { brokerUrl: newUrl });
         } catch (e) {
-            console.error('Failed to save signaling URL:', e);
+            console.error('Failed to save MQTT URL:', e);
         }
     }
 

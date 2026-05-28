@@ -1,16 +1,12 @@
 .PHONY: help install dev build run clean check fmt clippy \
         release release-android release-ios release-tag install-android \
-        signal-up signal-down signal-logs signal-build signal-dev
+        mqtt-up mqtt-down mqtt-logs
 
 # Only apply custom Rust path on macOS (Apple Silicon) — not needed on CI or Linux/Windows
 ifneq ($(filter darwin,Darwin),)
 RUST_PATH := /opt/homebrew/opt/rustup/bin:$(HOME)/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 export PATH := $(RUST_PATH):$(PATH)
 endif
-
-# Signaling server port
-SIGNALING_PORT ?= 3001
-export SIGNALING_PORT
 
 # Android SDK — override by setting env vars before calling make
 ANDROID_HOME ?= $(HOME)/Android
@@ -30,12 +26,10 @@ help:
 	@echo "  make fmt              - Format code"
 	@echo "  make clippy           - Run Rust linter"
 	@echo ""
-	@echo "Signaling server commands:"
-	@echo "  make signal-build      - Build signaling server Docker image"
-	@echo "  make signal-up         - Start signaling server in Docker (port $(SIGNALING_PORT))"
-	@echo "  make signal-down       - Stop signaling server"
-	@echo "  make signal-logs       - Follow signaling server logs"
-	@echo "  make signal-dev        - Run signaling server in dev mode (no Docker)"
+	@echo "MQTT broker commands:"
+	@echo "  make mqtt-up         - Start MQTT broker in Docker (port 1883)"
+	@echo "  make mqtt-down       - Stop MQTT broker"
+	@echo "  make mqtt-logs       - Follow MQTT broker logs"
 	@echo ""
 	@echo "Release commands:"
 	@echo "  make release                    - Build current platform → dist/"
@@ -47,30 +41,18 @@ install:
 	npm install
 
 # ---------------------------------------------------------------------------
-# Signaling server (Docker)
+# MQTT broker (Docker)
 # ---------------------------------------------------------------------------
 
-signal-build:
-	@git_hash=$$(git rev-parse --short HEAD); \
-	date=$$(date +%Y.%m.%d); \
-	export TAG=$${date}-$${git_hash}; \
-	echo "Building images with tag: $$TAG"; \
-	docker compose build signaling
+mqtt-up:
+	docker compose up -d mqtt
+	@echo "MQTT broker started on mqtt://localhost:1883"
 
-signal-up:
-	docker compose up -d --build signaling
-	@echo "Signaling server started on ws://localhost:$(SIGNALING_PORT)"
+mqtt-down:
+	docker compose down mqtt
 
-signal-down:
-	docker compose down signaling
-
-signal-logs:
-	docker compose logs -f signaling
-
-signal-dev:
-	cd signaling-server && \
-		npm install && \
-		npm run dev
+mqtt-logs:
+	docker compose logs -f mqtt
 
 # ---------------------------------------------------------------------------
 # App targets

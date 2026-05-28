@@ -40,4 +40,5 @@ bincode = "1.3"
 futures-lite = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 hostname = "0.4"
+rumqttc = "0.24"
 

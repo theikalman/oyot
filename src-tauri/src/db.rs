@@ -1,6 +1,8 @@
 use crate::db_snapshot::DbSnapshot;
+use crate::identity::IdentityInfo;
 use crate::network::peer_connection::PeerRegistry;
 use crate::network::signaling_client::SignalingClient;
+use crate::network::signaling_manager::SignalingManager;
 use crate::network::webrtc_manager::WebRtcManager;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -13,6 +15,7 @@ pub struct AppState {
     pub webrtc_manager: Arc<WebRtcManager>,
     pub peer_registry: Arc<PeerRegistry>,
     pub signaling_client: Arc<SignalingClient>,
+    pub signaling_manager: Arc<SignalingManager>,
     #[allow(dead_code)]
     pub app_handle: AppHandle,
     pub data_dir: PathBuf,
@@ -32,17 +35,38 @@ impl AppState {
         let db_path = app_data_dir.join("oyot.db");
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
         let db = Arc::new(parking_lot::Mutex::new(conn));
-        let snapshot = Arc::new(DbSnapshot::new(db.clone()));
+
         let node_id = uuid::Uuid::new_v4().to_string();
+
+        let signaling_manager = Arc::new(SignalingManager::new(Some(app_handle.clone())));
+        signaling_manager.set_node_id(node_id.clone());
 
         Ok(Self {
             db: db.clone(),
-            snapshot,
+            snapshot: Arc::new(DbSnapshot::new(db.clone())),
             webrtc_manager: Arc::new(WebRtcManager::new(node_id.clone())),
             peer_registry: Arc::new(PeerRegistry::new()),
             signaling_client: Arc::new(SignalingClient::new(signaling_url)),
+            signaling_manager,
             app_handle,
             data_dir: app_data_dir,
         })
+    }
+
+    pub fn get_identity(&self) -> Result<IdentityInfo, String> {
+        let db_lock = self.db.lock();
+        db_lock
+            .query_row(
+                "SELECT user_id, node_id, display_name FROM identity LIMIT 1",
+                [],
+                |row| {
+                    Ok(IdentityInfo {
+                        user_id: row.get(0)?,
+                        node_id: row.get(1)?,
+                        display_name: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(|e| e.to_string())
     }
 }

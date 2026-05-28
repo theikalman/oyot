@@ -57,3 +57,27 @@ pub fn update_display_name(db: &rusqlite::Connection, display_name: &str) -> Res
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IdentityInfo {
+    pub user_id: String,
+    pub node_id: String,
+    pub display_name: String,
+}
+
+pub fn get_identity_info(db: &rusqlite::Connection) -> Result<Option<IdentityInfo>, String> {
+    let identity = db
+        .query_row(
+            "SELECT user_id, node_id, display_name FROM identity LIMIT 1",
+            [],
+            |row| {
+                Ok(IdentityInfo {
+                    user_id: row.get(0)?,
+                    node_id: row.get(1)?,
+                    display_name: row.get(2)?,
+                })
+            },
+        )
+        .ok();
+    Ok(identity)
+}

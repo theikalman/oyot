@@ -1,16 +1,22 @@
 services:
-  signaling:
-    build:
-      context: ./signaling-server
-      dockerfile: Dockerfile
-    image: oyot-backend:${TAG:-latest}
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: oyot-mqtt
     ports:
-      - "3002:3002"
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
     environment:
-      PORT: "3002"
+      - TZ=UTC
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      test: ["CMD", "timeout", "1", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  mosquitto_data:
+  mosquitto_logs:
