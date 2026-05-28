@@ -102,8 +102,8 @@ export async function connectSignaling(url: string | null): Promise<void> {
             resolve();
         };
 
-        ws.onmessage = (event) => {
-            handleSignalingMessage(event.data);
+        ws.onmessage = async (event) => {
+            await handleSignalingMessage(event.data);
         };
 
         ws.onclose = () => {
@@ -125,7 +125,7 @@ export async function connectSignaling(url: string | null): Promise<void> {
     });
 }
 
-function handleSignalingMessage(data: string): void {
+async function handleSignalingMessage(data: string): Promise<void> {
     let msg: SignalingMessage;
     try {
         msg = JSON.parse(data);
@@ -166,7 +166,7 @@ function handleSignalingMessage(data: string): void {
             const offer = parsePayload<ParsedOfferPayload>(msg.payload);
             if (!offer || offer.from === identity?.node_id) break;
 
-            const roomId = calculateRoomId(identity!.user_id, offer.from);
+            const roomId = await calculateRoomId(identity!.user_id, offer.from);
             syncStore.setPendingOffer({ from: offer.from, sdp: offer.sdp, room_id: roomId });
             break;
         }
@@ -195,21 +195,17 @@ function handleSignalingMessage(data: string): void {
 
 const pendingConnections = new Map<string, RTCPeerConnection>();
 
-function calculateRoomId(userA: string, userB: string): string {
+async function calculateRoomId(userA: string, userB: string): Promise<string> {
     const ids = [userA, userB].sort();
     const combined = ids.join(':');
     const encoder = new TextEncoder();
     const data = encoder.encode(combined);
-    let hash = 0;
-    for (let i = 0; i < 16; i++) {
-        hash = ((hash << 5) - hash) + (i < data.length ? data[i] : 0);
-        hash |= 0;
-    }
-    const hexes = [];
-    for (let i = 0; i < 16; i++) {
-        hexes.push(((hash >>> (i * 4)) & 0xf).toString(16));
-    }
-    return hexes.join('');
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = new Uint8Array(hashBuffer);
+    const hashHex = Array.from(hashArray.slice(0, 16))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    return hashHex;
 }
 
 async function handleAnswer(from: string, sdp: string): Promise<void> {
@@ -237,7 +233,7 @@ function handleIceCandidate(from: string, candidate: unknown): void {
 export async function requestConnection(peer: OnlinePeer): Promise<void> {
     if (!identity) return;
 
-    const roomId = calculateRoomId(identity.user_id, peer.user_id);
+    const roomId = await calculateRoomId(identity.user_id, peer.user_id);
 
     console.log(`[WebRtcSync] Requesting connection to ${JSON.stringify(peer)}`);
     console.log(`[WebRtcSync] Requesting connection to ${peer.display_name} (${peer.id})`);
