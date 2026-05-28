@@ -3,11 +3,6 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import * as Y from 'yjs';
 import { syncStore, type UserIdentity, type DevicePair, type OnlinePeer, type ConnectedPeer } from '../stores/sync';
 
-interface ParsedOfferPayload {
-    sdp: string;
-    from: string;
-}
-
 interface RoomDoc {
     ydoc: Y.Doc;
     peer: OnlinePeer;
@@ -18,6 +13,7 @@ const roomDocs = new Map<string, RoomDoc>();
 const pendingConnections = new Map<string, RTCPeerConnection>();
 let identity: UserIdentity | null = null;
 let cleanupFns: UnlistenFn[] = [];
+const onlinePeersMap = new Map<string, OnlinePeer>();
 
 async function calculateRoomId(userA: string, userB: string): Promise<string> {
     const ids = [userA, userB].sort();
@@ -38,10 +34,15 @@ export async function initSync(): Promise<void> {
         syncStore.setIdentity(identity);
 
         const mqttBroker = await invoke<string | null>('get_mqtt_broker_url');
-        if (mqttBroker) {
+        if (mqttBroker && mqttBroker.trim() !== '') {
             syncStore.setSignalingUrl(mqttBroker);
-            await invoke('mqtt_connect', { brokerUrl: mqttBroker });
-            syncStore.setSignalingStatus('connected');
+            try {
+                await invoke('mqtt_connect', { brokerUrl: mqttBroker });
+                syncStore.setSignalingStatus('connected');
+            } catch (e) {
+                console.error('[WebRtcSync] Failed to connect to MQTT broker:', e);
+                syncStore.setSignalingStatus('error');
+            }
         } else {
             syncStore.setSignalingStatus('disconnected');
         }
@@ -273,7 +274,24 @@ async function setupEventListeners(): Promise<void> {
         syncStore.setSignalingStatus(event.payload as 'connected' | 'disconnected' | 'error');
     });
 
-    cleanupFns = [unlistenOffer, unlistenAnswer, unlistenIce, unlistenStatus];
+    const unlistenPeerJoined = await listen<{ peer_id: string; user_id: string; display_name: string }>('mqtt-peer-joined', (event) => {
+        const { peer_id, user_id, display_name } = event.payload;
+        const peer: OnlinePeer = {
+            id: peer_id,
+            user_id,
+            display_name,
+        };
+        onlinePeersMap.set(peer_id, peer);
+        syncStore.setOnlinePeers(Array.from(onlinePeersMap.values()));
+    });
+
+    const unlistenPeerLeft = await listen<string>('mqtt-peer-left', (event) => {
+        const peerId = event.payload;
+        onlinePeersMap.delete(peerId);
+        syncStore.setOnlinePeers(Array.from(onlinePeersMap.values()));
+    });
+
+    cleanupFns = [unlistenOffer, unlistenAnswer, unlistenIce, unlistenStatus, unlistenPeerJoined, unlistenPeerLeft];
 }
 
 export function getCleanup(): () => void {

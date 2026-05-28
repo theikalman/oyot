@@ -33,7 +33,26 @@ impl Clone for MqttSignalingClient {
 
 impl MqttSignalingClient {
     pub async fn new(broker_url: &str, node_id: &str) -> Result<Self, String> {
-        let mut mqtt_options = rumqttc::MqttOptions::new(node_id, broker_url, 1883);
+        let url = broker_url.trim();
+        if url.is_empty() {
+            return Err("Broker URL is empty".to_string());
+        }
+
+        let (host, port) = if url.starts_with("mqtt://") || url.starts_with("tcp://") {
+            let without_scheme = url.trim_start_matches("mqtt://").trim_start_matches("tcp://");
+            let parts: Vec<&str> = without_scheme.split(':').collect();
+            let host = parts[0].to_string();
+            let port = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(1883);
+            (host, port)
+        } else if let Some(port_idx) = url.rfind(':') {
+            let host = url[..port_idx].to_string();
+            let port = url[port_idx + 1..].parse().unwrap_or(1883);
+            (host, port)
+        } else {
+            (url.to_string(), 1883)
+        };
+
+        let mut mqtt_options = rumqttc::MqttOptions::new(node_id, &host, port);
         mqtt_options.set_keep_alive(std::time::Duration::from_secs(30));
 
         let (client, event_loop) = rumqttc::AsyncClient::new(mqtt_options, 100);

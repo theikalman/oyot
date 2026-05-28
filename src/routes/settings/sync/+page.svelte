@@ -74,6 +74,8 @@
 
     async function handleSaveSignalingUrl(newUrl: string) {
         try {
+            console.log('handleSaveSignalingUrl', newUrl);
+
             await invoke('save_mqtt_broker_url', { url: newUrl });
             syncStore.setSignalingUrl(newUrl);
             await invoke('mqtt_connect', { brokerUrl: newUrl });

@@ -1,7 +1,6 @@
 use crate::db::AppState;
 use crate::identity::UserIdentity;
 use crate::pairing::{self, DevicePair};
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,5 +92,10 @@ pub fn update_pair_sync_time(
 
 #[tauri::command]
 pub fn get_signaling_status(state: tauri::State<'_, AppState>) -> bool {
-    state.signaling_client.is_connected()
+    state.signaling_manager.is_connected()
+}
+
+#[tauri::command]
+pub fn get_online_peers(state: tauri::State<'_, AppState>) -> Result<Vec<OnlinePeer>, String> {
+    Ok(vec![])
 }

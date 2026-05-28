@@ -179,6 +179,7 @@ pub fn run() {
                 let identity = crate::identity::get_or_create_identity(&db)
                     .map_err(|e| format!("Failed to create identity: {}", e))?;
                 state.signaling_manager.set_user_id(identity.user_id);
+                state.signaling_manager.set_display_name(identity.display_name);
             }
 
             spawn_sync_tasks(
@@ -241,6 +242,7 @@ pub fn run() {
             mqtt_publish_answer,
             mqtt_publish_ice_candidate,
             get_mqtt_status,
+            get_online_peers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
