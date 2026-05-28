@@ -2,8 +2,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const HOST = process.env.HOST || '127.0.0.1';
-const PORT = parseInt(process.env.PORT || '3001', 10);
-const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || '3002', 10);
+const PORT = parseInt(process.env.PORT || '3002', 10);
 const PING_INTERVAL = 30000;
 
 interface Peer {
@@ -136,9 +135,7 @@ function keepAlive(ws: WebSocket, pingInterval: ReturnType<typeof setInterval>):
   ws.on('close', () => clearInterval(pingInterval));
 }
 
-const httpServer = http.createServer();
-
-const healthServer = http.createServer((req, res) => {
+const httpServer = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', peers: peers.size }));
@@ -148,16 +145,7 @@ const healthServer = http.createServer((req, res) => {
   }
 });
 
-healthServer.on('error', (err) => {
-  console.error(`Health server error: ${err.message}`);
-});
-
-healthServer.listen(HEALTH_PORT, HOST, () => {
-  console.log(`HTTP healthcheck listening on http://${HOST}:${HEALTH_PORT}/health`);
-});
-
-/*
-const wss = new WebSocketServer({ server: httpServer });
+const wss = new WebSocketServer({ noServer: true });
 
 wss.on('connection', (ws) => {
   const pingInterval = setInterval(() => {
@@ -184,20 +172,20 @@ wss.on('connection', (ws) => {
   ws.on('error', (err) => console.error('WS error:', err.message));
 });
 
-wss.on('listening', () => {
-  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
+httpServer.on('upgrade', (req, socket, head) => {
+  if (req.url === '/') {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
 });
 
-wss.on('error', (err) => {
-  console.error('Server error:', err.message);
+httpServer.on('error', (err) => {
+  console.error(`Server error: ${err.message}`);
 });
 
 httpServer.listen(PORT, HOST, () => {
-  console.log(`Signaling server listening on ws://${HOST}:${PORT}`);
-});
-*/
-
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down...');
-  healthServer.close();
+  console.log(`Signaling server listening on ws://${HOST}:${PORT} and http://${HOST}:${PORT}/health`);
 });
