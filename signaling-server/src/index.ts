@@ -137,8 +137,14 @@ function keepAlive(ws: WebSocket, pingInterval: ReturnType<typeof setInterval>):
 
 const httpServer = http.createServer((req, res) => {
   if (req.url === '/health') {
+    const peerDetails = Array.from(peers.values()).map(p => ({
+      id: p.id,
+      userId: p.userId,
+      displayName: p.displayName,
+      lastPing: p.lastPing,
+    }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', peers: peers.size }));
+    res.end(JSON.stringify({ status: 'ok', peers: peers.size, peerDetails }));
   } else {
     res.writeHead(404);
     res.end();
