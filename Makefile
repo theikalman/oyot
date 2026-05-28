@@ -70,7 +70,7 @@ signal-logs:
 signal-dev:
 	cd signaling-server && \
 		npm install && \
-		env HOST=192.168.1.103 npm run dev
+		npm run dev
 
 # ---------------------------------------------------------------------------
 # App targets

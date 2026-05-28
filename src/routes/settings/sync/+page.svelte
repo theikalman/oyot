@@ -84,7 +84,13 @@
     }
 
     async function handleConnect(peer: OnlinePeer) {
+
+        console.log("peer", peer);
+
         await requestConnection(peer);
+
+        console.log("requestConnection done");
+
         await invoke('save_pair', {
             peerNodeId: peer.id,
             peerDisplayName: peer.display_name,

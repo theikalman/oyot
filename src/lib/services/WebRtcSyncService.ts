@@ -76,6 +76,10 @@ export async function connectSignaling(url: string | null): Promise<void> {
         ws.onopen = () => {
             syncStore.setSignalingStatus('connected');
 
+            console.log(`[WebRtcSync] Connected to signaling server ${url}`);
+            console.log(`[WebRtcSync] Sending registration message`);
+            console.log(`[WebRtcSync] Identity: ${JSON.stringify(identity)}`);
+
             const msg: SignalingMessage = {
                 from: identity!.node_id,
                 to: null,
@@ -131,23 +135,23 @@ function handleSignalingMessage(data: string): void {
 
     switch (msg.type) {
         case 'peer-list-response': {
-            const peers = parsePayload<Array<{ id: string; user_id: string; display_name: string }>>(msg.payload);
+            const peers = parsePayload<Array<{ id: string; userId: string; displayName: string }>>(msg.payload);
             if (peers) {
                 const online = peers
                     .filter(p => p.id !== identity?.node_id)
-                    .map(p => ({ id: p.id, user_id: p.user_id, display_name: p.display_name }));
+                    .map(p => ({ id: p.id, user_id: p.userId, display_name: p.displayName }));
                 syncStore.setOnlinePeers(online);
             }
             break;
         }
 
         case 'peer-joined': {
-            const peer = parsePayload<{ id: string; user_id: string; display_name: string }>(msg.payload);
+            const peer = parsePayload<{ id: string; userId: string; displayName: string }>(msg.payload);
             if (peer && peer.id !== identity?.node_id) {
                 syncStore.updateOnlinePeer({
                     id: peer.id,
-                    user_id: peer.user_id,
-                    display_name: peer.display_name,
+                    user_id: peer.userId,
+                    display_name: peer.displayName,
                 });
             }
             break;
@@ -235,16 +239,25 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
 
     const roomId = calculateRoomId(identity.user_id, peer.user_id);
 
+    console.log(`[WebRtcSync] Requesting connection to ${JSON.stringify(peer)}`);
+    console.log(`[WebRtcSync] Requesting connection to ${peer.display_name} (${peer.id})`);
+
     const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });
     pendingConnections.set(peer.id, pc);
 
+    console.log(`[WebRtcSync] Created peer connection for ${peer.display_name} (${peer.id})`);
+
     const channel = pc.createDataChannel('yjs-sync');
     const ydoc = new Y.Doc();
     ydocsByRoom.set(roomId, ydoc);
 
+    console.log(`[WebRtcSync] Created data channel for ${peer.display_name} (${peer.id})`);
+
     setupDataChannel(channel, ydoc, roomId, peer);
+
+    console.log(`[WebRtcSync] Setting up ICE candidates for ${peer.display_name} (${peer.id})`);
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
@@ -256,6 +269,8 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
             }));
         }
     };
+
+    console.log(`[WebRtcSync] Setting up connection state for ${peer.display_name} (${peer.id})`);
 
     pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
@@ -270,8 +285,12 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
         }
     };
 
+    console.log(`[WebRtcSync] Creating offer for ${peer.display_name} (${peer.id})`);
+
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+
+    console.log(`[WebRtcSync] Sending offer for ${peer.display_name} (${peer.id})`);
 
     ws?.send(JSON.stringify({
         from: identity!.node_id,
