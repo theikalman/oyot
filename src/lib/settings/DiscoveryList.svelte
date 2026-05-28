@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { OnlinePeer } from '$lib/stores/sync';
+    import { pairedDevices as allPairedDevices } from '$lib/stores/sync';
 
     interface Props {
         peers: OnlinePeer[];
@@ -7,15 +8,18 @@
     }
 
     let { peers, onConnect }: Props = $props();
+
+    let pairedIds = $derived($allPairedDevices.map((d: { peer_node_id: string }) => d.peer_node_id));
+    let availablePeers = $derived(peers.filter((p: OnlinePeer) => !pairedIds.includes(p.id)));
 </script>
 
-<section class="section">
+    <section class="section">
     <h2>Available Devices</h2>
-    {#if peers.length === 0}
+    {#if availablePeers.length === 0}
         <p class="empty-state">No other devices online. Make sure both devices are connected to the same signaling server.</p>
     {:else}
         <ul class="peer-list">
-            {#each peers as peer}
+            {#each availablePeers as peer}
                 <li class="peer-item">
                     <div class="peer-info">
                         <div class="peer-header">
