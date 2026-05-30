@@ -36,15 +36,12 @@ impl AppState {
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
         let db = Arc::new(parking_lot::Mutex::new(conn));
 
-        let node_id = uuid::Uuid::new_v4().to_string();
-
         let signaling_manager = Arc::new(SignalingManager::new(Some(app_handle.clone())));
-        signaling_manager.set_node_id(node_id.clone());
 
         Ok(Self {
             db: db.clone(),
             snapshot: Arc::new(DbSnapshot::new(db.clone())),
-            webrtc_manager: Arc::new(WebRtcManager::new(node_id.clone())),
+            webrtc_manager: Arc::new(WebRtcManager::new(String::new())),
             peer_registry: Arc::new(PeerRegistry::new()),
             signaling_client: Arc::new(SignalingClient::new(signaling_url)),
             signaling_manager,

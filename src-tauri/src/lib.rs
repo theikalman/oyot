@@ -178,6 +178,7 @@ pub fn run() {
                 let db = state.db.lock();
                 let identity = crate::identity::get_or_create_identity(&db)
                     .map_err(|e| format!("Failed to create identity: {}", e))?;
+                state.signaling_manager.set_node_id(identity.node_id.clone());
                 state.signaling_manager.set_user_id(identity.user_id);
                 state.signaling_manager.set_display_name(identity.display_name);
             }
