@@ -16,17 +16,15 @@
     let collapsed = $state(false);
 
     let currentDate = $state(new Date());
-    let showDateModal = $state(false);
-    let selectedDate = $state<Date | null>(null);
 
     let currentDocId = $derived($appStore.currentDocument?.id);
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
     function filterJournals(): DocumentSummary[] {
-        if (!searchInput.trim()) return journals;
+        if (!searchInput.trim()) return [...journals].sort((a, b) => b.title.localeCompare(a.title));
         const query = searchInput.toLowerCase();
-        return journals.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query));
+        return journals.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query)).sort((a, b) => b.title.localeCompare(a.title));
     }
 
     function filterNotes(): DocumentSummary[] {
@@ -103,8 +101,42 @@
 
     function handleDateClick(day: number | null) {
         if (day === null) return;
-        selectedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-        showDateModal = true;
+        const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const dayStr = String(date.getDate()).padStart(2, '0');
+        const dateTitle = `${year}-${month}-${dayStr}`;
+
+        const existing = journals.find((d: DocumentSummary) => d.title === dateTitle);
+        if (existing) {
+            handleDocClick(existing);
+        } else {
+            createJournalForDate(dateTitle);
+        }
+    }
+
+    async function createJournalForDate(dateTitle: string) {
+        try {
+            const newDoc: Document = await invoke('create_document', {
+                docType: 'journal',
+                title: dateTitle,
+                crdtState: []
+            });
+
+            const summary: DocumentSummary = {
+                id: newDoc.id,
+                doc_type: newDoc.doc_type,
+                title: newDoc.title,
+                todo_count: 0,
+                completed_todo_count: 0,
+                created_at: newDoc.created_at,
+                updated_at: newDoc.updated_at
+            };
+            appStore.addDocument(summary);
+            appStore.setCurrentDocument(newDoc);
+        } catch (err) {
+            console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
+        }
     }
 
     function isToday(day: number | null): boolean {
@@ -117,12 +149,10 @@
         );
     }
 
-    function closeDateModal() {
-        showDateModal = false;
-    }
-
     function goToToday() {
-        currentDate = new Date();
+        const today = new Date();
+        currentDate = today;
+        handleDateClick(today.getDate());
     }
 </script>
 
@@ -245,23 +275,6 @@
         </div>
     </div>
 {/if}
-
-{#if showDateModal}
-    <div class="modal-overlay" role="presentation" onclick={closeDateModal}>
-        <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-            <h3>TBD Notes By Day</h3>
-            <p style="color: var(--text-secondary); font-size: 14px; margin: 8px 0 12px;">
-                {#if selectedDate}
-                    {selectedDate.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                {/if}
-            </p>
-            <div class="modal-actions">
-                <button class="modal-btn" onclick={closeDateModal}>OK</button>
-            </div>
-        </div>
-    </div>
-{/if}
-
 
 
 <style>
