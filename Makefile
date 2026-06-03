@@ -1,8 +1,9 @@
 .PHONY: help install dev build run clean check fmt clippy \
-        release release-android release-ios release-tag install-android
+        release release-android release-ios release-tag install-android \
+        mqtt-up mqtt-down mqtt-logs
 
 # Only apply custom Rust path on macOS (Apple Silicon) — not needed on CI or Linux/Windows
-ifeq ($(shell uname -s),Darwin)
+ifneq ($(filter darwin,Darwin),)
 RUST_PATH := /opt/homebrew/opt/rustup/bin:$(HOME)/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 export PATH := $(RUST_PATH):$(PATH)
 endif
@@ -25,6 +26,11 @@ help:
 	@echo "  make fmt              - Format code"
 	@echo "  make clippy           - Run Rust linter"
 	@echo ""
+	@echo "MQTT broker commands:"
+	@echo "  make mqtt-up         - Start MQTT broker in Docker (port 1883)"
+	@echo "  make mqtt-down       - Stop MQTT broker"
+	@echo "  make mqtt-logs       - Follow MQTT broker logs"
+	@echo ""
 	@echo "Release commands:"
 	@echo "  make release                    - Build current platform → dist/"
 	@echo "  make release-android            - Build Android APK → dist/android/"
@@ -33,6 +39,24 @@ help:
 
 install:
 	npm install
+
+# ---------------------------------------------------------------------------
+# MQTT broker (Docker)
+# ---------------------------------------------------------------------------
+
+mqtt-up:
+	docker compose up -d mqtt
+	@echo "MQTT broker started on mqtt://localhost:1883"
+
+mqtt-down:
+	docker compose down mqtt
+
+mqtt-logs:
+	docker compose logs -f mqtt
+
+# ---------------------------------------------------------------------------
+# App targets
+# ---------------------------------------------------------------------------
 
 dev:
 	env RUST_BACKTRACE=full npm run tauri dev

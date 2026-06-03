@@ -2,9 +2,9 @@ export interface Document {
     id: string;
     doc_type: 'journal' | 'note';
     title: string;
-    crdt_state: number[];
     created_at: number;
     updated_at: number;
+    crdt_state?: number[] | null;
 }
 
 export interface DocumentSummary {
@@ -35,7 +35,6 @@ export interface JournalEntry {
     id: string;
     doc_type: string;
     title: string;
-    crdt_state: number[];
     created_at: number;
 }
 

@@ -5,10 +5,10 @@
     import { currentDocument, appStore } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
     import type { Document } from '$lib/types';
-    import type { LoroDocType } from 'loro-prosemirror';
     import { Toolbar, EditorHeader } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
     import { createSaveService, type EditorSaveService } from './EditorSaveService';
+    import * as Y from 'yjs';
 
     interface Props {
         debounceMs?: number;
@@ -21,16 +21,16 @@
     }: Props = $props();
 
     let current = $derived($currentDocument);
-    let loroDoc = $state<any>(null);
+    let ydoc = $state<Y.Doc | null>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
     let isSaving = $state(false);
     let unlistenSyncEvent: (() => void) | null = null;
     let previousDocId = $state<string | null>(null);
 
-    function handleEditorReady(editor: EditorType, doc: any) {
+    function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
-        loroDoc = doc;
+        ydoc = doc;
 
         if (saveService) {
             saveService.destroy();
@@ -44,7 +44,7 @@
 
         if (current) {
             saveService.setDocument(current);
-            saveService.setLoroDoc(doc);
+            saveService.setYDoc(doc);
         }
     }
 
@@ -66,8 +66,12 @@
     async function reloadCurrentDocument() {
         if (!current?.id) return;
         try {
-            const doc: Document = await invoke('get_document', { docId: current.id });
-            appStore.setCurrentDocument(doc);
+            const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', {
+                docId: current.id,
+            });
+            if (stateResult.state && stateResult.state.length > 0 && ydoc) {
+                Y.applyUpdate(ydoc, new Uint8Array(stateResult.state));
+            }
         } catch (error) {
             console.error('[Editor] Failed to reload document:', error);
         }
@@ -75,9 +79,8 @@
 
     onMount(async () => {
         unlistenSyncEvent = await listen('sync-received', async (event) => {
-            console.log('[Editor] Received sync event:', event);
-            const docId = (event.payload as { docId?: string })?.docId;
-            if (docId && docId === current?.id) {
+            const payload = event.payload as { doc_id?: string };
+            if (payload?.doc_id && payload.doc_id === current?.id) {
                 await reloadCurrentDocument();
             }
         });

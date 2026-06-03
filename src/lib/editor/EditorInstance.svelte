@@ -24,13 +24,12 @@
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
     import {
-        createLoroDoc,
-        createPresenceStore,
-        loadLoroDocFromState,
+        createYjsDoc,
+        loadYjsDocFromState,
         createInitialContent,
-        exportLoroDocSnapshot,
-        addLoroPluginsToEditor,
-    } from '$lib/loro/LoroEditorExtension';
+        createCollaborationExtension,
+    } from '$lib/yjs/YjsEditorExtension';
+    import { createYjsSyncService } from '$lib/yjs/YjsSyncService';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -48,7 +47,7 @@
         document: any | null;
         autoSave?: boolean;
         debounceMs?: number;
-        onEditorReady?: (editor: EditorType, loroDoc: any) => void;
+        onEditorReady?: (editor: EditorType, ydoc: any) => void;
         onContentChange?: () => void;
     }
 
@@ -62,10 +61,10 @@
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
-    let loroDoc = $state.raw<any>(null);
+    let ydoc = $state.raw<any>(null);
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
-    let isLoadingLoro = $state.raw(false);
+    let isLoadingEditor = $state.raw(false);
 
     let initialViewportHeight = 0;
     let keyboardOpen = $state(false);
@@ -80,21 +79,26 @@
             editor.destroy();
             editor = null;
         }
-        if (loroDoc) {
-            loroDoc = null;
+        if (ydoc) {
+            ydoc = null;
         }
 
-        const newLoroDoc = await loadLoroDocFromState(
+        const newYDoc = loadYjsDocFromState(
             document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array()
         );
 
         const title = document?.title ?? 'Untitled';
         let initialContent: object = createInitialContent(title) as object;
 
+        const collabExt = createCollaborationExtension(newYDoc, 'content');
+
         const ed = new Editor({
             element,
             extensions: [
-                StarterKit,
+                StarterKit.configure({
+                    undoRedo: false,
+                }),
+                collabExt,
                 ResizableImage.configure({
                     inline: false,
                     allowBase64: true
@@ -134,15 +138,12 @@
         registerTodoCommand(ed);
         registerImageCommand(ed);
 
-        const presenceStore = await createPresenceStore(newLoroDoc);
-        await addLoroPluginsToEditor(ed, newLoroDoc, presenceStore);
-
-        loroDoc = newLoroDoc;
+        ydoc = newYDoc;
         editor = ed;
         isInitialized = true;
         currentDocId = document?.id ?? null;
 
-        onEditorReady?.(ed, newLoroDoc);
+        onEditorReady?.(ed, newYDoc);
         return true;
     }
 
@@ -172,10 +173,10 @@
         const el = element;
         const doc = document;
 
-        if (el && !isInitialized && doc && !isLoadingLoro) {
-            isLoadingLoro = true;
+        if (el && !isInitialized && doc && !isLoadingEditor) {
+            isLoadingEditor = true;
             initializeEditor().finally(() => {
-                isLoadingLoro = false;
+                isLoadingEditor = false;
             });
         }
     });
@@ -183,10 +184,10 @@
     $effect(() => {
         const doc = document;
 
-        if (doc && editor && loroDoc && isInitialized && doc.id !== currentDocId) {
-            isLoadingLoro = true;
+        if (doc && editor && ydoc && isInitialized && doc.id !== currentDocId) {
+            isLoadingEditor = true;
             initializeEditor().finally(() => {
-                isLoadingLoro = false;
+                isLoadingEditor = false;
             });
         }
     });
@@ -206,12 +207,12 @@
             editor.destroy();
         }
 
-        loroDoc = null;
+        ydoc = null;
     });
 </script>
 
 <div class="editor-instance" style="padding-bottom: {keyboardOpen ? keyboardHeight : 0}px;">
-    {#if isLoadingLoro}
+    {#if isLoadingEditor}
         <div class="loading-editor">
             <p>Loading editor...</p>
         </div>
