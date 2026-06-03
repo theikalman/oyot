@@ -8,6 +8,7 @@ pub struct DbSnapshot {
 
 const SNAPSHOT_THRESHOLD: i64 = 50;
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotResult {
     pub doc_id: String,
@@ -80,6 +81,7 @@ impl DbSnapshot {
         Ok(updates)
     }
 
+    #[allow(dead_code)]
     pub fn get_snapshot(&self, doc_id: &str) -> Result<Option<Vec<u8>>, String> {
         let db = self.db.lock();
         let blob: Option<Vec<u8>> = db

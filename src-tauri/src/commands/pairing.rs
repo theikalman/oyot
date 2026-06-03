@@ -96,6 +96,6 @@ pub fn get_signaling_status(state: tauri::State<'_, AppState>) -> bool {
 }
 
 #[tauri::command]
-pub fn get_online_peers(state: tauri::State<'_, AppState>) -> Result<Vec<OnlinePeer>, String> {
+pub fn get_online_peers(_state: tauri::State<'_, AppState>) -> Result<Vec<OnlinePeer>, String> {
     Ok(vec![])
 }

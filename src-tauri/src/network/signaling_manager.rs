@@ -14,6 +14,7 @@ pub struct PeerAnnouncement {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum SignalingEvent {
     Offer { from: String, sdp: String, room_id: String },
     Answer { from: String, sdp: String },
@@ -70,10 +71,12 @@ impl SignalingManager {
         self.node_id.lock().clone()
     }
 
+    #[allow(dead_code)]
     pub fn get_user_id(&self) -> String {
         self.user_id.lock().clone()
     }
 
+    #[allow(dead_code)]
     pub fn get_display_name(&self) -> String {
         self.display_name.lock().clone()
     }
@@ -227,6 +230,7 @@ impl SignalingManager {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn publish_peer_joined(&self) -> Result<(), String> {
         let user_id = self.user_id.lock().clone();
         let node_id = self.node_id.lock().clone();
@@ -358,6 +362,7 @@ impl SignalingManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn subscribe_to_events(&self) -> broadcast::Receiver<SignalingEvent> {
         self.event_tx.subscribe()
     }

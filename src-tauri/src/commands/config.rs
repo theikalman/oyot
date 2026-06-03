@@ -1,4 +1,4 @@
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     let config_path = match app.path().app_data_dir() {

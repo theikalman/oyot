@@ -12,6 +12,7 @@ pub enum WebRtcMessage {
     Pong,
 }
 
+#[allow(dead_code)]
 pub struct DataChannel {
     pub peer_id: String,
     pub sender: broadcast::Sender<WebRtcMessage>,
@@ -31,12 +32,14 @@ impl DataChannel {
         )
     }
 
+    #[allow(dead_code)]
     pub async fn recv(&self) -> Option<WebRtcMessage> {
         let mut rx = self.receiver.lock().await;
         rx.recv().await.ok()
     }
 }
 
+#[allow(dead_code)]
 pub struct WebRtcManager {
     node_id: String,
     channels: Arc<TokioMutex<HashMap<String, Arc<DataChannel>>>>,
@@ -61,6 +64,7 @@ impl WebRtcManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn node_id(&self) -> &str {
         &self.node_id
     }
@@ -78,6 +82,7 @@ impl WebRtcManager {
         let _ = self.events.send(RtcEvent::PeerDisconnected(peer_id.to_string()));
     }
 
+    #[allow(dead_code)]
     pub async fn get_channel(&self, peer_id: &str) -> Option<Arc<DataChannel>> {
         self.channels.lock().await.get(peer_id).cloned()
     }

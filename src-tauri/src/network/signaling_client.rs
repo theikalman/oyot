@@ -12,11 +12,13 @@ pub struct SignalingMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PeerEntry {
     pub id: String,
     pub display_name: String,
 }
 
+#[allow(dead_code)]
 pub struct SignalingClient {
     node_id: Arc<TokioMutex<Option<String>>>,
     user_id: Arc<TokioMutex<Option<String>>>,
@@ -41,44 +43,54 @@ impl SignalingClient {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn set_server_url(&self, url: Option<String>) {
         *self.server_url.lock().await = url;
     }
 
+    #[allow(dead_code)]
     pub async fn get_server_url(&self) -> Option<String> {
         self.server_url.lock().await.clone()
     }
 
+    #[allow(dead_code)]
     pub async fn get_node_id(&self) -> Option<String> {
         self.node_id.lock().await.clone()
     }
 
+    #[allow(dead_code)]
     pub async fn set_node_id(&self, node_id: String) {
         *self.node_id.lock().await = Some(node_id);
     }
 
+    #[allow(dead_code)]
     pub async fn set_user_id(&self, user_id: String) {
         *self.user_id.lock().await = Some(user_id);
     }
 
+    #[allow(dead_code)]
     pub async fn get_user_id(&self) -> Option<String> {
         self.user_id.lock().await.clone()
     }
 
+    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         *self.is_connected.lock().unwrap()
     }
 
+    #[allow(dead_code)]
     pub fn set_connected(&self, connected: bool) {
         *self.is_connected.lock().unwrap() = connected;
     }
 
+    #[allow(dead_code)]
     pub async fn send_message(&self, msg: SignalingMessage) -> Result<(), String> {
         self.outbound
             .try_send(msg)
             .map_err(|_| "Failed to queue signaling message".to_string())
     }
 
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<SignalingMessage> {
         self.inbound.subscribe()
     }

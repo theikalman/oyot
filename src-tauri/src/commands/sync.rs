@@ -1,11 +1,9 @@
-use crate::db_snapshot::DbSnapshot;
 use crate::db::AppState;
 use crate::indexer;
 use crate::network::peer_manager;
-use crate::network::webrtc_manager::{WebRtcMessage, WebRtcManager};
+use crate::network::webrtc_manager::WebRtcMessage;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tauri::Emitter;
 
 #[derive(Debug, Serialize, Deserialize)]

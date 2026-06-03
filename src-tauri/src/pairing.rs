@@ -74,6 +74,7 @@ pub fn update_last_sync(db: &rusqlite::Connection, room_id: &str) -> Result<(), 
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn get_pair_by_room(
     db: &rusqlite::Connection,
     room_id: &str,

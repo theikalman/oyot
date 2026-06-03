@@ -58,6 +58,7 @@ pub fn update_display_name(db: &rusqlite::Connection, display_name: &str) -> Res
     Ok(())
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdentityInfo {
     pub user_id: String,
@@ -65,6 +66,7 @@ pub struct IdentityInfo {
     pub display_name: String,
 }
 
+#[allow(dead_code)]
 pub fn get_identity_info(db: &rusqlite::Connection) -> Result<Option<IdentityInfo>, String> {
     let identity = db
         .query_row(

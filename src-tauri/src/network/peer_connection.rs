@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex as TokioMutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PeerInfo {
     pub id: String,
     pub display_name: String,
@@ -20,6 +21,7 @@ pub enum PeerMessage {
     Pong,
 }
 
+#[allow(dead_code)]
 pub struct PeerConnection {
     pub peer_id: String,
     pub sender: broadcast::Sender<PeerMessage>,
@@ -40,6 +42,7 @@ impl PeerConnection {
         )
     }
 
+    #[allow(dead_code)]
     pub async fn recv(&self) -> Option<PeerMessage> {
         let mut rx = self.receiver.lock().await;
         rx.recv().await.ok()
@@ -67,7 +70,7 @@ impl PeerRegistry {
         }
     }
 
-    pub async fn add_peer(&self, peer_id: String, display_name: String) -> Arc<PeerConnection> {
+    pub async fn add_peer(&self, peer_id: String, _display_name: String) -> Arc<PeerConnection> {
         let (conn, _) = PeerConnection::new(peer_id.clone());
         let conn = Arc::new(conn);
         self.peers.lock().await.insert(peer_id.clone(), conn.clone());
@@ -80,14 +83,17 @@ impl PeerRegistry {
         let _ = self.events.send(PeerEvent::Disconnected(peer_id.to_string()));
     }
 
+    #[allow(dead_code)]
     pub async fn get_peer(&self, peer_id: &str) -> Option<Arc<PeerConnection>> {
         self.peers.lock().await.get(peer_id).cloned()
     }
 
+    #[allow(dead_code)]
     pub async fn get_all_peers(&self) -> Vec<String> {
         self.peers.lock().await.keys().cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub async fn broadcast_to_all(&self, msg: PeerMessage, exclude: Option<&str>) {
         let peers = self.peers.lock().await;
         for (_, conn) in peers.iter() {

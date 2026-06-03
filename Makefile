@@ -38,7 +38,7 @@ help:
 	@echo "  make release-tag VERSION=x.y.z  - Push git tag → triggers full CI"
 
 install:
-	npm install
+	npm install --force
 
 # ---------------------------------------------------------------------------
 # MQTT broker (Docker)

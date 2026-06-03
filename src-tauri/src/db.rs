@@ -14,6 +14,7 @@ pub struct AppState {
     pub snapshot: Arc<DbSnapshot>,
     pub webrtc_manager: Arc<WebRtcManager>,
     pub peer_registry: Arc<PeerRegistry>,
+    #[allow(dead_code)]
     pub signaling_client: Arc<SignalingClient>,
     pub signaling_manager: Arc<SignalingManager>,
     #[allow(dead_code)]
@@ -50,6 +51,7 @@ impl AppState {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_identity(&self) -> Result<IdentityInfo, String> {
         let db_lock = self.db.lock();
         db_lock
