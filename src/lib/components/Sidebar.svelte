@@ -15,6 +15,10 @@
     let newDocTitle = $state('');
     let collapsed = $state(false);
 
+    let currentDate = $state(new Date());
+    let showDateModal = $state(false);
+    let selectedDate = $state<Date | null>(null);
+
     let currentDocId = $derived($appStore.currentDocument?.id);
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
@@ -68,6 +72,58 @@
     function goToSettings() {
         goto('/settings');
     }
+
+    function prevMonth() {
+        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+    }
+
+    function nextMonth() {
+        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
+    }
+
+    function getCalendarDays() {
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+        const firstDay = new Date(year, month, 1).getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const days: (number | null)[] = [];
+
+        for (let i = 0; i < firstDay; i++) days.push(null);
+        for (let d = 1; d <= daysInMonth; d++) days.push(d);
+        while (days.length % 7 !== 0) days.push(null);
+
+        return days;
+    }
+
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+    let calendarDays = $derived(getCalendarDays());
+    let calendarMonthYear = $derived(`${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`);
+
+    function handleDateClick(day: number | null) {
+        if (day === null) return;
+        selectedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+        showDateModal = true;
+    }
+
+    function isToday(day: number | null): boolean {
+        if (day === null) return false;
+        const today = new Date();
+        return (
+            day === today.getDate() &&
+            currentDate.getMonth() === today.getMonth() &&
+            currentDate.getFullYear() === today.getFullYear()
+        );
+    }
+
+    function closeDateModal() {
+        showDateModal = false;
+    }
+
+    function goToToday() {
+        currentDate = new Date();
+    }
 </script>
 
 <aside class="sidebar" class:collapsed>
@@ -84,6 +140,39 @@
 
     {#if !collapsed}
         <div class="sidebar-content">
+            <div class="sidebar-section">
+                <div class="calendar">
+                    <div class="calendar-header">
+                        <button class="cal-nav-btn" onclick={prevMonth} title="Previous month">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                        </button>
+                        <div class="cal-center">
+                            <span class="calendar-title">{calendarMonthYear}</span>
+                            <button class="today-btn" onclick={goToToday}>Today</button>
+                        </div>
+                        <button class="cal-nav-btn" onclick={nextMonth} title="Next month">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                    <div class="calendar-grid">
+                        {#each dayNames as d}
+                            <div class="cal-day-name">{d}</div>
+                        {/each}
+                        {#each calendarDays as day}
+                            <button
+                                class="cal-day"
+                                class:empty={day === null}
+                                class:today={isToday(day)}
+                                onclick={() => handleDateClick(day)}
+                                disabled={day === null}
+                            >
+                                {day ?? ''}
+                            </button>
+                        {/each}
+                    </div>
+                </div>
+            </div>
+
             <div class="sidebar-section">
                 <h3>Journals</h3>
                 <ul class="doc-list">
@@ -152,6 +241,22 @@
             />
             <div class="modal-actions">
                 <button class="modal-btn" onclick={createDocument}>OK</button>
+            </div>
+        </div>
+    </div>
+{/if}
+
+{#if showDateModal}
+    <div class="modal-overlay" role="presentation" onclick={closeDateModal}>
+        <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+            <h3>TBD Notes By Day</h3>
+            <p style="color: var(--text-secondary); font-size: 14px; margin: 8px 0 12px;">
+                {#if selectedDate}
+                    {selectedDate.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                {/if}
+            </p>
+            <div class="modal-actions">
+                <button class="modal-btn" onclick={closeDateModal}>OK</button>
             </div>
         </div>
     </div>
@@ -419,5 +524,111 @@
         background: var(--btn-primary-hover);
     }
 
-    
+    /* ── Calendar ── */
+    .calendar {
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        padding: 8px;
+        background: var(--bg-primary);
+    }
+
+    .calendar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+    }
+
+    .calendar-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .cal-center {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
+
+    .today-btn {
+        background: none;
+        border: 1px solid var(--border-light);
+        cursor: pointer;
+        padding: 2px 8px;
+        color: var(--text-secondary);
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        transition: background 0.1s, color 0.1s;
+    }
+
+    .today-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .cal-nav-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px;
+        color: var(--text-secondary);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .cal-nav-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 2px;
+    }
+
+    .cal-day-name {
+        text-align: center;
+        font-size: 10px;
+        color: var(--text-muted);
+        padding: 2px 0;
+        font-weight: 600;
+    }
+
+    .cal-day {
+        aspect-ratio: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        color: var(--text-primary);
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.1s;
+    }
+
+    .cal-day:hover:not(:disabled):not(.empty) {
+        background: var(--bg-hover);
+    }
+
+    .cal-day.today {
+        background: var(--accent-bg);
+        color: var(--accent-color);
+        font-weight: 600;
+    }
+
+    .cal-day.empty {
+        cursor: default;
+    }
+
+    .cal-day:disabled {
+        cursor: default;
+    }
 </style>
