@@ -14,7 +14,7 @@
     let showModal = $state(false);
     let newDocTitle = $state('');
     let collapsed = $state(false);
-    let showCalendar = $state(true);
+    let showCalendar = $state(false);
 
     let currentDate = $state(new Date());
 
