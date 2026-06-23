@@ -79,6 +79,7 @@ export class EditorSaveService {
                 mergedState,
             });
 
+            appStore.markDocumentHasContent(this.currentDoc.id);
             return this.currentDoc;
         } catch (error) {
             console.error('Failed to save document:', error);

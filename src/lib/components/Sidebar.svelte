@@ -19,6 +19,9 @@
     let currentDate = $state(new Date());
 
     let currentDocId = $derived($appStore.currentDocument?.id);
+    let currentJournalTitle = $derived(
+        $appStore.currentDocument?.doc_type === 'journal' ? $appStore.currentDocument.title : null
+    );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
@@ -153,6 +156,14 @@
         );
     }
 
+    function isSelectedDate(day: number | null): boolean {
+        if (day === null || !currentJournalTitle) return false;
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const dayStr = String(day).padStart(2, '0');
+        return currentJournalTitle === `${year}-${month}-${dayStr}`;
+    }
+
     function hasJournal(day: number | null): boolean {
         if (day === null) return false;
         const year = currentDate.getFullYear();
@@ -207,6 +218,7 @@
                                 class="cal-day"
                                 class:empty={day === null}
                                 class:today={isToday(day)}
+                                class:selected={isSelectedDate(day)}
                                 onclick={() => handleDateClick(day)}
                                 disabled={day === null}
                             >
@@ -684,7 +696,15 @@
     .cal-day.today {
         background: var(--accent-bg);
         color: var(--accent-color);
-        font-weight: 600;
+        font-weight: 700;
+    }
+
+    .cal-day.selected:not(.today) {
+        box-shadow: inset 0 0 0 1.5px var(--accent-color);
+    }
+
+    .cal-day.today.selected {
+        box-shadow: inset 0 0 0 2px var(--accent-color);
     }
 
     .cal-day.empty {
