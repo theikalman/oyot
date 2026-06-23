@@ -107,6 +107,8 @@ pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData,
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
          WHERE d.is_deleted = 0
+           AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+                OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))
          ORDER BY d.created_at DESC"
     ).map_err(|e| e.to_string())?;
 

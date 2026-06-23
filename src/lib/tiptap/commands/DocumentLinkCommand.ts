@@ -3,7 +3,7 @@ import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../
 import SlashSuggestionPopup from '../../components/SlashSuggestionPopup.svelte';
 import { mount } from 'svelte';
 import { get, writable, type Writable } from 'svelte/store';
-import { documents as documentsStore } from '../../stores/app';
+import { documents as documentsStore, currentDocument } from '../../stores/app';
 import type { DocumentSummary } from '../../types';
 import { exitSuggestion } from '@tiptap/suggestion';
 
@@ -111,11 +111,14 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
     }, 0);
 
     const docs = get(documentsStore);
-    popupItems = docs.map((doc: DocumentSummary) => ({
-        id: doc.id,
-        title: doc.title,
-        icon: '📄'
-    }));
+    const currentDocId = get(currentDocument)?.id;
+    popupItems = docs
+        .filter((doc: DocumentSummary) => doc.id !== currentDocId)
+        .map((doc: DocumentSummary) => ({
+            id: doc.id,
+            title: doc.title,
+            icon: '📄'
+        }));
 
     popupSelectedIndexStore = writable(0);
 
@@ -166,10 +169,11 @@ function closeDocumentPopup(): void {
 
 export function searchDocuments(query: string): DocumentSuggestionItem[] {
     const docs = get(documentsStore);
+    const currentDocId = get(currentDocument)?.id;
     const normalizedQuery = query.toLowerCase();
 
     return docs
-        .filter((doc: DocumentSummary) => doc.title.toLowerCase().includes(normalizedQuery))
+        .filter((doc: DocumentSummary) => doc.id !== currentDocId && doc.title.toLowerCase().includes(normalizedQuery))
         .map((doc: DocumentSummary) => ({
             id: doc.id,
             title: doc.title,
