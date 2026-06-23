@@ -15,6 +15,7 @@ export interface DocumentSummary {
     completed_todo_count: number;
     created_at: number;
     updated_at: number;
+    has_content: boolean;
 }
 
 export interface SearchResult {

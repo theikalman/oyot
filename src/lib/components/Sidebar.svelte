@@ -23,9 +23,10 @@
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
     function filterJournals(): DocumentSummary[] {
-        if (!searchInput.trim()) return [...journals].sort((a, b) => b.title.localeCompare(a.title));
+        const withContent = journals.filter((d: DocumentSummary) => d.has_content);
+        if (!searchInput.trim()) return [...withContent].sort((a, b) => b.title.localeCompare(a.title));
         const query = searchInput.toLowerCase();
-        return journals.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query)).sort((a, b) => b.title.localeCompare(a.title));
+        return withContent.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query)).sort((a, b) => b.title.localeCompare(a.title));
     }
 
     function filterNotes(): DocumentSummary[] {
@@ -51,7 +52,8 @@
                 todo_count: 0,
                 completed_todo_count: 0,
                 created_at: newDoc.created_at,
-                updated_at: newDoc.updated_at
+                updated_at: newDoc.updated_at,
+                has_content: false
             };
             appStore.addDocument(summary);
             appStore.setCurrentDocument(newDoc);
@@ -131,7 +133,8 @@
                 todo_count: 0,
                 completed_todo_count: 0,
                 created_at: newDoc.created_at,
-                updated_at: newDoc.updated_at
+                updated_at: newDoc.updated_at,
+                has_content: false
             };
             appStore.addDocument(summary);
             appStore.setCurrentDocument(newDoc);
@@ -148,6 +151,15 @@
             currentDate.getMonth() === today.getMonth() &&
             currentDate.getFullYear() === today.getFullYear()
         );
+    }
+
+    function hasJournal(day: number | null): boolean {
+        if (day === null) return false;
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const dayStr = String(day).padStart(2, '0');
+        const dateTitle = `${year}-${month}-${dayStr}`;
+        return journals.some((d: DocumentSummary) => d.title === dateTitle && d.has_content);
     }
 
     function goToToday() {
@@ -198,6 +210,9 @@
                                 onclick={() => handleDateClick(day)}
                                 disabled={day === null}
                             >
+                                {#if hasJournal(day)}
+                                    <span class="journal-dot"></span>
+                                {/if}
                                 {day ?? ''}
                             </button>
                         {/each}
@@ -638,6 +653,7 @@
 
     .cal-day {
         aspect-ratio: 1;
+        position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -648,6 +664,17 @@
         border-radius: 4px;
         cursor: pointer;
         transition: background 0.1s;
+    }
+
+    .journal-dot {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: #666;
+        pointer-events: none;
     }
 
     .cal-day:hover:not(:disabled):not(.empty) {

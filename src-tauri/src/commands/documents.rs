@@ -22,6 +22,7 @@ pub struct DocumentSummary {
     pub completed_todo_count: i32,
     pub created_at: i64,
     pub updated_at: i64,
+    pub has_content: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -64,6 +65,7 @@ pub fn get_today_date() -> String {
 }
 
 fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSummary> {
+    let has_content_int: i32 = row.get(7)?;
     Ok(DocumentSummary {
         id: row.get(0)?,
         doc_type: row.get(1)?,
@@ -72,6 +74,7 @@ fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSumm
         completed_todo_count: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        has_content: has_content_int != 0,
     })
 }
 
@@ -97,7 +100,10 @@ fn current_timestamp() -> i64 {
 pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
     let db = state.db.lock();
     let mut stmt = db.prepare(
-        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at
+        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
+                CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+                       OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
+                     THEN 1 ELSE 0 END as has_content
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
          WHERE d.is_deleted = 0
@@ -241,7 +247,10 @@ pub fn get_backlinks(
 ) -> Result<Vec<DocumentSummary>, String> {
     let db = state.db.lock();
     let mut stmt = db.prepare(
-        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at
+        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
+                CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+                       OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
+                     THEN 1 ELSE 0 END as has_content
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
          WHERE d.is_deleted = 0"

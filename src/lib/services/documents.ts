@@ -95,6 +95,7 @@ export function toDocumentSummary(doc: Document): DocumentSummary {
         todo_count: 0,
         completed_todo_count: 0,
         created_at: doc.created_at,
-        updated_at: doc.updated_at
+        updated_at: doc.updated_at,
+        has_content: false
     };
 }
