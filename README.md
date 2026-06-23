@@ -1,5 +1,7 @@
 # Oyot - Personal Knowledge Management System
 
+> The status of this project is in active development. IT IS NOT STABLE YET.
+
 A lightweight personal knowledge management app inspired by LogSeq, built with Tauri (Rust) and SvelteKit (TypeScript).
 
 ## Features
