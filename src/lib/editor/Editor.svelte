@@ -8,6 +8,7 @@
     import { Toolbar, EditorHeader } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
     import { createSaveService, type EditorSaveService } from './EditorSaveService';
+    import { loadDocument } from '$lib/services/documents';
     import * as Y from 'yjs';
 
     interface Props {
@@ -77,7 +78,19 @@
         }
     }
 
+    async function handleOpenDocument(event: Event) {
+        const { id } = (event as CustomEvent<{ id: string }>).detail;
+        if (!id) return;
+        try {
+            const doc = await loadDocument(id);
+            appStore.setCurrentDocument(doc);
+        } catch {
+            // loadDocument already shows a toast on error
+        }
+    }
+
     onMount(async () => {
+        window.addEventListener('openDocument', handleOpenDocument);
         unlistenSyncEvent = await listen('sync-received', async (event) => {
             const payload = event.payload as { doc_id?: string };
             if (payload?.doc_id && payload.doc_id === current?.id) {
@@ -87,6 +100,7 @@
     });
 
     onDestroy(() => {
+        window.removeEventListener('openDocument', handleOpenDocument);
         unlistenSyncEvent?.();
         if (saveService) {
             saveService.destroy();
