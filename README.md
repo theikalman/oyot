@@ -14,25 +14,20 @@ A lightweight personal knowledge management app inspired by LogSeq, built with T
 
 - Node.js 18+
 - Rust 1.75+
-- Homebrew (for macOS)
 
 ## Setup
 
-1. Install Rust (if not already installed):
-   ```bash
-   brew install rustup-init
-   rustup-init
-   ```
+If you have [Nix](https://nixos.org/download.html) installed, enter the development shell:
 
-2. Set up your PATH (add to your `~/.zshrc`):
-   ```bash
-   export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH"
-   ```
+```bash
+nix-shell
+```
 
-3. Install dependencies:
-   ```bash
-   npm install
-   ```
+This provides Node.js, Rust, Cargo, and all other build dependencies. Then install npm dependencies:
+
+```bash
+npm install
+```
 
 ## Development
 
