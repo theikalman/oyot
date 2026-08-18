@@ -61,6 +61,11 @@ async function handleAnswer(from: string, sdp: string): Promise<void> {
     const pc = pendingConnections.get(from);
     if (!pc) return;
 
+    if (pc.signalingState !== 'have-local-offer') {
+        console.warn(`[WebRtcSync] Ignoring answer from ${from}: connection is in '${pc.signalingState}' state, not 'have-local-offer'`);
+        return;
+    }
+
     try {
         await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
     } catch (e) {

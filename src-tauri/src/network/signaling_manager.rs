@@ -156,9 +156,11 @@ impl SignalingManager {
                                 if let Ok(announcement) = serde_json::from_str::<PeerAnnouncement>(&msg.payload) {
                                     let _ = app.emit("mqtt-peer-left", announcement.node_id);
                                 }
-                            } else {
+                            } else if msg.to.as_deref() == Some(node_id_clone.as_str()) {
                                 let uid = user_id_clone.lock().clone();
                                 Self::handle_message(&app, msg, uid).await;
+                            } else {
+                                eprintln!("[Signaling] Ignoring message not addressed to us (to: {:?})", msg.to);
                             }
                         }
                     }
