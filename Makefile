@@ -61,10 +61,11 @@ mqtt-logs:
 dev:
 	env RUST_BACKTRACE=full npm run tauri dev
 
+REPOPATH=/Volumes/YAKINWKSPC/repo
 install-android:
 	npm run tauri android build -- --target aarch64 --debug && \
 		cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
-		./apksigner sign --ks $(HOME)/repo/oyot/oyot.jks --ks-pass pass:ajiyakin123 --out /tmp/oyot-signed.apk $(HOME)/repo/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && \
+		./apksigner sign --ks $(REPOPATH)/oyot/oyot.jks --ks-pass pass:ajiyakin123 --out /tmp/oyot-signed.apk $(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && \
 		cd $(ANDROID_HOME)/platform-tools/ && \
 		adb install -r /tmp/oyot-signed.apk
 
