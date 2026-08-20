@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import {
         syncStore,
@@ -16,12 +16,10 @@
         type PairingState,
     } from '$lib/stores/sync';
     import {
-        initSync,
         sendPairRequest,
         respondToPairRequest,
         reconnectToPeer,
         disconnectPeer,
-        getCleanup,
     } from '$lib/services/WebRtcSyncService';
     import { IdentityCard } from '$lib/settings';
     import { SignalingConfig } from '$lib/settings';
@@ -39,12 +37,6 @@
     let copySuccess = $state(false);
 
     onMount(() => {
-        let cleanup: (() => void) | null = null;
-        (async () => {
-            await initSync();
-            cleanup = getCleanup();
-        })();
-
         const un1 = identity.subscribe(v => { localIdentity = v; });
         const un2 = signalingStatus.subscribe(v => { status = v; });
         const un4 = pairedDevices.subscribe(v => { paired = v; });
@@ -55,12 +47,7 @@
 
         return () => {
             un1(); un2(); un4(); un5(); un6(); un7(); un8();
-            if (cleanup) cleanup();
         };
-    });
-
-    onDestroy(() => {
-        getCleanup()();
     });
 
     async function copyNodeId() {

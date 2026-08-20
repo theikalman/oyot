@@ -1,9 +1,21 @@
 <script lang="ts">
+    import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
     import type { Snippet } from 'svelte';
+    import { initSync, getCleanup } from '$lib/services/WebRtcSyncService';
 
     let { children }: { children: Snippet } = $props();
+
+    // Owned here (not by the settings/sync page) so pairing connections survive navigation
+    // between routes - the layout is the only thing that stays mounted for the app's lifetime.
+    onMount(() => {
+        initSync();
+    });
+
+    onDestroy(() => {
+        getCleanup()();
+    });
 
     let currentPath = $derived($page.url.pathname);
 

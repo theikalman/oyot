@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
 import * as Y from 'yjs';
 import { syncStore, pendingPairRequest, type UserIdentity, type DevicePair } from '../stores/sync';
+import { currentDocument } from '../stores/app';
 
 interface RoomPeer {
     id: string;
@@ -10,15 +11,104 @@ interface RoomPeer {
 }
 
 interface RoomDoc {
-    ydoc: Y.Doc;
     peer: RoomPeer;
     roomId: string;
+    channel: RTCDataChannel | null;
 }
+
+type DataChannelMessage =
+    | { type: 'crdt-update'; docId: string; update: string }
+    | { type: 'crdt-state-request'; docId: string }
+    | { type: 'crdt-state-response'; docId: string; state: string };
 
 const roomDocs = new Map<string, RoomDoc>();
 const pendingConnections = new Map<string, RTCPeerConnection>();
 let identity: UserIdentity | null = null;
 let cleanupFns: UnlistenFn[] = [];
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+// Merges a raw Yjs update - either a live edit broadcast from a peer, or a full-state
+// catch-up snapshot - into the locally persisted document, regardless of whether that
+// document is currently open in the editor. Reuses save_yjs_update so it emits the same
+// 'sync-received' event the editor already listens for, applying the change live if the
+// doc happens to be open.
+async function mergeRemoteDocUpdate(docId: string, updateBytes: Uint8Array): Promise<void> {
+    try {
+        const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', { docId });
+        const ydoc = new Y.Doc();
+        if (stateResult.state && stateResult.state.length > 0) {
+            Y.applyUpdate(ydoc, new Uint8Array(stateResult.state));
+        }
+        Y.applyUpdate(ydoc, updateBytes);
+        const merged = Y.encodeStateAsUpdate(ydoc);
+        await invoke('save_yjs_update', {
+            docId,
+            update: Array.from(updateBytes),
+            mergedState: Array.from(merged),
+        });
+        console.log(`[WebRtcSync] Merged remote update for doc ${docId} (${updateBytes.length} bytes)`);
+    } catch (e) {
+        console.error(`[WebRtcSync] Failed to merge remote update for doc ${docId}:`, e);
+    }
+}
+
+async function respondToStateRequest(channel: RTCDataChannel, docId: string): Promise<void> {
+    try {
+        const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', { docId });
+        if (channel.readyState !== 'open') return;
+        const state = new Uint8Array(stateResult.state ?? []);
+        const msg: DataChannelMessage = { type: 'crdt-state-response', docId, state: bytesToBase64(state) };
+        channel.send(JSON.stringify(msg));
+    } catch (e) {
+        console.error(`[WebRtcSync] Failed to respond to state request for doc ${docId}:`, e);
+    }
+}
+
+function requestStateOnChannel(channel: RTCDataChannel, docId: string): void {
+    if (channel.readyState !== 'open') return;
+    const msg: DataChannelMessage = { type: 'crdt-state-request', docId };
+    channel.send(JSON.stringify(msg));
+}
+
+// Pushes a locally-made Yjs update to every connected peer's data channel. Called by the
+// editor's save path right after it persists the update locally, so live edits propagate
+// immediately to whichever devices are currently paired and connected.
+export function broadcastDocUpdate(docId: string, update: Uint8Array): void {
+    const msg: DataChannelMessage = { type: 'crdt-update', docId, update: bytesToBase64(update) };
+    const payload = JSON.stringify(msg);
+    for (const roomDoc of roomDocs.values()) {
+        if (roomDoc.channel?.readyState === 'open') {
+            roomDoc.channel.send(payload);
+        }
+    }
+}
+
+// Asks every connected peer for their full state of a document, e.g. when the editor opens
+// a doc while already paired and connected (the onopen catch-up only covers the doc that
+// was open at connection time).
+export function requestDocSync(docId: string): void {
+    for (const roomDoc of roomDocs.values()) {
+        if (roomDoc.channel) {
+            requestStateOnChannel(roomDoc.channel, docId);
+        }
+    }
+}
 
 async function calculateRoomId(userA: string, userB: string): Promise<string> {
     const ids = [userA, userB].sort();
@@ -127,8 +217,7 @@ async function createOfferConnection(peerNodeId: string, roomId: string, peerDis
     pendingConnections.set(peerNodeId, pc);
 
     const channel = pc.createDataChannel('yjs-sync', { ordered: true });
-    const ydoc = new Y.Doc();
-    roomDocs.set(roomId, { ydoc, peer: { id: peerNodeId, display_name: peerDisplayName }, roomId });
+    roomDocs.set(roomId, { peer: { id: peerNodeId, display_name: peerDisplayName }, roomId, channel });
 
     setupDataChannel(channel, roomId);
 
@@ -223,9 +312,10 @@ export async function acceptConnection(from: string, sdp: string, roomId: string
         const channel = event.channel;
         let roomDoc = roomDocs.get(roomId);
         if (!roomDoc) {
-            const ydoc = new Y.Doc();
-            roomDoc = { ydoc, peer: { id: from, display_name: displayName }, roomId };
+            roomDoc = { peer: { id: from, display_name: displayName }, roomId, channel };
             roomDocs.set(roomId, roomDoc);
+        } else {
+            roomDoc.channel = channel;
         }
         setupDataChannel(channel, roomId);
     };
@@ -336,23 +426,37 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
         return;
     }
 
-    const { ydoc, peer } = roomDoc;
-    channel.binaryType = 'arraybuffer';
+    const { peer } = roomDoc;
+    roomDoc.channel = channel;
     console.log(`[WebRtcSync] Setting up data channel '${channel.label}' for room ${roomId} (peer=${peer.id}, initial readyState=${channel.readyState})`);
 
     channel.onmessage = (event) => {
         try {
-            const update = new Uint8Array(event.data);
-            console.log(`[WebRtcSync] [room=${roomId}] Received Yjs update over data channel: ${update.byteLength} bytes`);
-            Y.applyUpdate(ydoc, update);
-            console.log(`[WebRtcSync] [room=${roomId}] Applied remote update to room-scoped Y.Doc (this doc is NOT the editor's document Y.Doc)`);
+            const msg = JSON.parse(event.data as string) as DataChannelMessage;
+            console.log(`[WebRtcSync] [room=${roomId}] Received '${msg.type}' for doc ${msg.docId}`);
+            switch (msg.type) {
+                case 'crdt-update':
+                    mergeRemoteDocUpdate(msg.docId, base64ToBytes(msg.update));
+                    break;
+                case 'crdt-state-request':
+                    respondToStateRequest(channel, msg.docId);
+                    break;
+                case 'crdt-state-response':
+                    mergeRemoteDocUpdate(msg.docId, base64ToBytes(msg.state));
+                    break;
+            }
         } catch (e) {
-            console.error(`[WebRtcSync] [room=${roomId}] Failed to apply update:`, e);
+            console.error(`[WebRtcSync] [room=${roomId}] Failed to handle data channel message:`, e);
         }
     };
 
     channel.onopen = () => {
         console.log(`[WebRtcSync] DataChannel open for room ${roomId} (peer=${peer.id})`);
+        const openDoc = get(currentDocument);
+        if (openDoc?.id) {
+            console.log(`[WebRtcSync] Requesting catch-up sync for currently open doc ${openDoc.id} from peer ${peer.id}`);
+            requestStateOnChannel(channel, openDoc.id);
+        }
     };
 
     channel.onclose = () => {
@@ -365,15 +469,6 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
         console.error(`[WebRtcSync] DataChannel error for room ${roomId} (peer=${peer.id}):`, event);
     };
 
-    ydoc.on('update', (update: Uint8Array) => {
-        console.log(`[WebRtcSync] [room=${roomId}] Local room-doc update (${update.byteLength} bytes), channel.readyState=${channel.readyState}`);
-        if (channel.readyState === 'open') {
-            channel.send(update);
-        } else {
-            console.warn(`[WebRtcSync] [room=${roomId}] Dropping outgoing update, data channel is '${channel.readyState}' not 'open'`);
-        }
-    });
-
     syncStore.addConnectedPeer({
         peer_node_id: peer.id,
         peer_display_name: peer.display_name,
@@ -383,24 +478,15 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
 
 function cleanupRoom(roomId: string): void {
     console.log(`[WebRtcSync] cleanupRoom(${roomId})`);
+    const roomDoc = roomDocs.get(roomId);
+    if (roomDoc) {
+        const pc = pendingConnections.get(roomDoc.peer.id);
+        if (pc) {
+            pc.close();
+            pendingConnections.delete(roomDoc.peer.id);
+        }
+    }
     roomDocs.delete(roomId);
-    pendingConnections.delete(roomId);
-}
-
-export function getYDocForRoom(roomId: string): Y.Doc | null {
-    return roomDocs.get(roomId)?.ydoc ?? null;
-}
-
-export function createYDoc(): Y.Doc {
-    return new Y.Doc();
-}
-
-export function applyYjsUpdate(ydoc: Y.Doc, update: Uint8Array): void {
-    Y.applyUpdate(ydoc, update);
-}
-
-export function exportYjsState(ydoc: Y.Doc): Uint8Array {
-    return Y.encodeStateAsUpdate(ydoc);
 }
 
 export function disconnectPeer(roomId: string): void {

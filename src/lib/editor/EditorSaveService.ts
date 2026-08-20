@@ -3,6 +3,7 @@ import * as Y from 'yjs';
 import { toasts } from '$lib/services/toast';
 import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';
+import { broadcastDocUpdate } from '$lib/services/WebRtcSyncService';
 
 export interface SaveServiceOptions {
     debounceMs?: number;
@@ -81,6 +82,8 @@ export class EditorSaveService {
                 mergedState,
             });
             console.log(`[EditorSaveService] [${docId}] save_yjs_update completed`);
+
+            broadcastDocUpdate(docId, snapshot);
 
             appStore.markDocumentHasContent(docId);
             return this.currentDoc;
