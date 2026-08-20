@@ -5,34 +5,36 @@
         syncStore,
         identity,
         signalingStatus,
-        onlinePeers,
         pairedDevices,
         connectedPeers,
-        pendingOffer,
-        type OnlinePeer,
+        pendingPairRequest,
+        pairingState,
         type UserIdentity,
         type DevicePair,
         type ConnectedPeer,
+        type PendingPairRequest,
+        type PairingState,
     } from '$lib/stores/sync';
     import {
         initSync,
-        requestConnection,
-        acceptConnection,
+        sendPairRequest,
+        respondToPairRequest,
+        reconnectToPeer,
         disconnectPeer,
         getCleanup,
     } from '$lib/services/WebRtcSyncService';
     import { IdentityCard } from '$lib/settings';
     import { SignalingConfig } from '$lib/settings';
-    import { DiscoveryList } from '$lib/settings';
+    import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
     import { PairingDialog } from '$lib/settings';
 
     let localIdentity: UserIdentity | null = $state(null);
     let status = $state<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
-    let peers = $state<OnlinePeer[]>([]);
     let paired = $state<DevicePair[]>([]);
     let connected = $state<ConnectedPeer[]>([]);
-    let pending: { from: string; sdp: string; room_id: string } | null = $state(null);
+    let pending: PendingPairRequest | null = $state(null);
+    let pairState = $state<PairingState>(null);
     let signalingUrl = $state<string | null>(null);
     let copySuccess = $state(false);
 
@@ -45,14 +47,14 @@
 
         const un1 = identity.subscribe(v => { localIdentity = v; });
         const un2 = signalingStatus.subscribe(v => { status = v; });
-        const un3 = onlinePeers.subscribe(v => { peers = v; });
         const un4 = pairedDevices.subscribe(v => { paired = v; });
         const un5 = connectedPeers.subscribe(v => { connected = v; });
-        const un6 = pendingOffer.subscribe(v => { pending = v; });
+        const un6 = pendingPairRequest.subscribe(v => { pending = v; });
         const un7 = syncStore.subscribe(s => { signalingUrl = s.signalingUrl; });
+        const un8 = pairingState.subscribe(v => { pairState = v; });
 
         return () => {
-            un1(); un2(); un3(); un4(); un5(); un6(); un7();
+            un1(); un2(); un4(); un5(); un6(); un7(); un8();
             if (cleanup) cleanup();
         };
     });
@@ -84,41 +86,24 @@
         }
     }
 
-    async function handleConnect(peer: OnlinePeer) {
-        const roomId = await requestConnection(peer);
-        if (!roomId) {
-            console.error('Failed to compute room id for peer, aborting pair', peer);
-            return;
-        }
-
-        await invoke('save_pair', {
-            peerNodeId: peer.id,
-            peerDisplayName: peer.display_name,
-            roomId,
-        });
-        const updated = await invoke<DevicePair[]>('list_paired_devices');
-        syncStore.setPairedDevices(updated);
+    async function handlePair(nodeId: string) {
+        await sendPairRequest(nodeId);
     }
 
-    async function handleAcceptOffer() {
-        if (!pending) return;
-        await acceptConnection(pending.from, pending.sdp, pending.room_id);
-        await invoke('save_pair', {
-            peerNodeId: pending.from,
-            peerDisplayName: 'Peer',
-            roomId: pending.room_id,
-        });
-        const updated = await invoke<DevicePair[]>('list_paired_devices');
-        syncStore.setPairedDevices(updated);
-        syncStore.setPendingOffer(null);
+    async function handleAcceptPairRequest() {
+        await respondToPairRequest(true);
     }
 
-    function handleDeclineOffer() {
-        syncStore.setPendingOffer(null);
+    async function handleDeclinePairRequest() {
+        await respondToPairRequest(false);
     }
 
     async function handleDisconnect(roomId: string) {
         disconnectPeer(roomId);
+    }
+
+    async function handleReconnect(pair: DevicePair) {
+        await reconnectToPeer(pair);
     }
 
     async function handleRemovePeer(peerNodeId: string) {
@@ -148,7 +133,7 @@
     />
 
     {#if isConnected}
-        <DiscoveryList {peers} onConnect={handleConnect} />
+        <PairDeviceForm pairingState={pairState} onPair={handlePair} />
     {/if}
 
     <ConnectedPeerList
@@ -156,14 +141,15 @@
         connectedPeers={connected}
         onDisconnect={handleDisconnect}
         onRemove={handleRemovePeer}
+        onReconnect={handleReconnect}
     />
 
     {#if pending}
         <PairingDialog
             from={pending.from}
-            displayName="Unknown Device"
-            onAccept={handleAcceptOffer}
-            onDecline={handleDeclineOffer}
+            displayName={pending.display_name}
+            onAccept={handleAcceptPairRequest}
+            onDecline={handleDeclinePairRequest}
         />
     {/if}
 </div>

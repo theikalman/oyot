@@ -12,9 +12,10 @@
         connectedPeers: ConnectedPeer[];
         onDisconnect: (roomId: string) => void;
         onRemove: (peerNodeId: string) => void;
+        onReconnect: (pair: { peer_node_id: string; peer_display_name: string; room_id: string; last_synchronized: number | null }) => void;
     }
 
-    let { pairedDevices, connectedPeers, onDisconnect, onRemove }: Props = $props();
+    let { pairedDevices, connectedPeers, onDisconnect, onRemove, onReconnect }: Props = $props();
 
     function isConnected(roomId: string): boolean {
         return connectedPeers.some(p => p.room_id === roomId);
@@ -48,6 +49,9 @@
                                 Disconnect
                             </button>
                         {:else}
+                            <button class="btn-secondary" onclick={() => onReconnect(pair)}>
+                                Reconnect
+                            </button>
                             <button class="btn-danger" onclick={() => onRemove(pair.peer_node_id)}>
                                 Remove
                             </button>
@@ -151,5 +155,17 @@
     }
     .btn-danger:hover {
         background: #fef2f2;
+    }
+    .btn-secondary {
+        padding: 6px 12px;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border-light);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .btn-secondary:hover {
+        background: var(--bg-hover);
     }
 </style>

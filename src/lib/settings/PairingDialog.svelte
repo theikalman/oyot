@@ -11,11 +11,11 @@
 
 <div class="modal-backdrop">
     <div class="modal">
-        <h3>Incoming Connection</h3>
+        <h3>Pairing Request</h3>
         <p class="message">
-            <strong>{displayName}</strong> wants to connect to this device.
+            <strong>{displayName}</strong> wants to pair with this device.
         </p>
-        <p class="hint">This device is requesting to sync documents with you.</p>
+        <p class="hint">Accepting will let this device sync documents with you from now on.</p>
         <div class="actions">
             <button class="btn-decline" onclick={onDecline}>Decline</button>
             <button class="btn-accept" onclick={onAccept}>Accept</button>
