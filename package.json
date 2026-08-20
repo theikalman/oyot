@@ -15,9 +15,11 @@
   "license": "MIT",
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-barcode-scanner": "^2.4.5",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-os": "^2.3.2",
     "@tiptap/core": "^3.23.5",
     "@tiptap/extension-bubble-menu": "^3.23.5",
     "@tiptap/extension-collaboration": "^3.23.5",

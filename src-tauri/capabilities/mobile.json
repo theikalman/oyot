@@ -11,6 +11,8 @@
     "fs:default",
     "fs:allow-read-text-file",
     "fs:allow-exists",
+    "os:default",
+    "barcode-scanner:default",
     {
       "identifier": "fs:scope",
       "allow": [

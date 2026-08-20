@@ -18,6 +18,8 @@
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>0.1.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is used to scan another device's Node ID QR code when pairing.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
