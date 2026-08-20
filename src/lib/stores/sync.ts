@@ -14,30 +14,31 @@ export interface DevicePair {
     last_synchronized: number | null;
 }
 
-export interface OnlinePeer {
-    id: string;
-    user_id: string;
-    display_name: string;
-}
-
 export interface ConnectedPeer {
     peer_node_id: string;
     peer_display_name: string;
     room_id: string;
 }
 
+export interface PendingPairRequest {
+    from: string;
+    user_id: string;
+    display_name: string;
+}
+
 export type SignalingStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
 
 function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
         signalingUrl: null as string | null,
         signalingStatus: 'disconnected' as SignalingStatus,
-        onlinePeers: [] as OnlinePeer[],
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         isSyncEnabled: true,
-        pendingOffer: null as { from: string; sdp: string; room_id: string } | null,
+        pendingPairRequest: null as PendingPairRequest | null,
+        pairingState: null as PairingState,
     });
 
     return {
@@ -46,7 +47,6 @@ function createSyncStore() {
         setIdentity: (identity: UserIdentity) => update(s => ({ ...s, identity })),
         setSignalingUrl: (url: string | null) => update(s => ({ ...s, signalingUrl: url })),
         setSignalingStatus: (status: SignalingStatus) => update(s => ({ ...s, signalingStatus: status })),
-        setOnlinePeers: (peers: OnlinePeer[]) => update(s => ({ ...s, onlinePeers: peers })),
         setPairedDevices: (devices: DevicePair[]) => update(s => ({ ...s, pairedDevices: devices })),
         setConnectedPeers: (peers: ConnectedPeer[]) => update(s => ({ ...s, connectedPeers: peers })),
         addConnectedPeer: (peer: ConnectedPeer) => update(s => ({
@@ -57,27 +57,20 @@ function createSyncStore() {
             ...s,
             connectedPeers: s.connectedPeers.filter(p => p.room_id !== roomId)
         })),
-        setPendingOffer: (offer: { from: string; sdp: string; room_id: string } | null) =>
-            update(s => ({ ...s, pendingOffer: offer })),
+        setPendingPairRequest: (req: PendingPairRequest | null) =>
+            update(s => ({ ...s, pendingPairRequest: req })),
+        setPairingState: (state: PairingState) => update(s => ({ ...s, pairingState: state })),
         setSyncEnabled: (enabled: boolean) => update(s => ({ ...s, isSyncEnabled: enabled })),
-        updateOnlinePeer: (peer: OnlinePeer) => update(s => ({
-            ...s,
-            onlinePeers: [...s.onlinePeers.filter(p => p.id !== peer.id), peer]
-        })),
-        removeOnlinePeer: (peerId: string) => update(s => ({
-            ...s,
-            onlinePeers: s.onlinePeers.filter(p => p.id !== peerId)
-        })),
     };
 }
 
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, $s => $s.identity);
 export const signalingStatus = derived(syncStore, $s => $s.signalingStatus);
-export const onlinePeers = derived(syncStore, $s => $s.onlinePeers);
 export const pairedDevices = derived(syncStore, $s => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, $s => $s.connectedPeers);
-export const pendingOffer = derived(syncStore, $s => $s.pendingOffer);
+export const pendingPairRequest = derived(syncStore, $s => $s.pendingPairRequest);
+export const pairingState = derived(syncStore, $s => $s.pairingState);
 
 export function formatLastSync(timestamp: number | null): string {
     if (!timestamp) return 'Never';
