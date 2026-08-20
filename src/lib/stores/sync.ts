@@ -69,6 +69,7 @@ export const identity = derived(syncStore, $s => $s.identity);
 export const signalingStatus = derived(syncStore, $s => $s.signalingStatus);
 export const pairedDevices = derived(syncStore, $s => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, $s => $s.connectedPeers);
+export const connectedPeerIds = derived(connectedPeers, $peers => new Set($peers.map(p => p.peer_node_id)));
 export const pendingPairRequest = derived(syncStore, $s => $s.pendingPairRequest);
 export const pairingState = derived(syncStore, $s => $s.pairingState);
 

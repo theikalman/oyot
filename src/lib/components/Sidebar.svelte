@@ -1,5 +1,6 @@
 <script lang="ts">
     import { appStore, documents } from '../stores/app';
+    import { pairedDevices, connectedPeerIds } from '../stores/sync';
     import type { Document, DocumentSummary } from '../types';
     import { invoke } from "@tauri-apps/api/core";
     import { goto } from "$app/navigation";
@@ -75,6 +76,10 @@
 
     function goToSettings() {
         goto('/settings');
+    }
+
+    function goToSync() {
+        goto('/settings/sync');
     }
 
     function prevMonth() {
@@ -267,6 +272,28 @@
                         </li>
                     {/each}
                 </ul>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>
+                    Connected Devices
+                    <button class="cal-toggle-btn" onclick={goToSync} title="Manage devices">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
+                </h3>
+                {#if $pairedDevices.length === 0}
+                    <p class="empty-hint">No paired devices yet</p>
+                {:else}
+                    <ul class="device-list">
+                        {#each $pairedDevices as device}
+                            <li class="device-item">
+                                <span class="device-dot" class:online={$connectedPeerIds.has(device.peer_node_id)}></span>
+                                <span class="device-name">{device.peer_display_name}</span>
+                                <span class="device-status">{$connectedPeerIds.has(device.peer_node_id) ? 'Online' : 'Offline'}</span>
+                            </li>
+                        {/each}
+                    </ul>
+                {/if}
             </div>
         </div>
 
@@ -489,6 +516,55 @@
 
     .cal-toggle-btn:hover {
         color: var(--text-primary);
+    }
+
+    .empty-hint {
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-muted);
+    }
+
+    .device-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .device-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-size: 14px;
+        color: var(--text-primary);
+    }
+
+    .device-dot {
+        flex-shrink: 0;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-muted);
+    }
+
+    .device-dot.online {
+        background: #22c55e;
+        box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+    }
+
+    .device-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .device-status {
+        flex-shrink: 0;
+        font-size: 11px;
+        color: var(--text-muted);
     }
 
     /* ── Sidebar footer ── */
