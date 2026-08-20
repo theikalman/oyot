@@ -15,9 +15,7 @@ pub fn get_or_create_identity(db: &rusqlite::Connection) -> Result<UserIdentity,
 
     let user_id = uuid::Uuid::new_v4().to_string();
     let node_id = uuid::Uuid::new_v4().to_string();
-    let display_name = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "My Device".to_string());
+    let display_name = default_display_name(&node_id);
 
     db.execute(
         "INSERT INTO identity (user_id, node_id, display_name) VALUES (?, ?, ?)",
@@ -30,6 +28,18 @@ pub fn get_or_create_identity(db: &rusqlite::Connection) -> Result<UserIdentity,
         node_id,
         display_name,
     })
+}
+
+fn default_display_name(node_id: &str) -> String {
+    let hostname = hostname::get()
+        .ok()
+        .map(|h| h.to_string_lossy().to_string())
+        .filter(|h| !h.is_empty() && h != "localhost" && h != "localhost.localdomain");
+
+    // Android's gethostname() (what the `hostname` crate calls under the hood)
+    // reliably returns "localhost" rather than a real device name, since the
+    // real name lives in Settings.Global.DEVICE_NAME, not the POSIX hostname.
+    hostname.unwrap_or_else(|| format!("Device-{}", &node_id[..8]))
 }
 
 fn load_identity(db: &rusqlite::Connection) -> Result<Option<UserIdentity>, String> {

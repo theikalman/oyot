@@ -101,10 +101,10 @@ function handleIceCandidate(from: string, candidate: unknown): void {
     }
 }
 
-export async function requestConnection(peer: OnlinePeer): Promise<void> {
+export async function requestConnection(peer: OnlinePeer): Promise<string> {
     if (!identity) {
         console.warn('[WebRtcSync] requestConnection() called before identity was loaded, aborting');
-        return;
+        return '';
     }
 
     const roomId = await calculateRoomId(identity.user_id, peer.user_id);
@@ -171,6 +171,8 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
         sdp: JSON.stringify(offer),
         from: identity!.node_id,
     }).catch((e) => console.error(`[WebRtcSync] [${peer.id}] Failed to publish offer:`, e));
+
+    return roomId;
 }
 
 export async function acceptConnection(from: string, sdp: string, roomId: string): Promise<void> {

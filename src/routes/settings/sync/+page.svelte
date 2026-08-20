@@ -85,17 +85,16 @@
     }
 
     async function handleConnect(peer: OnlinePeer) {
-
-        console.log("peer", peer);
-
-        await requestConnection(peer);
-
-        console.log("requestConnection done");
+        const roomId = await requestConnection(peer);
+        if (!roomId) {
+            console.error('Failed to compute room id for peer, aborting pair', peer);
+            return;
+        }
 
         await invoke('save_pair', {
             peerNodeId: peer.id,
             peerDisplayName: peer.display_name,
-            roomId: '',
+            roomId,
         });
         const updated = await invoke<DevicePair[]>('list_paired_devices');
         syncStore.setPairedDevices(updated);
