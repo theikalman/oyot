@@ -23,14 +23,43 @@ pub fn mqtt_disconnect(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn mqtt_publish_pair_request(
+    state: State<'_, AppState>,
+    peer_node_id: String,
+) -> Result<(), String> {
+    eprintln!("[cmd] mqtt_publish_pair_request peer_node_id={}", peer_node_id);
+    state.signaling_manager.publish_pair_request(&peer_node_id).await
+}
+
+#[tauri::command]
+pub async fn mqtt_accept_pair_request(
+    state: State<'_, AppState>,
+    peer_node_id: String,
+    peer_user_id: String,
+    peer_display_name: String,
+) -> Result<(), String> {
+    eprintln!("[cmd] mqtt_accept_pair_request peer_node_id={}", peer_node_id);
+    state.signaling_manager.authorize_peer(&peer_node_id, &peer_user_id, &peer_display_name);
+    state.signaling_manager.publish_pair_response(&peer_node_id, true).await
+}
+
+#[tauri::command]
+pub async fn mqtt_decline_pair_request(
+    state: State<'_, AppState>,
+    peer_node_id: String,
+) -> Result<(), String> {
+    eprintln!("[cmd] mqtt_decline_pair_request peer_node_id={}", peer_node_id);
+    state.signaling_manager.publish_pair_response(&peer_node_id, false).await
+}
+
+#[tauri::command]
 pub async fn mqtt_publish_offer(
     state: State<'_, AppState>,
     peer_id: String,
     sdp: String,
-    from: String,
 ) -> Result<(), String> {
-    eprintln!("[cmd] mqtt_publish_offer peer_id={} from={}", peer_id, from);
-    state.signaling_manager.publish_offer(&peer_id, &sdp, &from).await
+    eprintln!("[cmd] mqtt_publish_offer peer_id={}", peer_id);
+    state.signaling_manager.publish_offer(&peer_id, &sdp).await
 }
 
 #[tauri::command]
@@ -38,10 +67,9 @@ pub async fn mqtt_publish_answer(
     state: State<'_, AppState>,
     peer_id: String,
     sdp: String,
-    from: String,
 ) -> Result<(), String> {
-    eprintln!("[cmd] mqtt_publish_answer peer_id={} from={}", peer_id, from);
-    state.signaling_manager.publish_answer(&peer_id, &sdp, &from).await
+    eprintln!("[cmd] mqtt_publish_answer peer_id={}", peer_id);
+    state.signaling_manager.publish_answer(&peer_id, &sdp).await
 }
 
 #[tauri::command]
@@ -49,10 +77,9 @@ pub async fn mqtt_publish_ice_candidate(
     state: State<'_, AppState>,
     peer_id: String,
     candidate: String,
-    from: String,
 ) -> Result<(), String> {
-    eprintln!("[cmd] mqtt_publish_ice_candidate peer_id={} from={}", peer_id, from);
-    state.signaling_manager.publish_ice_candidate(&peer_id, &candidate, &from).await
+    eprintln!("[cmd] mqtt_publish_ice_candidate peer_id={}", peer_id);
+    state.signaling_manager.publish_ice_candidate(&peer_id, &candidate).await
 }
 
 #[tauri::command]

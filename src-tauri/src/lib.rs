@@ -249,11 +249,13 @@ pub fn run() {
             set_sync_enabled,
             mqtt_connect,
             mqtt_disconnect,
+            mqtt_publish_pair_request,
+            mqtt_accept_pair_request,
+            mqtt_decline_pair_request,
             mqtt_publish_offer,
             mqtt_publish_answer,
             mqtt_publish_ice_candidate,
             get_mqtt_status,
-            get_online_peers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

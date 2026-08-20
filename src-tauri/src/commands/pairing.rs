@@ -1,14 +1,6 @@
 use crate::db::AppState;
 use crate::identity::UserIdentity;
 use crate::pairing::{self, DevicePair};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OnlinePeer {
-    pub id: String,
-    pub user_id: String,
-    pub display_name: String,
-}
 
 #[tauri::command]
 pub fn get_identity(state: tauri::State<'_, AppState>) -> Result<UserIdentity, String> {
@@ -93,9 +85,4 @@ pub fn update_pair_sync_time(
 #[tauri::command]
 pub fn get_signaling_status(state: tauri::State<'_, AppState>) -> bool {
     state.signaling_manager.is_connected()
-}
-
-#[tauri::command]
-pub fn get_online_peers(_state: tauri::State<'_, AppState>) -> Result<Vec<OnlinePeer>, String> {
-    Ok(vec![])
 }

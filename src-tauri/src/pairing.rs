@@ -74,6 +74,30 @@ pub fn update_last_sync(db: &rusqlite::Connection, room_id: &str) -> Result<(), 
     Ok(())
 }
 
+pub fn get_pair_by_node_id(
+    db: &rusqlite::Connection,
+    user_id: &str,
+    peer_node_id: &str,
+) -> Result<Option<DevicePair>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized
+             FROM device_pairs WHERE user_id = ? AND peer_node_id = ?",
+        )
+        .map_err(|e| e.to_string())?;
+    let pair = stmt
+        .query_row(params![user_id, peer_node_id], |row| {
+            Ok(DevicePair {
+                peer_node_id: row.get(0)?,
+                peer_display_name: row.get(1)?,
+                room_id: row.get(2)?,
+                last_synchronized: row.get(3).ok(),
+            })
+        })
+        .ok();
+    Ok(pair)
+}
+
 #[allow(dead_code)]
 pub fn get_pair_by_room(
     db: &rusqlite::Connection,

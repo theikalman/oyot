@@ -1,57 +1,53 @@
+use crate::db::AppState;
 use crate::network::mqtt_client::{MqttEvent, MqttSignalingClient, SignalingMessage};
+use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
-use tokio::sync::{broadcast, mpsc};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerAnnouncement {
-    pub user_id: String,
-    pub node_id: String,
-    pub display_name: String,
-}
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub enum SignalingEvent {
-    Offer { from: String, sdp: String, room_id: String },
-    Answer { from: String, sdp: String },
-    IceCandidate { from: String, candidate: String },
-    PeerJoined { peer_id: String, user_id: String, display_name: String },
-    PeerLeft { peer_id: String },
+struct PeerContext {
+    user_id: String,
+    display_name: String,
 }
 
-enum PublishRequest {
-    Offer { topic: String, payload: Vec<u8> },
-    Answer { topic: String, payload: Vec<u8> },
-    IceCandidate { topic: String, payload: Vec<u8> },
-    PeerJoined { topic: String, payload: Vec<u8> },
-    PeerLeft { topic: String, payload: Vec<u8> },
+#[derive(Debug, Serialize, Deserialize)]
+struct PairPayload {
+    user_id: String,
+    display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted: Option<bool>,
 }
 
 pub struct SignalingManager {
     mqtt_client: Arc<ParkingMutex<Option<MqttSignalingClient>>>,
-    event_tx: broadcast::Sender<SignalingEvent>,
     node_id: Arc<ParkingMutex<String>>,
     user_id: Arc<ParkingMutex<String>>,
     display_name: Arc<ParkingMutex<String>>,
     app_handle: Option<AppHandle>,
-    publish_tx: Arc<ParkingMutex<Option<mpsc::Sender<PublishRequest>>>>,
+    publish_tx: Arc<ParkingMutex<Option<mpsc::Sender<(String, Vec<u8>)>>>>,
+    // Peers we've explicitly agreed to pair with during this session (accepted a
+    // pair-request from them, or had our pair-request accepted). Consulted when an
+    // "offer" arrives from a node_id that isn't already in the persisted device_pairs
+    // table, so unsolicited offers from unpaired/unauthorized nodes get dropped instead
+    // of silently auto-accepted.
+    authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
 }
 
 impl SignalingManager {
     pub fn new(app_handle: Option<AppHandle>) -> Self {
-        let (event_tx, _) = broadcast::channel(100);
         Self {
             mqtt_client: Arc::new(ParkingMutex::new(None)),
-            event_tx,
             node_id: Arc::new(ParkingMutex::new(String::new())),
             user_id: Arc::new(ParkingMutex::new(String::new())),
             display_name: Arc::new(ParkingMutex::new(String::new())),
             app_handle,
             publish_tx: Arc::new(ParkingMutex::new(None)),
+            authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
         }
     }
 
@@ -81,32 +77,38 @@ impl SignalingManager {
         self.display_name.lock().clone()
     }
 
+    /// Records that we've agreed to pair with `node_id` this session, so a subsequent
+    /// "offer" from them is trusted instead of dropped. Must be called before publishing
+    /// an accepting pair-response, so the offer that follows finds this entry.
+    pub fn authorize_peer(&self, node_id: &str, user_id: &str, display_name: &str) {
+        self.authorized_peers.lock().insert(
+            node_id.to_string(),
+            PeerContext {
+                user_id: user_id.to_string(),
+                display_name: display_name.to_string(),
+            },
+        );
+    }
+
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
         eprintln!("[Signaling] connect() broker_url={} node_id={}", broker_url, node_id);
         let client = MqttSignalingClient::new(broker_url, node_id).await?;
 
-        client.subscribe(&format!("signaling/{}", node_id)).await?;
-        client.subscribe("signaling/global").await?;
-        client.subscribe("signaling/+/offer").await?;
-        client.subscribe("signaling/+/answer").await?;
-        client.subscribe("signaling/+/ice-candidate").await?;
-        client.subscribe("signaling/online").await?;
-        eprintln!("[Signaling] Subscribed to all signaling topics for node_id={}", node_id);
+        // Only ever subscribe to our own node-scoped topics. Nothing broadcasts presence
+        // and nothing is discoverable except by a device that already knows our node_id
+        // out-of-band (QR/manual entry).
+        for suffix in ["pair-request", "pair-response", "offer", "answer", "ice-candidate"] {
+            client.subscribe(&format!("signaling/{}/{}", node_id, suffix)).await?;
+        }
+        eprintln!("[Signaling] Subscribed to node-scoped signaling topics for node_id={}", node_id);
 
-        let (publish_tx, mut publish_rx) = mpsc::channel::<PublishRequest>(100);
+        let (publish_tx, mut publish_rx) = mpsc::channel::<(String, Vec<u8>)>(100);
         let mqtt_client_clone = self.mqtt_client.clone();
-        
+
         tokio::spawn(async move {
-            while let Some(req) = publish_rx.recv().await {
+            while let Some((topic, payload)) = publish_rx.recv().await {
                 let client_opt = mqtt_client_clone.lock().clone();
                 if let Some(c) = client_opt {
-                    let (topic, payload) = match req {
-                        PublishRequest::Offer { topic, payload } => (topic, payload),
-                        PublishRequest::Answer { topic, payload } => (topic, payload),
-                        PublishRequest::IceCandidate { topic, payload } => (topic, payload),
-                        PublishRequest::PeerJoined { topic, payload } => (topic, payload),
-                        PublishRequest::PeerLeft { topic, payload } => (topic, payload),
-                    };
                     if let Err(e) = c.publish(&topic, &payload).await {
                         eprintln!("MQTT publish error: {}", e);
                     }
@@ -121,8 +123,7 @@ impl SignalingManager {
 
         let user_id = self.user_id.clone();
         let node_id_str = node_id.to_string();
-        let display_name = self.display_name.lock().clone();
-        let publish_tx = self.publish_tx.lock().clone();
+        let authorized_peers = self.authorized_peers.clone();
 
         if let Some(app_handle) = &self.app_handle {
             let app = app_handle.clone();
@@ -140,63 +141,13 @@ impl SignalingManager {
                         }
                         MqttEvent::Message { topic, msg } => {
                             eprintln!("[Signaling] Received MQTT message on topic '{}': {:?}", topic, msg.msg_type);
-                            if topic == "signaling/online" && msg.msg_type == "peer-joined" {
-                                eprintln!("[Signaling] Processing peer-joined message: {}", msg.payload);
-                                if let Ok(announcement) = serde_json::from_str::<PeerAnnouncement>(&msg.payload) {
-                                    eprintln!("[Signaling] Peer joined: {} ({})", announcement.display_name, announcement.node_id);
-                                    if announcement.node_id != node_id_clone {
-                                        let _ = app.emit("mqtt-peer-joined", serde_json::json!({
-                                            "peer_id": announcement.node_id,
-                                            "user_id": announcement.user_id,
-                                            "display_name": announcement.display_name
-                                        }));
-                                    }
-                                } else {
-                                    eprintln!("[Signaling] Failed to parse peer announcement: {:?}", msg.payload);
-                                }
-                            } else if topic == "signaling/online" && msg.msg_type == "peer-left" {
-                                if let Ok(announcement) = serde_json::from_str::<PeerAnnouncement>(&msg.payload) {
-                                    let _ = app.emit("mqtt-peer-left", announcement.node_id);
-                                }
-                            } else if msg.to.as_deref() == Some(node_id_clone.as_str()) {
+                            if msg.to.as_deref() == Some(node_id_clone.as_str()) {
                                 let uid = user_id_clone.lock().clone();
-                                Self::handle_message(&app, msg, uid).await;
+                                Self::handle_message(&app, msg, uid, authorized_peers.clone()).await;
                             } else {
                                 eprintln!("[Signaling] Ignoring message not addressed to us (to: {:?})", msg.to);
                             }
                         }
-                    }
-                }
-            });
-
-            let uid_for_publish = user_id.clone();
-            let node_id_for_publish = node_id_str.clone();
-            let display_name_for_publish = display_name.clone();
-            let publish_tx_clone = publish_tx.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                eprintln!("[Signaling] Publishing peer joined for {}...", node_id_for_publish);
-                let uid_val = uid_for_publish.lock().clone();
-                if uid_val.is_empty() || node_id_for_publish.is_empty() {
-                    eprintln!("[Signaling] Skipping peer joined publish - identity not set");
-                    return;
-                }
-                let announcement = PeerAnnouncement {
-                    user_id: uid_val,
-                    node_id: node_id_for_publish.clone(),
-                    display_name: display_name_for_publish.clone(),
-                };
-                let msg = SignalingMessage {
-                    from: node_id_for_publish.clone(),
-                    to: None,
-                    msg_type: "peer-joined".to_string(),
-                    payload: serde_json::to_string(&announcement).unwrap_or_default(),
-                };
-                let topic = "signaling/online".to_string();
-                let payload = serde_json::to_vec(&msg).unwrap_or_default();
-                if let Some(tx) = publish_tx_clone {
-                    if let Err(e) = tx.send(PublishRequest::PeerJoined { topic, payload }).await {
-                        eprintln!("[Signaling] Failed to send peer joined: {}", e);
                     }
                 }
             });
@@ -205,18 +156,41 @@ impl SignalingManager {
         Ok(())
     }
 
-    async fn handle_message(app: &AppHandle, msg: SignalingMessage, our_user_id: String) {
+    async fn handle_message(
+        app: &AppHandle,
+        msg: SignalingMessage,
+        our_user_id: String,
+        authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
+    ) {
         eprintln!("[Signaling] handle_message() type={} from={} our_user_id={}", msg.msg_type, msg.from, our_user_id);
         match msg.msg_type.as_str() {
+            "pair-request" => {
+                match serde_json::from_str::<PairPayload>(&msg.payload) {
+                    Ok(req) => {
+                        let _ = app.emit("mqtt-pair-request-received", serde_json::json!({
+                            "from": msg.from,
+                            "user_id": req.user_id,
+                            "display_name": req.display_name,
+                        }));
+                    }
+                    Err(e) => eprintln!("[Signaling] Failed to parse pair-request payload: {}", e),
+                }
+            }
+            "pair-response" => {
+                match serde_json::from_str::<PairPayload>(&msg.payload) {
+                    Ok(resp) => {
+                        let _ = app.emit("mqtt-pair-response-received", serde_json::json!({
+                            "from": msg.from,
+                            "user_id": resp.user_id,
+                            "display_name": resp.display_name,
+                            "accepted": resp.accepted.unwrap_or(false),
+                        }));
+                    }
+                    Err(e) => eprintln!("[Signaling] Failed to parse pair-response payload: {}", e),
+                }
+            }
             "offer" => {
-                let room_id = derive_room_id(&our_user_id, &msg.from);
-                eprintln!("[Signaling] Emitting mqtt-offer-received from={} room_id={}", msg.from, room_id);
-                let payload = serde_json::json!({
-                    "from": msg.from,
-                    "sdp": msg.payload,
-                    "room_id": room_id,
-                });
-                let _ = app.emit("mqtt-offer-received", payload);
+                Self::handle_offer(app, msg, our_user_id, authorized_peers).await;
             }
             "answer" => {
                 eprintln!("[Signaling] Emitting mqtt-answer-received from={}", msg.from);
@@ -240,86 +214,100 @@ impl SignalingManager {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn publish_peer_joined(&self) -> Result<(), String> {
-        let user_id = self.user_id.lock().clone();
-        let node_id = self.node_id.lock().clone();
-        let display_name = self.display_name.lock().clone();
-
-        if user_id.is_empty() || node_id.is_empty() {
-            return Ok(());
-        }
-
-        let announcement = PeerAnnouncement {
-            user_id,
-            node_id: node_id.clone(),
-            display_name,
+    /// Resolves an incoming offer's sender against two trust sources, in order:
+    /// 1. Already-persisted device_pairs (a previously completed pairing reconnecting,
+    ///    e.g. after an app restart) - reuses the stored room_id directly.
+    /// 2. In-memory authorized_peers (a pairing handshake accepted earlier this session)
+    ///    - derives room_id from the two real user_ids exchanged during that handshake.
+    /// If neither matches, the offer is from a node we never agreed to pair with and is
+    /// dropped rather than auto-accepted.
+    async fn handle_offer(
+        app: &AppHandle,
+        msg: SignalingMessage,
+        our_user_id: String,
+        authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
+    ) {
+        let persisted = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock();
+            pairing::get_pair_by_node_id(&db, &our_user_id, &msg.from).unwrap_or(None)
         };
 
-        let msg = SignalingMessage {
-            from: node_id,
-            to: None,
-            msg_type: "peer-joined".to_string(),
-            payload: serde_json::to_string(&announcement).map_err(|e| e.to_string())?,
+        let (room_id, display_name) = if let Some(pair) = persisted {
+            eprintln!("[Signaling] Offer from already-paired node {} (trusted reconnect)", msg.from);
+            (pair.room_id, pair.peer_display_name)
+        } else if let Some(ctx) = authorized_peers.lock().get(&msg.from).cloned() {
+            eprintln!("[Signaling] Offer from session-authorized node {}", msg.from);
+            (derive_room_id(&our_user_id, &ctx.user_id), ctx.display_name)
+        } else {
+            eprintln!("[Signaling] Rejecting unsolicited offer from unauthorized node {}", msg.from);
+            return;
         };
 
-        let topic = "signaling/online".to_string();
-        let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        
-        let tx_opt = self.publish_tx.lock().clone();
-        if let Some(tx) = tx_opt {
-            tx.send(PublishRequest::PeerJoined { topic, payload }).await.map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-
-    pub async fn publish_peer_left(&self) -> Result<(), String> {
-        let user_id = self.user_id.lock().clone();
-        let node_id = self.node_id.lock().clone();
-        let display_name = self.display_name.lock().clone();
-
-        if user_id.is_empty() || node_id.is_empty() {
-            return Ok(());
-        }
-
-        let announcement = PeerAnnouncement {
-            user_id,
-            node_id: node_id.clone(),
-            display_name,
-        };
-
-        let msg = SignalingMessage {
-            from: node_id.clone(),
-            to: None,
-            msg_type: "peer-left".to_string(),
-            payload: serde_json::to_string(&announcement).map_err(|e| e.to_string())?,
-        };
-
-        let topic = "signaling/online".to_string();
-        let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        
-        let tx_opt = self.publish_tx.lock().clone();
-        if let Some(tx) = tx_opt {
-            tx.send(PublishRequest::PeerLeft { topic, payload }).await.map_err(|e| e.to_string())?;
-        }
-        Ok(())
+        eprintln!("[Signaling] Emitting mqtt-offer-received from={} room_id={}", msg.from, room_id);
+        let payload = serde_json::json!({
+            "from": msg.from,
+            "sdp": msg.payload,
+            "room_id": room_id,
+            "display_name": display_name,
+        });
+        let _ = app.emit("mqtt-offer-received", payload);
     }
 
     pub fn disconnect(&self) {
-        eprintln!("[Signaling] disconnect() called, publishing peer-left and tearing down MQTT client");
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let _ = self.publish_peer_left().await;
-        });
+        eprintln!("[Signaling] disconnect() called, tearing down MQTT client");
         *self.mqtt_client.lock() = None;
         *self.publish_tx.lock() = None;
+        self.authorized_peers.lock().clear();
     }
 
     pub fn is_connected(&self) -> bool {
         self.mqtt_client.lock().is_some()
     }
 
-    pub async fn publish_offer(&self, peer_id: &str, sdp: &str, _from: &str) -> Result<(), String> {
+    async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
+        let tx_opt = self.publish_tx.lock().clone();
+        match tx_opt {
+            Some(tx) => tx.send((topic, payload)).await.map_err(|e| e.to_string()),
+            None => Err("MQTT not connected".to_string()),
+        }
+    }
+
+    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<(), String> {
+        let node_id = self.node_id.lock().clone();
+        let user_id = self.user_id.lock().clone();
+        let display_name = self.display_name.lock().clone();
+        eprintln!("[Signaling] publish_pair_request() to peer_id={}", peer_id);
+        let payload = PairPayload { user_id, display_name, accepted: None };
+        let msg = SignalingMessage {
+            from: node_id,
+            to: Some(peer_id.to_string()),
+            msg_type: "pair-request".to_string(),
+            payload: serde_json::to_string(&payload).map_err(|e| e.to_string())?,
+        };
+        let topic = format!("signaling/{}/pair-request", peer_id);
+        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+        self.send_publish(topic, bytes).await
+    }
+
+    pub async fn publish_pair_response(&self, peer_id: &str, accepted: bool) -> Result<(), String> {
+        let node_id = self.node_id.lock().clone();
+        let user_id = self.user_id.lock().clone();
+        let display_name = self.display_name.lock().clone();
+        eprintln!("[Signaling] publish_pair_response() to peer_id={} accepted={}", peer_id, accepted);
+        let payload = PairPayload { user_id, display_name, accepted: Some(accepted) };
+        let msg = SignalingMessage {
+            from: node_id,
+            to: Some(peer_id.to_string()),
+            msg_type: "pair-response".to_string(),
+            payload: serde_json::to_string(&payload).map_err(|e| e.to_string())?,
+        };
+        let topic = format!("signaling/{}/pair-response", peer_id);
+        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+        self.send_publish(topic, bytes).await
+    }
+
+    pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
         eprintln!("[Signaling] publish_offer() to peer_id={} from node_id={}", peer_id, node_id);
         let msg = SignalingMessage {
@@ -329,18 +317,11 @@ impl SignalingManager {
             payload: sdp.to_string(),
         };
         let topic = format!("signaling/{}/offer", peer_id);
-        let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-
-        let tx_opt = self.publish_tx.lock().clone();
-        if let Some(tx) = tx_opt {
-            tx.send(PublishRequest::Offer { topic, payload }).await.map_err(|e| e.to_string())?;
-        } else {
-            eprintln!("[Signaling] publish_offer() failed: no publish channel (MQTT not connected)");
-        }
-        Ok(())
+        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+        self.send_publish(topic, bytes).await
     }
 
-    pub async fn publish_answer(&self, peer_id: &str, sdp: &str, _from: &str) -> Result<(), String> {
+    pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
         eprintln!("[Signaling] publish_answer() to peer_id={} from node_id={}", peer_id, node_id);
         let msg = SignalingMessage {
@@ -350,18 +331,11 @@ impl SignalingManager {
             payload: sdp.to_string(),
         };
         let topic = format!("signaling/{}/answer", peer_id);
-        let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-
-        let tx_opt = self.publish_tx.lock().clone();
-        if let Some(tx) = tx_opt {
-            tx.send(PublishRequest::Answer { topic, payload }).await.map_err(|e| e.to_string())?;
-        } else {
-            eprintln!("[Signaling] publish_answer() failed: no publish channel (MQTT not connected)");
-        }
-        Ok(())
+        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+        self.send_publish(topic, bytes).await
     }
 
-    pub async fn publish_ice_candidate(&self, peer_id: &str, candidate: &str, _from: &str) -> Result<(), String> {
+    pub async fn publish_ice_candidate(&self, peer_id: &str, candidate: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
         eprintln!("[Signaling] publish_ice_candidate() to peer_id={} from node_id={}", peer_id, node_id);
         let msg = SignalingMessage {
@@ -371,20 +345,8 @@ impl SignalingManager {
             payload: candidate.to_string(),
         };
         let topic = format!("signaling/{}/ice-candidate", peer_id);
-        let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-
-        let tx_opt = self.publish_tx.lock().clone();
-        if let Some(tx) = tx_opt {
-            tx.send(PublishRequest::IceCandidate { topic, payload }).await.map_err(|e| e.to_string())?;
-        } else {
-            eprintln!("[Signaling] publish_ice_candidate() failed: no publish channel (MQTT not connected)");
-        }
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn subscribe_to_events(&self) -> broadcast::Receiver<SignalingEvent> {
-        self.event_tx.subscribe()
+        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+        self.send_publish(topic, bytes).await
     }
 }
 
