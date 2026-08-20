@@ -111,40 +111,50 @@ fn spawn_sync_tasks(
             let app_clone = app.clone();
             let mut rtc_events = webrtc_manager.subscribe();
             tokio::spawn(async move {
+                eprintln!("[lib] Rust-side webrtc_manager event forwarder started");
                 while let Ok(event) = rtc_events.recv().await {
                     match event {
                         RtcEvent::PeerConnected(peer_id) => {
+                            eprintln!("[lib] webrtc_manager RtcEvent::PeerConnected {} -> emitting peer-connected", peer_id);
                             let _ = app_clone.emit("peer-connected", peer_id);
                         }
                         RtcEvent::PeerDisconnected(peer_id) => {
+                            eprintln!("[lib] webrtc_manager RtcEvent::PeerDisconnected {} -> emitting peer-disconnected", peer_id);
                             let _ = app_clone.emit("peer-disconnected", peer_id);
                         }
                         RtcEvent::DataReceived { from, doc_id } => {
+                            eprintln!("[lib] webrtc_manager RtcEvent::DataReceived from={} doc_id={} -> emitting sync-received", from, doc_id);
                             let _ = app_clone.emit("sync-received", serde_json::json!({ "doc_id": doc_id, "from": from }));
                         }
                         RtcEvent::Error { peer_id, error } => {
-                            eprintln!("WebRTC error for peer {}: {}", peer_id, error);
+                            eprintln!("[lib] WebRTC error for peer {}: {}", peer_id, error);
                         }
                     }
                 }
+                eprintln!("[lib] Rust-side webrtc_manager event forwarder exited");
             });
 
             let app_clone2 = app.clone();
             let mut peer_events = peer_registry.subscribe();
             tokio::spawn(async move {
+                eprintln!("[lib] Rust-side peer_registry event forwarder started");
                 while let Ok(event) = peer_events.recv().await {
                     match event {
                         PeerEvent::Connected(peer_id) => {
+                            eprintln!("[lib] peer_registry PeerEvent::Connected {} -> emitting peer-connected", peer_id);
                             let _ = app_clone2.emit("peer-connected", peer_id);
                         }
                         PeerEvent::Disconnected(peer_id) => {
+                            eprintln!("[lib] peer_registry PeerEvent::Disconnected {} -> emitting peer-disconnected", peer_id);
                             let _ = app_clone2.emit("peer-disconnected", peer_id);
                         }
                         PeerEvent::Message { from, doc_id: _ } => {
+                            eprintln!("[lib] peer_registry PeerEvent::Message from={} -> emitting sync-received", from);
                             let _ = app_clone2.emit("sync-received", serde_json::json!({ "from": from }));
                         }
                     }
                 }
+                eprintln!("[lib] Rust-side peer_registry event forwarder exited");
             });
 
             loop {

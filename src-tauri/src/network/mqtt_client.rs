@@ -52,6 +52,8 @@ impl MqttSignalingClient {
             (url.to_string(), 1883)
         };
 
+        eprintln!("[MQTT] Connecting to broker host={} port={} client_id={}", host, port, node_id);
+
         let mut mqtt_options = rumqttc::MqttOptions::new(node_id, &host, port);
         mqtt_options.set_keep_alive(std::time::Duration::from_secs(30));
 
@@ -65,22 +67,33 @@ impl MqttSignalingClient {
                 match event_loop.poll().await {
                     Ok(notification) => {
                         match notification {
-                            rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_)) => {
+                            rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(ack)) => {
+                                eprintln!("[MQTT] ConnAck received: {:?}", ack);
                                 let _ = event_tx_clone.send(MqttEvent::Connected);
                             }
+                            rumqttc::Event::Incoming(rumqttc::Packet::SubAck(ack)) => {
+                                eprintln!("[MQTT] SubAck received: {:?}", ack);
+                            }
                             rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) => {
+                                eprintln!("[MQTT] Raw publish received on topic '{}' ({} bytes)", publish.topic, publish.payload.len());
                                 if let Ok(msg) = serde_json::from_slice::<SignalingMessage>(&publish.payload) {
+                                    eprintln!("[MQTT] Parsed signaling message: type={} from={} to={:?}", msg.msg_type, msg.from, msg.to);
                                     let _ = event_tx_clone.send(MqttEvent::Message {
                                         topic: publish.topic,
                                         msg,
                                     });
+                                } else {
+                                    eprintln!("[MQTT] Failed to parse publish payload on topic '{}' as SignalingMessage", publish.topic);
                                 }
+                            }
+                            rumqttc::Event::Outgoing(rumqttc::Outgoing::Publish(_)) => {
+                                eprintln!("[MQTT] Outgoing publish acknowledged by client");
                             }
                             _ => {}
                         }
                     }
                     Err(e) => {
-                        eprintln!("MQTT connection error: {}", e);
+                        eprintln!("[MQTT] Connection error, event loop exiting: {}", e);
                         let _ = event_tx_clone.send(MqttEvent::Disconnected);
                         break;
                     }
@@ -92,15 +105,25 @@ impl MqttSignalingClient {
     }
 
     pub async fn subscribe(&self, topic: &str) -> Result<(), String> {
-        self.client.subscribe(topic, rumqttc::QoS::AtLeastOnce)
+        eprintln!("[MQTT] Subscribing to topic '{}'", topic);
+        let result = self.client.subscribe(topic, rumqttc::QoS::AtLeastOnce)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        if let Err(e) = &result {
+            eprintln!("[MQTT] Failed to subscribe to '{}': {}", topic, e);
+        }
+        result
     }
 
     pub async fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
-        self.client.publish(topic, rumqttc::QoS::AtLeastOnce, false, payload)
+        eprintln!("[MQTT] Publishing {} bytes to topic '{}'", payload.len(), topic);
+        let result = self.client.publish(topic, rumqttc::QoS::AtLeastOnce, false, payload)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        if let Err(e) = &result {
+            eprintln!("[MQTT] Failed to publish to '{}': {}", topic, e);
+        }
+        result
     }
 
     pub fn subscribe_to_events(&self) -> broadcast::Receiver<MqttEvent> {

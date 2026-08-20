@@ -26,7 +26,8 @@ pub fn get_yjs_state(
     state: tauri::State<'_, AppState>,
     doc_id: String,
 ) -> Result<YjsStateResult, String> {
-    let state_vec = {
+    eprintln!("[cmd] get_yjs_state doc_id={}", doc_id);
+    let state_vec: Vec<u8> = {
         let db = state.db.lock();
         db.query_row(
             "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
@@ -35,6 +36,7 @@ pub fn get_yjs_state(
         )
         .unwrap_or_default()
     };
+    eprintln!("[cmd] get_yjs_state doc_id={} -> {} bytes", doc_id, state_vec.len());
     Ok(YjsStateResult { doc_id, state: state_vec })
 }
 
@@ -45,6 +47,7 @@ pub async fn save_yjs_update(
     update: Vec<u8>,
     merged_state: Vec<u8>,
 ) -> Result<(), String> {
+    eprintln!("[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes", doc_id, update.len(), merged_state.len());
     let db_snapshot = state.snapshot.clone();
     db_snapshot.append_update(&doc_id, &update)?;
 
@@ -76,6 +79,8 @@ pub async fn save_yjs_update(
 
     let _ = db_snapshot.check_and_consolidate(&doc_id, &merged_state);
 
+    let connected_peers = state.webrtc_manager.get_connected_peers().await;
+    eprintln!("[cmd] save_yjs_update doc_id={} broadcasting to {} Rust-side webrtc_manager peer(s): {:?}", doc_id, connected_peers.len(), connected_peers);
     state.webrtc_manager.broadcast_message(
         WebRtcMessage::CrdtUpdate {
             doc_id: doc_id.clone(),
@@ -84,6 +89,7 @@ pub async fn save_yjs_update(
         None,
     ).await;
 
+    eprintln!("[cmd] save_yjs_update doc_id={} emitting sync-received (local echo)", doc_id);
     let _ = state.app_handle.emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
 
     Ok(())
@@ -119,6 +125,7 @@ pub async fn add_sync_peer(
     peer_id: String,
     display_name: String,
 ) -> Result<(), String> {
+    eprintln!("[cmd] add_sync_peer peer_id={} display_name={}", peer_id, display_name);
     {
         let db = state.db.lock();
         peer_manager::save_peer(&db, &peer_id, &display_name)?;
@@ -136,6 +143,7 @@ pub async fn get_sync_peers(state: tauri::State<'_, AppState>) -> Result<Vec<ser
         let db = state.db.lock();
         peer_manager::load_trusted_peers(&db)?
     };
+    eprintln!("[cmd] get_sync_peers -> {} trusted peer(s) in db", db_peers.len());
 
     let mut result = Vec::new();
     for peer in db_peers {
@@ -154,6 +162,7 @@ pub async fn remove_sync_peer(
     state: tauri::State<'_, AppState>,
     peer_id: String,
 ) -> Result<(), String> {
+    eprintln!("[cmd] remove_sync_peer peer_id={}", peer_id);
     {
         let db = state.db.lock();
         peer_manager::remove_peer(&db, &peer_id)?;
@@ -172,7 +181,9 @@ pub fn set_sync_enabled(_state: tauri::State<'_, AppState>, _enabled: bool) -> R
 #[tauri::command]
 pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let peers = state.webrtc_manager.get_connected_peers().await;
+    eprintln!("[cmd] trigger_sync -> {} Rust-side webrtc_manager peer(s): {:?}", peers.len(), peers);
     for peer_id in peers {
+        eprintln!("[cmd] trigger_sync sending CrdtStateRequest to {}", peer_id);
         state.webrtc_manager.send_to_peer(
             &peer_id,
             WebRtcMessage::CrdtStateRequest {

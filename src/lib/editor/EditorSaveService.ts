@@ -61,6 +61,7 @@ export class EditorSaveService {
     private async performSave(): Promise<Document | null> {
         if (!this.ydoc || !this.currentDoc) return null;
 
+        const docId = this.currentDoc.id;
         this.onSaving?.();
 
         try {
@@ -69,20 +70,22 @@ export class EditorSaveService {
             const update = Array.from(snapshot);
 
             if (update.length === 0) {
-                console.warn('[EditorSaveService] No update to save, skipping');
+                console.warn(`[EditorSaveService] [${docId}] No update to save, skipping`);
                 return null;
             }
 
+            console.log(`[EditorSaveService] [${docId}] Saving Yjs state (${update.length} bytes)`);
             await invoke('save_yjs_update', {
-                docId: this.currentDoc.id,
+                docId,
                 update,
                 mergedState,
             });
+            console.log(`[EditorSaveService] [${docId}] save_yjs_update completed`);
 
-            appStore.markDocumentHasContent(this.currentDoc.id);
+            appStore.markDocumentHasContent(docId);
             return this.currentDoc;
         } catch (error) {
-            console.error('Failed to save document:', error);
+            console.error(`[EditorSaveService] [${docId}] Failed to save document:`, error);
             toasts.error('Failed to save document');
             return null;
         }

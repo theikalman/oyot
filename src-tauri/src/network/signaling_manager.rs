@@ -82,14 +82,16 @@ impl SignalingManager {
     }
 
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
+        eprintln!("[Signaling] connect() broker_url={} node_id={}", broker_url, node_id);
         let client = MqttSignalingClient::new(broker_url, node_id).await?;
-        
+
         client.subscribe(&format!("signaling/{}", node_id)).await?;
         client.subscribe("signaling/global").await?;
         client.subscribe("signaling/+/offer").await?;
         client.subscribe("signaling/+/answer").await?;
         client.subscribe("signaling/+/ice-candidate").await?;
         client.subscribe("signaling/online").await?;
+        eprintln!("[Signaling] Subscribed to all signaling topics for node_id={}", node_id);
 
         let (publish_tx, mut publish_rx) = mpsc::channel::<PublishRequest>(100);
         let mqtt_client_clone = self.mqtt_client.clone();
@@ -204,9 +206,11 @@ impl SignalingManager {
     }
 
     async fn handle_message(app: &AppHandle, msg: SignalingMessage, our_user_id: String) {
+        eprintln!("[Signaling] handle_message() type={} from={} our_user_id={}", msg.msg_type, msg.from, our_user_id);
         match msg.msg_type.as_str() {
             "offer" => {
                 let room_id = derive_room_id(&our_user_id, &msg.from);
+                eprintln!("[Signaling] Emitting mqtt-offer-received from={} room_id={}", msg.from, room_id);
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "sdp": msg.payload,
@@ -215,6 +219,7 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-offer-received", payload);
             }
             "answer" => {
+                eprintln!("[Signaling] Emitting mqtt-answer-received from={}", msg.from);
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "sdp": msg.payload,
@@ -222,13 +227,16 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-answer-received", payload);
             }
             "ice-candidate" => {
+                eprintln!("[Signaling] Emitting mqtt-ice-candidate-received from={}", msg.from);
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "candidate": msg.payload,
                 });
                 let _ = app.emit("mqtt-ice-candidate-received", payload);
             }
-            _ => {}
+            _ => {
+                eprintln!("[Signaling] Unknown message type '{}', ignoring", msg.msg_type);
+            }
         }
     }
 
@@ -298,6 +306,7 @@ impl SignalingManager {
     }
 
     pub fn disconnect(&self) {
+        eprintln!("[Signaling] disconnect() called, publishing peer-left and tearing down MQTT client");
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let _ = self.publish_peer_left().await;
@@ -312,6 +321,7 @@ impl SignalingManager {
 
     pub async fn publish_offer(&self, peer_id: &str, sdp: &str, _from: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
+        eprintln!("[Signaling] publish_offer() to peer_id={} from node_id={}", peer_id, node_id);
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -320,16 +330,19 @@ impl SignalingManager {
         };
         let topic = format!("signaling/{}/offer", peer_id);
         let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        
+
         let tx_opt = self.publish_tx.lock().clone();
         if let Some(tx) = tx_opt {
             tx.send(PublishRequest::Offer { topic, payload }).await.map_err(|e| e.to_string())?;
+        } else {
+            eprintln!("[Signaling] publish_offer() failed: no publish channel (MQTT not connected)");
         }
         Ok(())
     }
 
     pub async fn publish_answer(&self, peer_id: &str, sdp: &str, _from: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
+        eprintln!("[Signaling] publish_answer() to peer_id={} from node_id={}", peer_id, node_id);
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -338,16 +351,19 @@ impl SignalingManager {
         };
         let topic = format!("signaling/{}/answer", peer_id);
         let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        
+
         let tx_opt = self.publish_tx.lock().clone();
         if let Some(tx) = tx_opt {
             tx.send(PublishRequest::Answer { topic, payload }).await.map_err(|e| e.to_string())?;
+        } else {
+            eprintln!("[Signaling] publish_answer() failed: no publish channel (MQTT not connected)");
         }
         Ok(())
     }
 
     pub async fn publish_ice_candidate(&self, peer_id: &str, candidate: &str, _from: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
+        eprintln!("[Signaling] publish_ice_candidate() to peer_id={} from node_id={}", peer_id, node_id);
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -356,10 +372,12 @@ impl SignalingManager {
         };
         let topic = format!("signaling/{}/ice-candidate", peer_id);
         let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        
+
         let tx_opt = self.publish_tx.lock().clone();
         if let Some(tx) = tx_opt {
             tx.send(PublishRequest::IceCandidate { topic, payload }).await.map_err(|e| e.to_string())?;
+        } else {
+            eprintln!("[Signaling] publish_ice_candidate() failed: no publish channel (MQTT not connected)");
         }
         Ok(())
     }

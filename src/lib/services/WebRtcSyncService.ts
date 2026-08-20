@@ -29,28 +29,36 @@ async function calculateRoomId(userA: string, userB: string): Promise<string> {
 }
 
 export async function initSync(): Promise<void> {
+    console.log('[WebRtcSync] initSync() starting...');
     try {
         identity = await invoke<UserIdentity>('get_identity');
+        console.log(`[WebRtcSync] Local identity: node_id=${identity.node_id} user_id=${identity.user_id} display_name=${identity.display_name}`);
         syncStore.setIdentity(identity);
 
         const mqttBroker = await invoke<string | null>('get_mqtt_broker_url');
+        console.log(`[WebRtcSync] MQTT broker URL from config: ${mqttBroker || '(none)'}`);
         if (mqttBroker && mqttBroker.trim() !== '') {
             syncStore.setSignalingUrl(mqttBroker);
             try {
+                console.log(`[WebRtcSync] Connecting to MQTT broker ${mqttBroker}...`);
                 await invoke('mqtt_connect', { brokerUrl: mqttBroker });
                 syncStore.setSignalingStatus('connected');
+                console.log('[WebRtcSync] MQTT broker connected');
             } catch (e) {
                 console.error('[WebRtcSync] Failed to connect to MQTT broker:', e);
                 syncStore.setSignalingStatus('error');
             }
         } else {
+            console.warn('[WebRtcSync] No MQTT broker URL configured, signaling will not start');
             syncStore.setSignalingStatus('disconnected');
         }
 
         const devices = await invoke<DevicePair[]>('list_paired_devices');
+        console.log(`[WebRtcSync] Loaded ${devices.length} paired device(s):`, devices);
         syncStore.setPairedDevices(devices);
 
         setupEventListeners();
+        console.log('[WebRtcSync] initSync() complete, event listeners active');
     } catch (error) {
         console.error('[WebRtcSync] Failed to init sync:', error);
         syncStore.setSignalingStatus('error');
@@ -58,8 +66,12 @@ export async function initSync(): Promise<void> {
 }
 
 async function handleAnswer(from: string, sdp: string): Promise<void> {
+    console.log(`[WebRtcSync] handleAnswer() from ${from}`);
     const pc = pendingConnections.get(from);
-    if (!pc) return;
+    if (!pc) {
+        console.warn(`[WebRtcSync] No pending RTCPeerConnection for ${from}, dropping answer (did we ever send an offer to this peer?)`);
+        return;
+    }
 
     if (pc.signalingState !== 'have-local-offer') {
         console.warn(`[WebRtcSync] Ignoring answer from ${from}: connection is in '${pc.signalingState}' state, not 'have-local-offer'`);
@@ -68,6 +80,7 @@ async function handleAnswer(from: string, sdp: string): Promise<void> {
 
     try {
         await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
+        console.log(`[WebRtcSync] Remote answer applied for ${from}, signalingState=${pc.signalingState}`);
     } catch (e) {
         console.error('[WebRtcSync] Failed to set remote answer:', e);
     }
@@ -75,20 +88,27 @@ async function handleAnswer(from: string, sdp: string): Promise<void> {
 
 function handleIceCandidate(from: string, candidate: unknown): void {
     const pc = pendingConnections.get(from);
-    if (!pc) return;
+    if (!pc) {
+        console.warn(`[WebRtcSync] Received ICE candidate from ${from} but no pending connection exists, dropping`);
+        return;
+    }
 
     try {
         pc.addIceCandidate(new RTCIceCandidate(candidate as RTCIceCandidateInit));
+        console.log(`[WebRtcSync] Added remote ICE candidate from ${from}`);
     } catch (e) {
         console.error('[WebRtcSync] Failed to add ICE candidate:', e);
     }
 }
 
 export async function requestConnection(peer: OnlinePeer): Promise<void> {
-    if (!identity) return;
+    if (!identity) {
+        console.warn('[WebRtcSync] requestConnection() called before identity was loaded, aborting');
+        return;
+    }
 
     const roomId = await calculateRoomId(identity.user_id, peer.user_id);
-    console.log(`[WebRtcSync] Requesting connection to ${peer.display_name} (${peer.id})`);
+    console.log(`[WebRtcSync] requestConnection() -> ${peer.display_name} (peer_id=${peer.id}, room_id=${roomId})`);
 
     const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -103,22 +123,40 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
+            console.log(`[WebRtcSync] [${peer.id}] Local ICE candidate gathered (type=${event.candidate.type}, protocol=${event.candidate.protocol}), publishing via MQTT`);
             invoke('mqtt_publish_ice_candidate', {
                 peerId: peer.id,
                 candidate: JSON.stringify(event.candidate.toJSON()),
                 from: identity!.node_id,
-            }).catch(console.error);
+            }).catch((e) => console.error(`[WebRtcSync] [${peer.id}] Failed to publish ICE candidate:`, e));
+        } else {
+            console.log(`[WebRtcSync] [${peer.id}] ICE candidate gathering complete`);
         }
     };
 
+    pc.onicegatheringstatechange = () => {
+        console.log(`[WebRtcSync] [${peer.id}] iceGatheringState -> ${pc.iceGatheringState}`);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        console.log(`[WebRtcSync] [${peer.id}] iceConnectionState -> ${pc.iceConnectionState}`);
+    };
+
+    pc.onsignalingstatechange = () => {
+        console.log(`[WebRtcSync] [${peer.id}] signalingState -> ${pc.signalingState}`);
+    };
+
     pc.onconnectionstatechange = () => {
+        console.log(`[WebRtcSync] [${peer.id}] connectionState -> ${pc.connectionState} (room=${roomId})`);
         if (pc.connectionState === 'connected') {
+            console.log(`[WebRtcSync] [${peer.id}] Peer connection established, room=${roomId}`);
             syncStore.addConnectedPeer({
                 peer_node_id: peer.id,
                 peer_display_name: peer.display_name,
                 room_id: roomId,
             });
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            console.warn(`[WebRtcSync] [${peer.id}] Peer connection ${pc.connectionState}, tearing down room=${roomId}`);
             syncStore.removeConnectedPeer(roomId);
             cleanupRoom(roomId);
         }
@@ -126,16 +164,22 @@ export async function requestConnection(peer: OnlinePeer): Promise<void> {
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    console.log(`[WebRtcSync] [${peer.id}] Local offer created and set, publishing via MQTT (room=${roomId})`);
 
     await invoke('mqtt_publish_offer', {
         peerId: peer.id,
         sdp: JSON.stringify(offer),
         from: identity!.node_id,
-    }).catch(console.error);
+    }).catch((e) => console.error(`[WebRtcSync] [${peer.id}] Failed to publish offer:`, e));
 }
 
 export async function acceptConnection(from: string, sdp: string, roomId: string): Promise<void> {
-    if (!identity) return;
+    if (!identity) {
+        console.warn('[WebRtcSync] acceptConnection() called before identity was loaded, aborting');
+        return;
+    }
+
+    console.log(`[WebRtcSync] acceptConnection() <- offer from ${from} (room=${roomId})`);
 
     const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -143,6 +187,7 @@ export async function acceptConnection(from: string, sdp: string, roomId: string
     pendingConnections.set(from, pc);
 
     pc.ondatachannel = (event) => {
+        console.log(`[WebRtcSync] [${from}] Remote data channel '${event.channel.label}' received (room=${roomId})`);
         const channel = event.channel;
         let roomDoc = roomDocs.get(roomId);
         if (!roomDoc) {
@@ -155,22 +200,40 @@ export async function acceptConnection(from: string, sdp: string, roomId: string
 
     pc.onicecandidate = (event) => {
         if (event.candidate) {
+            console.log(`[WebRtcSync] [${from}] Local ICE candidate gathered (type=${event.candidate.type}, protocol=${event.candidate.protocol}), publishing via MQTT`);
             invoke('mqtt_publish_ice_candidate', {
                 peerId: from,
                 candidate: JSON.stringify(event.candidate.toJSON()),
                 from: identity!.node_id,
-            }).catch(console.error);
+            }).catch((e) => console.error(`[WebRtcSync] [${from}] Failed to publish ICE candidate:`, e));
+        } else {
+            console.log(`[WebRtcSync] [${from}] ICE candidate gathering complete`);
         }
     };
 
+    pc.onicegatheringstatechange = () => {
+        console.log(`[WebRtcSync] [${from}] iceGatheringState -> ${pc.iceGatheringState}`);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        console.log(`[WebRtcSync] [${from}] iceConnectionState -> ${pc.iceConnectionState}`);
+    };
+
+    pc.onsignalingstatechange = () => {
+        console.log(`[WebRtcSync] [${from}] signalingState -> ${pc.signalingState}`);
+    };
+
     pc.onconnectionstatechange = () => {
+        console.log(`[WebRtcSync] [${from}] connectionState -> ${pc.connectionState} (room=${roomId})`);
         if (pc.connectionState === 'connected') {
+            console.log(`[WebRtcSync] [${from}] Peer connection established, room=${roomId}`);
             syncStore.addConnectedPeer({
                 peer_node_id: from,
                 peer_display_name: 'Peer',
                 room_id: roomId,
             });
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            console.warn(`[WebRtcSync] [${from}] Peer connection ${pc.connectionState}, tearing down room=${roomId}`);
             syncStore.removeConnectedPeer(roomId);
             cleanupRoom(roomId);
         }
@@ -179,43 +242,57 @@ export async function acceptConnection(from: string, sdp: string, roomId: string
     await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    console.log(`[WebRtcSync] [${from}] Local answer created and set, publishing via MQTT (room=${roomId})`);
 
     await invoke('mqtt_publish_answer', {
         peerId: from,
         sdp: JSON.stringify(answer),
         from: identity!.node_id,
-    }).catch(console.error);
+    }).catch((e) => console.error(`[WebRtcSync] [${from}] Failed to publish answer:`, e));
 }
 
 function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
     const roomDoc = roomDocs.get(roomId);
-    if (!roomDoc) return;
+    if (!roomDoc) {
+        console.warn(`[WebRtcSync] setupDataChannel() called for room ${roomId} but no roomDoc exists yet`);
+        return;
+    }
 
     const { ydoc, peer } = roomDoc;
     channel.binaryType = 'arraybuffer';
+    console.log(`[WebRtcSync] Setting up data channel '${channel.label}' for room ${roomId} (peer=${peer.id}, initial readyState=${channel.readyState})`);
 
     channel.onmessage = (event) => {
         try {
             const update = new Uint8Array(event.data);
+            console.log(`[WebRtcSync] [room=${roomId}] Received Yjs update over data channel: ${update.byteLength} bytes`);
             Y.applyUpdate(ydoc, update);
+            console.log(`[WebRtcSync] [room=${roomId}] Applied remote update to room-scoped Y.Doc (this doc is NOT the editor's document Y.Doc)`);
         } catch (e) {
-            console.error('[WebRtcSync] Failed to apply update:', e);
+            console.error(`[WebRtcSync] [room=${roomId}] Failed to apply update:`, e);
         }
     };
 
     channel.onopen = () => {
-        console.log(`[WebRtcSync] DataChannel open for room ${roomId}`);
+        console.log(`[WebRtcSync] DataChannel open for room ${roomId} (peer=${peer.id})`);
     };
 
     channel.onclose = () => {
-        console.log(`[WebRtcSync] DataChannel closed for room ${roomId}`);
+        console.log(`[WebRtcSync] DataChannel closed for room ${roomId} (peer=${peer.id})`);
         syncStore.removeConnectedPeer(roomId);
         cleanupRoom(roomId);
     };
 
+    channel.onerror = (event) => {
+        console.error(`[WebRtcSync] DataChannel error for room ${roomId} (peer=${peer.id}):`, event);
+    };
+
     ydoc.on('update', (update: Uint8Array) => {
+        console.log(`[WebRtcSync] [room=${roomId}] Local room-doc update (${update.byteLength} bytes), channel.readyState=${channel.readyState}`);
         if (channel.readyState === 'open') {
             channel.send(update);
+        } else {
+            console.warn(`[WebRtcSync] [room=${roomId}] Dropping outgoing update, data channel is '${channel.readyState}' not 'open'`);
         }
     });
 
@@ -227,6 +304,7 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
 }
 
 function cleanupRoom(roomId: string): void {
+    console.log(`[WebRtcSync] cleanupRoom(${roomId})`);
     roomDocs.delete(roomId);
     pendingConnections.delete(roomId);
 }
@@ -260,47 +338,58 @@ export function disconnectAll(): void {
 }
 
 async function setupEventListeners(): Promise<void> {
+    console.log('[WebRtcSync] Registering Tauri event listeners (mqtt-offer-received, mqtt-answer-received, mqtt-ice-candidate-received, mqtt-status, mqtt-peer-joined, mqtt-peer-left)');
+
     const unlistenOffer = await listen<{ from: string; sdp: string; room_id: string }>('mqtt-offer-received', async (event) => {
         const { from, sdp, room_id } = event.payload;
+        console.log(`[WebRtcSync] event: mqtt-offer-received from=${from} room_id=${room_id}`);
         await acceptConnection(from, sdp, room_id);
     });
 
     const unlistenAnswer = await listen<{ from: string; sdp: string }>('mqtt-answer-received', async (event) => {
         const { from, sdp } = event.payload;
+        console.log(`[WebRtcSync] event: mqtt-answer-received from=${from}`);
         await handleAnswer(from, sdp);
     });
 
     const unlistenIce = await listen<{ from: string; candidate: string }>('mqtt-ice-candidate-received', async (event) => {
         const { from, candidate } = event.payload;
+        console.log(`[WebRtcSync] event: mqtt-ice-candidate-received from=${from}`);
         handleIceCandidate(from, JSON.parse(candidate));
     });
 
     const unlistenStatus = await listen<string>('mqtt-status', (event) => {
+        console.log(`[WebRtcSync] event: mqtt-status -> ${event.payload}`);
         syncStore.setSignalingStatus(event.payload as 'connected' | 'disconnected' | 'error');
     });
 
     const unlistenPeerJoined = await listen<{ peer_id: string; user_id: string; display_name: string }>('mqtt-peer-joined', (event) => {
         const { peer_id, user_id, display_name } = event.payload;
+        console.log(`[WebRtcSync] event: mqtt-peer-joined peer_id=${peer_id} user_id=${user_id} display_name=${display_name}`);
         const peer: OnlinePeer = {
             id: peer_id,
             user_id,
             display_name,
         };
         onlinePeersMap.set(peer_id, peer);
+        console.log(`[WebRtcSync] onlinePeersMap now has ${onlinePeersMap.size} peer(s):`, Array.from(onlinePeersMap.keys()));
         syncStore.setOnlinePeers(Array.from(onlinePeersMap.values()));
     });
 
     const unlistenPeerLeft = await listen<string>('mqtt-peer-left', (event) => {
         const peerId = event.payload;
+        console.log(`[WebRtcSync] event: mqtt-peer-left peer_id=${peerId}`);
         onlinePeersMap.delete(peerId);
         syncStore.setOnlinePeers(Array.from(onlinePeersMap.values()));
     });
 
     cleanupFns = [unlistenOffer, unlistenAnswer, unlistenIce, unlistenStatus, unlistenPeerJoined, unlistenPeerLeft];
+    console.log('[WebRtcSync] Event listeners registered');
 }
 
 export function getCleanup(): () => void {
     return () => {
+        console.warn(`[WebRtcSync] getCleanup() invoked - tearing down ${cleanupFns.length} Tauri event listener(s) and disconnecting all rooms. Signaling messages (offers/answers/ICE/peer-joined) arriving after this point will be MISSED until initSync() runs again.`);
         cleanupFns.forEach(fn => fn());
         cleanupFns = [];
         disconnectAll();

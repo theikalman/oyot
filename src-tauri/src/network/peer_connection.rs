@@ -71,6 +71,7 @@ impl PeerRegistry {
     }
 
     pub async fn add_peer(&self, peer_id: String, _display_name: String) -> Arc<PeerConnection> {
+        eprintln!("[RustPeerRegistry] add_peer peer_id={}", peer_id);
         let (conn, _) = PeerConnection::new(peer_id.clone());
         let conn = Arc::new(conn);
         self.peers.lock().await.insert(peer_id.clone(), conn.clone());
@@ -79,6 +80,7 @@ impl PeerRegistry {
     }
 
     pub async fn remove_peer(&self, peer_id: &str) {
+        eprintln!("[RustPeerRegistry] remove_peer peer_id={}", peer_id);
         self.peers.lock().await.remove(peer_id);
         let _ = self.events.send(PeerEvent::Disconnected(peer_id.to_string()));
     }

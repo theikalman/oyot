@@ -14,11 +14,13 @@ export interface SyncState {
 let cleanupFns: Array<() => void> = [];
 
 export async function initializeSync(): Promise<SyncState> {
+    console.log('[sync] initializeSync() starting...');
     try {
         const [nodeId, peers] = await Promise.all([
             invoke<string>('get_node_id'),
             invoke<SyncPeer[]>('get_sync_peers')
         ]);
+        console.log(`[sync] node_id=${nodeId}, ${peers.length} trusted peer(s):`, peers);
 
         syncStore.setNodeId(nodeId);
         syncStore.setPeers(peers);
@@ -27,15 +29,18 @@ export async function initializeSync(): Promise<SyncState> {
 
         const unlistenConnected = listen<string>('peer-connected', (event) => {
             const peerNodeId = event.payload;
+            console.log(`[sync] event: peer-connected ${peerNodeId}`);
             syncStore.markPeerOnline(peerNodeId);
             syncStore.setStatus('synced');
         });
 
-        const unlistenDisconnected = listen<string>('peer-disconnected', () => {
+        const unlistenDisconnected = listen<string>('peer-disconnected', (event) => {
+            console.log(`[sync] event: peer-disconnected ${event.payload}`);
             syncStore.setStatus('offline');
         });
 
         const unlistenSyncComplete = listen('sync-complete', () => {
+            console.log('[sync] event: sync-complete');
             syncStore.setStatus('synced');
         });
 

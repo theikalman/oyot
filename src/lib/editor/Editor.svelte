@@ -66,15 +66,18 @@
 
     async function reloadCurrentDocument() {
         if (!current?.id) return;
+        console.log(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
         try {
             const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', {
                 docId: current.id,
             });
+            console.log(`[Editor] [${current.id}] Fetched state: ${stateResult.state?.length ?? 0} bytes, ydoc present=${!!ydoc}`);
             if (stateResult.state && stateResult.state.length > 0 && ydoc) {
                 Y.applyUpdate(ydoc, new Uint8Array(stateResult.state));
+                console.log(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
             }
         } catch (error) {
-            console.error('[Editor] Failed to reload document:', error);
+            console.error(`[Editor] [${current.id}] Failed to reload document:`, error);
         }
     }
 
@@ -92,9 +95,12 @@
     onMount(async () => {
         window.addEventListener('openDocument', handleOpenDocument);
         unlistenSyncEvent = await listen('sync-received', async (event) => {
-            const payload = event.payload as { doc_id?: string };
+            const payload = event.payload as { doc_id?: string; from?: string };
+            console.log(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`);
             if (payload?.doc_id && payload.doc_id === current?.id) {
                 await reloadCurrentDocument();
+            } else {
+                console.log(`[Editor] Ignoring sync-received, doc_id does not match currently open document`);
             }
         });
     });

@@ -70,6 +70,7 @@ impl WebRtcManager {
     }
 
     pub async fn register_channel(&self, peer_id: String) -> Arc<DataChannel> {
+        eprintln!("[RustWebRtcManager] register_channel peer_id={}", peer_id);
         let (channel, _) = DataChannel::new(peer_id.clone());
         let channel = Arc::new(channel);
         self.channels.lock().await.insert(peer_id.clone(), channel.clone());
@@ -78,6 +79,7 @@ impl WebRtcManager {
     }
 
     pub async fn unregister_channel(&self, peer_id: &str) {
+        eprintln!("[RustWebRtcManager] unregister_channel peer_id={}", peer_id);
         self.channels.lock().await.remove(peer_id);
         let _ = self.events.send(RtcEvent::PeerDisconnected(peer_id.to_string()));
     }
