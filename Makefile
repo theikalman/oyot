@@ -61,7 +61,7 @@ mqtt-logs:
 dev:
 	env RUST_BACKTRACE=full npm run tauri dev
 
-REPOPATH=/Volumes/YAKINWKSPC/repo
+REPOPATH ?= /Volumes/YAKINWKSPC/repo
 install-android:
 	npm run tauri android build -- --target aarch64 --debug && \
 		cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
