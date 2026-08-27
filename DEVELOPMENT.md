@@ -3,19 +3,42 @@
 ## Prerequisites
 
 - Node.js 18+
-- Rust 1.75+
+- Rust 1.75+ (install via [rustup](https://rustup.rs))
+- Platform build dependencies for Tauri (see below)
 
 ## Setup
 
-If you have [Nix](https://nixos.org/download.html) installed, enter the development shell:
+Install Node.js and Rust, then the platform dependencies for your OS.
+
+### macOS
 
 ```bash
-nix-shell
+xcode-select --install
 ```
 
-This provides Node.js, Rust, Cargo, and all other build dependencies. Then install npm dependencies:
+### Linux (Debian/Ubuntu)
 
 ```bash
+sudo apt update
+sudo apt install -y \
+  build-essential curl wget file \
+  libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+  libgtk-3-dev libglib2.0-dev \
+  libcairo2-dev libgdk-pixbuf2.0-dev libpango1.0-dev libatk1.0-dev \
+  librsvg2-dev libdbus-1-dev libayatana-appindicator3-dev \
+  libssl-dev pkg-config
+```
+
+For other distros, see the [Tauri Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux).
+
+### Windows
+
+Install the [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (preinstalled on recent Windows 10/11).
+
+### Rust components and npm dependencies
+
+```bash
+rustup component add rustfmt clippy
 npm install
 ```
 
