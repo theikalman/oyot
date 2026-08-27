@@ -2,13 +2,17 @@
 
 > The status of this project is in active development. IT IS NOT STABLE YET.
 
-A lightweight personal knowledge management app inspired by LogSeq, built with Tauri (Rust) and SvelteKit (TypeScript).
+A lightweight personal knowledge management app inspired by LogSeq, built with
+Tauri (Rust) and SvelteKit (TypeScript).
 
 ## Features
 
-- **Simple**: Open the app, write. That is all, no need to organize anything manually.
-- **Task Lists**: List out all of your TODO list in one place even if you write it anywhere in your notes.
-- **Document Linking**: Track and index your linked notes. Easy to follow how your notes are tied to each other.
+- **Simple**: Open the app, write. That is all, no need to organize anything
+  manually.
+- **Task Lists**: List out all of your TODO list in one place even if you write
+  it anywhere in your notes.
+- **Document Linking**: Track and index your linked notes. Easy to follow how
+  your notes are tied to each other.
 
 ## Tech Stack
 
