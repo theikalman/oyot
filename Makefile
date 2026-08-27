@@ -122,8 +122,10 @@ release-android:
 	@echo "Building Android release..."
 	npm run tauri android build -- --apk
 	@mkdir -p dist/android
-	@find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -path "*/release/*" \
-		-exec cp {} dist/android/ \; 2>/dev/null || true
+	cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
+		./apksigner sign --ks $(REPOPATH)/oyot/oyot.jks --ks-pass pass:ajiyakin123 \
+			--out $(REPOPATH)/oyot/dist/android/oyot-release.apk \
+			$(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 	@echo "Android artifacts → dist/android/"
 
 release-ios:
