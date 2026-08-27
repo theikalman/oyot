@@ -214,6 +214,8 @@ pub fn run() {
             create_document,
             update_document,
             delete_document,
+            list_document_metadata,
+            ensure_document,
             search_documents,
             get_backlinks,
             get_journals,

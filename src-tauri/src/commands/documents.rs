@@ -132,6 +132,74 @@ pub fn get_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result
     .map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DocumentMetadataEntry {
+    pub id: String,
+    pub doc_type: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+// Full document manifest exchanged between paired devices so a peer can learn
+// about documents it has never seen, independent of whether they have any Yjs
+// content yet (unlike get_all_documents, which is scoped to the sidebar and
+// only lists documents that already have saved content).
+#[tauri::command]
+pub fn list_document_metadata(state: tauri::State<'_, AppState>) -> Result<Vec<DocumentMetadataEntry>, String> {
+    let db = state.db.lock();
+    let mut stmt = db
+        .prepare("SELECT id, type, title, created_at, updated_at FROM documents WHERE is_deleted = 0")
+        .map_err(|e| e.to_string())?;
+
+    let entries: Vec<DocumentMetadataEntry> = stmt
+        .query_map([], |row| {
+            Ok(DocumentMetadataEntry {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                title: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(entries)
+}
+
+// Idempotently materializes a document row learned about from a peer (via
+// list_document_metadata or a live doc-created broadcast) so that a subsequent
+// save_yjs_update for this doc_id has a row to attach content to. Never
+// overwrites an existing row - if we already know this document, whatever we
+// have locally wins over the peer's metadata snapshot.
+#[tauri::command]
+pub fn ensure_document(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    doc_type: String,
+    title: String,
+    created_at: i64,
+    updated_at: i64,
+) -> Result<Document, String> {
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT OR IGNORE INTO documents (id, type, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            params![&doc_id, &doc_type, &title, created_at, updated_at],
+        )
+        .map_err(|e| e.to_string())?;
+        db.execute(
+            "INSERT OR IGNORE INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
+            params![&doc_id, &title],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    get_document(state, doc_id)
+}
+
 #[tauri::command]
 pub fn create_document(
     state: tauri::State<'_, AppState>,
