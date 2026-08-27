@@ -92,16 +92,23 @@ jobs:
         run: npm run tauri android build -- --apk
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-          ANDROID_SIGNING_KEY_PATH: $RUNNER_TEMP/keystore.jks
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Sign Android APK
+        run: |
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/keystore.jks" \
+            --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+            --out "$RUNNER_TEMP/oyot-release-signed.apk" \
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 
       - name: Upload Android APK to release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          files: ${{ runner.temp }}/oyot-release-signed.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
