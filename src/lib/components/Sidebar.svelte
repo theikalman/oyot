@@ -27,13 +27,6 @@
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
-    function filterJournals(): DocumentSummary[] {
-        const withContent = journals.filter((d: DocumentSummary) => d.has_content);
-        if (!searchInput.trim()) return [...withContent].sort((a, b) => b.title.localeCompare(a.title));
-        const query = searchInput.toLowerCase();
-        return withContent.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query)).sort((a, b) => b.title.localeCompare(a.title));
-    }
-
     function filterNotes(): DocumentSummary[] {
         if (!searchInput.trim()) return notes;
         const query = searchInput.toLowerCase();
@@ -243,21 +236,11 @@
 
             <div class="sidebar-section">
                 <h3>
-                    Journals
+                    Journals ({journals.length})
                     <button class="cal-toggle-btn" onclick={() => showCalendar = !showCalendar} title="Toggle calendar">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M3 9H21M7 3V5M17 3V5M6 13H8M6 17H8M11 13H13M11 17H13M16 13H18M16 17H18M6.2 21H17.8C18.9201 21 19.4802 21 19.908 20.782C20.2843 20.5903 20.5903 20.2843 20.782 19.908C21 19.4802 21 18.9201 21 17.8V8.2C21 7.07989 21 6.51984 20.782 6.09202C20.5903 5.71569 20.2843 5.40973 19.908 5.21799C19.4802 5 18.9201 5 17.8 5H6.2C5.0799 5 4.51984 5 4.09202 5.21799C3.71569 5.40973 3.40973 5.71569 3.21799 6.09202C3 6.51984 3 7.07989 3 8.2V17.8C3 18.9201 3 19.4802 3.21799 19.908C3.40973 20.2843 3.71569 20.5903 4.09202 20.782C4.51984 21 5.07989 21 6.2 21Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path> </g></svg>
                     </button>
                 </h3>
-                <ul class="doc-list">
-                    {#each filterJournals() as doc}
-                        <li>
-                            <button class="doc-btn" class:current={currentDocId === doc.id} onclick={() => handleDocClick(doc)}>
-                                <span class="doc-type"><svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#a1a1a1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 10H3m13-8v4M8 2v4m-.2 16h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 19.72 21 18.88 21 17.2V8.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 4 17.88 4 16.2 4H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 6.28 3 7.12 3 8.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 22 6.12 22 7.8 22"/></svg></span>
-                                {doc.title}
-                            </button>
-                        </li>
-                    {/each}
-                </ul>
             </div>
 
             <div class="sidebar-section">
