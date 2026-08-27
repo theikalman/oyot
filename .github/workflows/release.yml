@@ -86,7 +86,16 @@ jobs:
 
       - name: Decode Android signing keystore
         run: |
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > $RUNNER_TEMP/keystore.jks
+          # 1. Decode raw secret to a temporary file
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 --decode > $RUNNER_TEMP/raw_keystore.jks
+
+          # 2. Convert to standard JKS format using keytool to strip incompatible PKCS12 tags
+          keytool -importkeystore \
+            -srckeystore $RUNNER_TEMP/raw_keystore.jks \
+            -srcstorepass "${{ secrets.KEY_STORE_PASSWORD }}" \
+            -destkeystore $RUNNER_TEMP/keystore.jks \
+            -deststorepass "${{ secrets.KEY_STORE_PASSWORD }}" \
+            -deststoretype JKS
 
       - name: Build Android APK
         run: npm run tauri android build -- --apk
