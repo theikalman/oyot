@@ -4,6 +4,7 @@
     import { initializeTheme, applyTheme } from '$lib/services/theme';
     import { initializeSync, getSyncCleanup } from '$lib/services/sync';
     import { loadAllDocuments, getOrCreateTodayJournal, cleanupOrphanedImages, toDocumentSummary } from '$lib/services/documents';
+    import { broadcastDocCreated } from '$lib/services/WebRtcSyncService';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Editor from '$lib/editor/Editor.svelte';
     import SyncStatus from '$lib/components/SyncStatus.svelte';
@@ -21,6 +22,7 @@
             const summary = toDocumentSummary(todayJournal);
             appStore.addDocument(summary);
             appStore.setCurrentDocument(todayJournal);
+            broadcastDocCreated(todayJournal);
 
             await cleanupOrphanedImages();
         } catch (error) {

@@ -3,7 +3,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
 import * as Y from 'yjs';
 import { syncStore, pendingPairRequest, type UserIdentity, type DevicePair } from '../stores/sync';
-import { currentDocument } from '../stores/app';
+import { currentDocument, appStore } from '../stores/app';
+import { toDocumentSummary } from './documents';
+import type { Document } from '../types';
 
 interface RoomPeer {
     id: string;
@@ -16,10 +18,35 @@ interface RoomDoc {
     channel: RTCDataChannel | null;
 }
 
+// Wire-format shape for a document's metadata (id/title/type/timestamps), as
+// opposed to its Yjs content. Exchanged so a peer can learn a document exists
+// at all, independent of whether any CRDT content has been pulled for it yet.
+export interface DocMeta {
+    id: string;
+    docType: string;
+    title: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+function toDocMeta(doc: Document): DocMeta {
+    return {
+        id: doc.id,
+        docType: doc.doc_type,
+        title: doc.title,
+        createdAt: doc.created_at,
+        updatedAt: doc.updated_at,
+    };
+}
+
 type DataChannelMessage =
     | { type: 'crdt-update'; docId: string; update: string }
     | { type: 'crdt-state-request'; docId: string }
-    | { type: 'crdt-state-response'; docId: string; state: string };
+    | { type: 'crdt-state-response'; docId: string; state: string }
+    | { type: 'doc-list'; docs: DocMeta[] }
+    | { type: 'doc-created'; doc: DocMeta }
+    | { type: 'doc-renamed'; docId: string; title: string; updatedAt: number }
+    | { type: 'doc-deleted'; docId: string };
 
 const roomDocs = new Map<string, RoomDoc>();
 const pendingConnections = new Map<string, RTCPeerConnection>();
@@ -107,6 +134,127 @@ export function requestDocSync(docId: string): void {
         if (roomDoc.channel) {
             requestStateOnChannel(roomDoc.channel, docId);
         }
+    }
+}
+
+// Learns about a document from a peer's doc-list/doc-created message: materializes a local
+// row for it if we've never seen this docId before (ensure_document never clobbers an
+// existing row), reflects it in the sidebar, then pulls its Yjs content if we don't already
+// have an up-to-date copy. This is what lets a document created on one device become
+// visible - not just content-synced - on the other.
+async function reconcileRemoteDoc(channel: RTCDataChannel, meta: DocMeta): Promise<void> {
+    let localDoc: Document | null = null;
+    try {
+        localDoc = await invoke<Document>('get_document', { docId: meta.id });
+    } catch {
+        localDoc = null;
+    }
+
+    if (!localDoc) {
+        try {
+            localDoc = await invoke<Document>('ensure_document', {
+                docId: meta.id,
+                docType: meta.docType,
+                title: meta.title,
+                createdAt: meta.createdAt,
+                updatedAt: meta.updatedAt,
+            });
+            appStore.addDocument(toDocumentSummary(localDoc));
+            console.log(`[WebRtcSync] Learned about new document ${meta.id} ("${meta.title}") from peer`);
+        } catch (e) {
+            console.error(`[WebRtcSync] Failed to materialize remote document ${meta.id}:`, e);
+            return;
+        }
+    }
+
+    if (localDoc.updated_at < meta.updatedAt) {
+        requestStateOnChannel(channel, meta.id);
+    }
+}
+
+function handleDocList(channel: RTCDataChannel, docs: DocMeta[]): void {
+    for (const meta of docs) {
+        reconcileRemoteDoc(channel, meta).catch((e) =>
+            console.error(`[WebRtcSync] Failed to reconcile doc ${meta.id} from doc-list:`, e)
+        );
+    }
+}
+
+async function handleDocRenamed(docId: string, title: string): Promise<void> {
+    try {
+        const doc = await invoke<Document>('update_document', { docId, title });
+        const existing = get(appStore).documents.find((d) => d.id === docId);
+        appStore.updateDocumentInList({ ...toDocumentSummary(doc), has_content: existing?.has_content ?? false });
+        console.log(`[WebRtcSync] Applied remote rename for ${docId} -> "${title}"`);
+    } catch (e) {
+        console.error(`[WebRtcSync] Failed to apply remote rename for ${docId}:`, e);
+    }
+}
+
+async function handleDocDeleted(docId: string): Promise<void> {
+    try {
+        await invoke('delete_document', { docId });
+        appStore.removeDocument(docId);
+        console.log(`[WebRtcSync] Applied remote delete for ${docId}`);
+    } catch (e) {
+        console.error(`[WebRtcSync] Failed to apply remote delete for ${docId}:`, e);
+    }
+}
+
+// Broadcasts to every connected peer that a new document was created locally, so it shows
+// up on their side immediately instead of waiting for the next reconnect's doc-list.
+export function broadcastDocCreated(doc: Document): void {
+    const msg: DataChannelMessage = { type: 'doc-created', doc: toDocMeta(doc) };
+    const payload = JSON.stringify(msg);
+    for (const roomDoc of roomDocs.values()) {
+        if (roomDoc.channel?.readyState === 'open') {
+            roomDoc.channel.send(payload);
+        }
+    }
+}
+
+// Ready for a future rename UI to call alongside invoke('update_document', ...) so the
+// change reaches paired devices instead of staying local-only.
+export function broadcastDocRenamed(docId: string, title: string, updatedAt: number): void {
+    const msg: DataChannelMessage = { type: 'doc-renamed', docId, title, updatedAt };
+    const payload = JSON.stringify(msg);
+    for (const roomDoc of roomDocs.values()) {
+        if (roomDoc.channel?.readyState === 'open') {
+            roomDoc.channel.send(payload);
+        }
+    }
+}
+
+// Ready for a future delete UI to call alongside invoke('delete_document', ...) so the
+// change reaches paired devices instead of staying local-only.
+export function broadcastDocDeleted(docId: string): void {
+    const msg: DataChannelMessage = { type: 'doc-deleted', docId };
+    const payload = JSON.stringify(msg);
+    for (const roomDoc of roomDocs.values()) {
+        if (roomDoc.channel?.readyState === 'open') {
+            roomDoc.channel.send(payload);
+        }
+    }
+}
+
+// Sends our full document manifest to a newly-opened data channel so the peer can learn
+// about any document it's never seen, regardless of whether it has Yjs content yet.
+async function sendDocList(channel: RTCDataChannel): Promise<void> {
+    try {
+        const entries = await invoke<Array<{ id: string; doc_type: string; title: string; created_at: number; updated_at: number }>>('list_document_metadata');
+        const docs: DocMeta[] = entries.map((e) => ({
+            id: e.id,
+            docType: e.doc_type,
+            title: e.title,
+            createdAt: e.created_at,
+            updatedAt: e.updated_at,
+        }));
+        if (channel.readyState !== 'open') return;
+        const msg: DataChannelMessage = { type: 'doc-list', docs };
+        channel.send(JSON.stringify(msg));
+        console.log(`[WebRtcSync] Sent doc-list manifest (${docs.length} document(s))`);
+    } catch (e) {
+        console.error('[WebRtcSync] Failed to send doc-list manifest:', e);
     }
 }
 
@@ -433,7 +581,7 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
     channel.onmessage = (event) => {
         try {
             const msg = JSON.parse(event.data as string) as DataChannelMessage;
-            console.log(`[WebRtcSync] [room=${roomId}] Received '${msg.type}' for doc ${msg.docId}`);
+            console.log(`[WebRtcSync] [room=${roomId}] Received '${msg.type}'`);
             switch (msg.type) {
                 case 'crdt-update':
                     mergeRemoteDocUpdate(msg.docId, base64ToBytes(msg.update));
@@ -444,6 +592,20 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
                 case 'crdt-state-response':
                     mergeRemoteDocUpdate(msg.docId, base64ToBytes(msg.state));
                     break;
+                case 'doc-list':
+                    handleDocList(channel, msg.docs);
+                    break;
+                case 'doc-created':
+                    reconcileRemoteDoc(channel, msg.doc).catch((e) =>
+                        console.error(`[WebRtcSync] Failed to reconcile doc ${msg.doc.id} from doc-created:`, e)
+                    );
+                    break;
+                case 'doc-renamed':
+                    handleDocRenamed(msg.docId, msg.title);
+                    break;
+                case 'doc-deleted':
+                    handleDocDeleted(msg.docId);
+                    break;
             }
         } catch (e) {
             console.error(`[WebRtcSync] [room=${roomId}] Failed to handle data channel message:`, e);
@@ -452,6 +614,7 @@ function setupDataChannel(channel: RTCDataChannel, roomId: string): void {
 
     channel.onopen = () => {
         console.log(`[WebRtcSync] DataChannel open for room ${roomId} (peer=${peer.id})`);
+        sendDocList(channel);
         const openDoc = get(currentDocument);
         if (openDoc?.id) {
             console.log(`[WebRtcSync] Requesting catch-up sync for currently open doc ${openDoc.id} from peer ${peer.id}`);

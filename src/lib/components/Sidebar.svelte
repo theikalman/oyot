@@ -4,6 +4,7 @@
     import type { Document, DocumentSummary } from '../types';
     import { invoke } from "@tauri-apps/api/core";
     import { goto } from "$app/navigation";
+    import { broadcastDocCreated } from '../services/WebRtcSyncService';
 
     function handleDocClick(doc: DocumentSummary) {
         invoke<Document>('get_document', { docId: doc.id }).then(fullDoc => {
@@ -61,6 +62,7 @@
             };
             appStore.addDocument(summary);
             appStore.setCurrentDocument(newDoc);
+            broadcastDocCreated(newDoc);
 
             newDocTitle = '';
             showModal = false;
@@ -146,6 +148,7 @@
             };
             appStore.addDocument(summary);
             appStore.setCurrentDocument(newDoc);
+            broadcastDocCreated(newDoc);
         } catch (err) {
             console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
         }
