@@ -201,9 +201,10 @@ Keep `oyot.jks` somewhere safe (do **not** commit it).
 ### Local release (current platform only)
 
 ```bash
-make release          # builds for current OS → dist/mac/, dist/linux/, or dist/windows/
-make release-android  # builds APK → dist/android/  (requires Android SDK + NDK)
-make release-ios      # builds IPA → dist/ios/       (requires Xcode + Apple certificate)
+make release              # builds for current OS → dist/mac/, dist/linux/, or dist/windows/
+make release-android      # builds APK → dist/android/       (requires Android SDK + NDK)
+make release-android-aab  # builds AAB (Play Store) → dist/android/  (requires Android SDK + NDK)
+make release-ios          # builds IPA → dist/ios/           (requires Xcode + Apple certificate)
 ```
 
 Output is placed in `dist/` (gitignored - release binaries are not committed).

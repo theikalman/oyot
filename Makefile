@@ -1,5 +1,5 @@
 .PHONY: help install dev build run clean check fmt clippy \
-        release release-android release-ios release-tag install-android \
+        release release-android release-android-aab release-ios release-tag install-android \
         mqtt-up mqtt-down mqtt-logs
 
 # Only apply custom Rust path on macOS (Apple Silicon) — not needed on CI or Linux/Windows
@@ -34,6 +34,7 @@ help:
 	@echo "Release commands:"
 	@echo "  make release                    - Build current platform → dist/"
 	@echo "  make release-android            - Build Android APK → dist/android/"
+	@echo "  make release-android-aab        - Build Android AAB (Play Store) → dist/android/"
 	@echo "  make release-ios                - Build iOS IPA → dist/ios/"
 	@echo "  make release-tag VERSION=x.y.z  - Push git tag → triggers full CI"
 
@@ -127,6 +128,17 @@ release-android:
 			--out $(REPOPATH)/oyot/dist/android/oyot-release.apk \
 			$(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 	@echo "Android artifacts → dist/android/"
+
+release-android-aab:
+	@echo "Building Android App Bundle..."
+	npm run tauri android build -- --aab
+	@mkdir -p dist/android
+	cp $(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab \
+		$(REPOPATH)/oyot/dist/android/oyot-release.aab
+	jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+		-keystore $(REPOPATH)/oyot/oyot.jks -storepass ajiyakin123 \
+		$(REPOPATH)/oyot/dist/android/oyot-release.aab oyot
+	@echo "Android App Bundle → dist/android/oyot-release.aab"
 
 release-ios:
 	@echo "Building iOS release..."
