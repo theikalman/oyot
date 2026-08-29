@@ -38,8 +38,7 @@
       "icons/icon.ico"
     ],
     "android": {
-      "versionCode": 1004,
-      "versionName": "0.0.4-alpha"
+      "versionCode": 1004
     },
     "macOS": {
       "minimumSystemVersion": "10.13"
