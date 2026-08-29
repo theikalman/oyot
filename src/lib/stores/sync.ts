@@ -36,6 +36,7 @@ function createSyncStore() {
         signalingStatus: 'disconnected' as SignalingStatus,
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
+        reconnectingPeers: [] as string[],
         isSyncEnabled: true,
         pendingPairRequest: null as PendingPairRequest | null,
         pairingState: null as PairingState,
@@ -57,6 +58,14 @@ function createSyncStore() {
             ...s,
             connectedPeers: s.connectedPeers.filter(p => p.room_id !== roomId)
         })),
+        setPeerReconnecting: (peerNodeId: string, reconnecting: boolean) => update(s => ({
+            ...s,
+            reconnectingPeers: reconnecting
+                ? (s.reconnectingPeers.includes(peerNodeId)
+                    ? s.reconnectingPeers
+                    : [...s.reconnectingPeers, peerNodeId])
+                : s.reconnectingPeers.filter(id => id !== peerNodeId),
+        })),
         setPendingPairRequest: (req: PendingPairRequest | null) =>
             update(s => ({ ...s, pendingPairRequest: req })),
         setPairingState: (state: PairingState) => update(s => ({ ...s, pairingState: state })),
@@ -70,6 +79,7 @@ export const signalingStatus = derived(syncStore, $s => $s.signalingStatus);
 export const pairedDevices = derived(syncStore, $s => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, $s => $s.connectedPeers);
 export const connectedPeerIds = derived(connectedPeers, $peers => new Set($peers.map(p => p.peer_node_id)));
+export const reconnectingPeerIds = derived(syncStore, $s => new Set($s.reconnectingPeers));
 export const pendingPairRequest = derived(syncStore, $s => $s.pendingPairRequest);
 export const pairingState = derived(syncStore, $s => $s.pairingState);
 
