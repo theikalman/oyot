@@ -21,7 +21,7 @@ android {
         applicationId = "com.ajiyakin.oyot"
         minSdk = 24
         targetSdk = 36
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "4").toInt()
+        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1001").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "0.0.4-alpha")
     }
     buildTypes {
