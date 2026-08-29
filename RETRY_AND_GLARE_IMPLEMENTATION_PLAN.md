@@ -1,5 +1,11 @@
 # Retry / Reconnect + Glare Handling - Implementation Plan
 
+> **Status: implemented** (branch `feat/mqtt-retry-and-glare-handling`). The
+> shipped design is recorded in
+> [ADR 0002](docs/decisions/0002-signaling-retry-and-perfect-negotiation.md).
+> Deviations from this plan as written: the epoch envelope needed no Rust change
+> (payload is opaque), and the "Reconnect all" button was not added.
+
 ## Goals
 
 1. **MQTT broker retry** - the signaling client automatically re-establishes its
