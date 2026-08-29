@@ -1,9 +1,9 @@
 [package]
 name = "oyot"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
+version = "0.0.4-alpha"
+description = "Simple note taking app"
+authors = ["AjiYakin"]
+edition = "2026"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
