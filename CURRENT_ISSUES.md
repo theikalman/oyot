@@ -5,6 +5,11 @@
   auto-reconnects with backoff, `get_mqtt_status` reports a real tri-state, and the UI
   status is driven by the `mqtt-status` event stream instead of an optimistic guess. See
   [ADR 0002](docs/decisions/0002-signaling-retry-and-perfect-negotiation.md).
+- ~~Pairing a new device only synchronised the currently-open document; other documents
+  arrived as empty titles until edited.~~ RESOLVED - the sync layer now exchanges a full
+  manifest and pulls every differing document via state-vector deltas on each connection,
+  and create/rename/delete propagate to offline peers. See
+  [ADR 0003](docs/decisions/0003-full-document-set-sync.md).
 - I wanted the pair method to be paired with QR/input manual code instead of listing
   all available devices and do "connection" unsafely. The current implementation will list
   out all of the available devices connected to the same mqtt server.

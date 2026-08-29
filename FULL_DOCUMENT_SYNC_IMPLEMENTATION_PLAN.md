@@ -1,10 +1,20 @@
 # Full Document-Set Sync - Implementation Plan
 
-> **Status: proposed.** Targets the bug where pairing a new device only syncs the
-> currently-open document (plus whatever later receives a live edit), instead of
-> replicating the whole document set. This plan reworks the sync layer so the
-> document set converges correctly and automatically on every connection, with a
-> clean protocol, a clean module structure, and correct UI feedback.
+> **Status: implemented** (branch `feat/full-document-set-sync`). The shipped
+> design is recorded in
+> [ADR 0003](docs/decisions/0003-full-document-set-sync.md). Deviations from this
+> plan as written:
+> - The transport split stopped at `transport.ts` (signaling + perfect
+>   negotiation + reconnect kept together) rather than separate
+>   `PerfectNegotiator` / `PeerConnectionManager` modules - the negotiation
+>   logic is sound and not what was broken, so it was moved verbatim.
+> - The sidebar still loads via `get_all_documents` (content-only) to avoid
+>   surfacing empty auto-created journals; `get_all_documents_full` exists for a
+>   future "show all" toggle. Mid-sync documents appear via the in-memory store
+>   update during a sync session.
+> - Doc-mutation consolidation landed as a new `services/documentActions.ts`
+>   rather than extending `services/documents.ts`, to keep `documents.ts` a leaf
+>   and avoid an import cycle with the sync layer.
 
 ## 1. Problem statement
 
