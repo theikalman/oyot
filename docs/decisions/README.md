@@ -11,6 +11,7 @@ than editing the old one.
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-mqtt-over-iroh-for-signaling.md) | Use MQTT over Iroh's public relay for WebRTC signaling | Accepted |
+| [0002](0002-signaling-retry-and-perfect-negotiation.md) | MQTT reconnect and perfect negotiation for peer connections | Accepted |
 
 ## Format
 

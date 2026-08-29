@@ -84,11 +84,7 @@ pub async fn mqtt_publish_ice_candidate(
 
 #[tauri::command]
 pub fn get_mqtt_status(state: State<'_, AppState>) -> Result<String, String> {
-    let status = if state.signaling_manager.is_connected() {
-        "connected".to_string()
-    } else {
-        "disconnected".to_string()
-    };
+    let status = state.signaling_manager.mqtt_connection_status();
     eprintln!("[cmd] get_mqtt_status -> {}", status);
-    Ok(status)
+    Ok(status.to_string())
 }

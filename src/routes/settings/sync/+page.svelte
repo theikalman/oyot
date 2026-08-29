@@ -18,7 +18,6 @@
     import {
         sendPairRequest,
         respondToPairRequest,
-        reconnectToPeer,
         disconnectPeer,
     } from '$lib/services/WebRtcSyncService';
     import { IdentityCard } from '$lib/settings';
@@ -89,10 +88,6 @@
         disconnectPeer(roomId);
     }
 
-    async function handleReconnect(pair: DevicePair) {
-        await reconnectToPeer(pair);
-    }
-
     async function handleRemovePeer(peerNodeId: string) {
         try {
             await invoke('remove_pair', { peerNodeId });
@@ -128,7 +123,6 @@
         connectedPeers={connected}
         onDisconnect={handleDisconnect}
         onRemove={handleRemovePeer}
-        onReconnect={handleReconnect}
     />
 
     {#if pending}
