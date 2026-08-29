@@ -43,6 +43,10 @@ android {
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
                     .toList().toTypedArray()
             )
+            // Tells Gradle to extract native symbol tables into the AAB package
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE" // Or "FULL" for file/line numbers
+            }
         }
     }
     kotlinOptions {
