@@ -1,6 +1,7 @@
 <script lang="ts">
     import { appStore, documents } from '../stores/app';
-    import { pairedDevices, connectedPeerIds, roomSync } from '../stores/sync';
+    import { pairedDevices, connectedPeerIds, reconnectingPeerIds, roomSync, signalingStatus } from '../stores/sync';
+    import { reconnectPeer } from '../sync';
     import type { Document, DocumentSummary } from '../types';
     import { invoke } from "@tauri-apps/api/core";
     import { goto } from "$app/navigation";
@@ -56,6 +57,7 @@
     }
 
     let openMenuId = $state<string | null>(null);
+    let openDeviceMenuId = $state<string | null>(null);
     let renameDoc = $state<DocumentSummary | null>(null);
     let renameTitle = $state('');
     let deleteDoc = $state<DocumentSummary | null>(null);
@@ -65,10 +67,23 @@
         openMenuId = openMenuId === docId ? null : docId;
     }
 
+    function toggleDeviceMenu(e: MouseEvent, peerNodeId: string) {
+        e.stopPropagation();
+        openDeviceMenuId = openDeviceMenuId === peerNodeId ? null : peerNodeId;
+    }
+
+    function handleReconnectDevice(peerNodeId: string) {
+        openDeviceMenuId = null;
+        void reconnectPeer(peerNodeId);
+    }
+
     function handleWindowClick(e: MouseEvent) {
         const target = e.target as HTMLElement;
         if (!target.closest('.doc-menu-btn') && !target.closest('.doc-menu')) {
             openMenuId = null;
+        }
+        if (!target.closest('.device-menu-btn') && !target.closest('.device-menu')) {
+            openDeviceMenuId = null;
         }
     }
 
@@ -328,13 +343,14 @@
                     <ul class="device-list">
                         {#each $pairedDevices as device}
                             {@const online = $connectedPeerIds.has(device.peer_node_id)}
+                            {@const reconnecting = $reconnectingPeerIds.has(device.peer_node_id)}
                             {@const rs = $roomSync[device.room_id]}
                             <li class="device-item">
                                 <span class="device-dot" class:online></span>
                                 <span class="device-name">{device.peer_display_name}</span>
                                 <span class="device-status">
                                     {#if !online}
-                                        Offline
+                                        {reconnecting ? 'Connecting…' : 'Offline'}
                                     {:else if rs?.phase === 'transferring' && rs.total > 0}
                                         {rs.total - rs.pending}/{rs.total}
                                     {:else if rs?.phase === 'reconciling' || rs?.phase === 'transferring'}
@@ -345,6 +361,24 @@
                                         Online
                                     {/if}
                                 </span>
+                                <button
+                                    class="device-menu-btn"
+                                    onclick={(e) => toggleDeviceMenu(e, device.peer_node_id)}
+                                    title="Device options"
+                                >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                                </button>
+                                {#if openDeviceMenuId === device.peer_node_id}
+                                    <div class="device-menu">
+                                        <button
+                                            class="doc-menu-item"
+                                            disabled={online || $signalingStatus !== 'connected'}
+                                            onclick={() => handleReconnectDevice(device.peer_node_id)}
+                                        >
+                                            {reconnecting ? 'Reconnect now' : 'Reconnect'}
+                                        </button>
+                                    </div>
+                                {/if}
                             </li>
                         {/each}
                     </ul>
@@ -689,6 +723,7 @@
     }
 
     .device-item {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 8px;
@@ -723,6 +758,56 @@
         flex-shrink: 0;
         font-size: 11px;
         color: var(--text-muted);
+    }
+
+    .device-menu-btn {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        border-radius: 4px;
+        cursor: pointer;
+        opacity: 0;
+    }
+
+    .device-item:hover .device-menu-btn,
+    .device-menu-btn:focus-visible {
+        opacity: 1;
+    }
+
+    .device-menu-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .device-menu {
+        position: absolute;
+        top: calc(100% + 2px);
+        right: 0;
+        z-index: 50;
+        min-width: 140px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+        padding: 4px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .doc-menu-item:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .doc-menu-item:disabled:hover {
+        background: transparent;
     }
 
     /* ── Sidebar footer ── */

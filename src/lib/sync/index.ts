@@ -13,6 +13,7 @@ export {
     sendPairRequest,
     respondToPairRequest,
     disconnectPeer,
+    reconnectPeer,
     documentRepository,
     broadcastLocalUpdate,
     broadcastDocCreated,

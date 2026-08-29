@@ -509,6 +509,44 @@ function pauseAllReconnects(): void {
     }
 }
 
+// User-triggered "Reconnect now" for a single peer. Cancels any pending backoff
+// wait, resets the attempt counter, lifts an explicit-disconnect suppression, and
+// starts a fresh connection immediately. No-op if the peer is already connected.
+export async function reconnectPeer(peerNodeId: string): Promise<void> {
+    if (!identity) {
+        console.warn('[sync] reconnectPeer() called before identity was loaded, aborting');
+        return;
+    }
+    if (get(signalingStatus) !== 'connected') {
+        console.warn(`[sync] reconnectPeer(${peerNodeId}) ignored - signaling not connected`);
+        return;
+    }
+    const pair = get(pairedDevices).find((p) => p.peer_node_id === peerNodeId);
+    if (!pair) {
+        console.warn(`[sync] reconnectPeer(${peerNodeId}) - no matching pair, ignoring`);
+        return;
+    }
+
+    suppressReconnect.delete(peerNodeId);
+
+    const existing = sessions.get(peerNodeId);
+    if (existing) {
+        if (existing.pc.connectionState === 'connected' && existing.dataChannel?.readyState === 'open') {
+            console.log(`[sync] reconnectPeer(${peerNodeId}) - already connected, ignoring`);
+            return;
+        }
+        clearSessionTimers(existing);
+        existing.reconnectAttempts = 0;
+    }
+
+    console.log(`[sync] reconnectPeer(${peerNodeId}) - forcing immediate reconnect`);
+    markPeerReconnecting(peerNodeId, true);
+    await ensurePeerConnection(pair.peer_node_id, pair.room_id, pair.peer_display_name, {
+        initiate: !isPolite(peerNodeId),
+        force: true,
+    });
+}
+
 export async function reconnectAllPairedDevices(reason: string): Promise<void> {
     if (!identity || sweepRunning) return;
     if (get(signalingStatus) !== 'connected') return;
