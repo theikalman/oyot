@@ -132,11 +132,9 @@ export const roomSync = derived(syncStore, $s => $s.roomSync);
 
 // Worst-case sync phase across currently-connected rooms, for the global badge.
 export const aggregateSyncPhase = derived(syncStore, ($s): RoomSyncPhase => {
-    const active = $s.connectedPeers
-        .map(p => $s.roomSync[p.room_id]?.phase)
-        .filter((p): p is RoomSyncPhase => !!p);
-    if (active.length === 0) return $s.connectedPeers.length > 0 ? 'connecting' : 'idle';
-    const order: RoomSyncPhase[] = ['error', 'connecting', 'reconciling', 'transferring', 'synced'];
+    if ($s.connectedPeers.length === 0) return 'idle';
+    const active = $s.connectedPeers.map(p => $s.roomSync[p.room_id]?.phase ?? 'connecting');
+    const order: RoomSyncPhase[] = ['error', 'connecting', 'idle', 'reconciling', 'transferring', 'synced'];
     return order.find(p => active.includes(p)) ?? 'synced';
 });
 
