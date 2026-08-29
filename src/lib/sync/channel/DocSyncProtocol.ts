@@ -25,6 +25,12 @@ interface NeedItem {
     attempts: number;
 }
 
+// Attachment transfer runs on its own queue, off the document finish gate: an
+// image can be large and slow, and text sync should not wait on it.
+const MAX_ATTACH_IN_FLIGHT = 2;
+const ATTACH_TIMEOUT_MS = 30_000;
+const MAX_ATTACH_ATTEMPTS = 2;
+
 // Runs the two-phase reconciliation (manifest, then delta) for ONE data channel,
 // plus the steady-state live-message fast path. Pure logic: it talks to a
 // DocumentRepository and a `send` function, never to the transport or the store
@@ -40,6 +46,10 @@ export class DocSyncProtocol {
     private timers = new Map<string, ReturnType<typeof setTimeout>>();
     private total = 0;
     private settled = 0;
+
+    private attachQueue: string[] = [];
+    private attachInFlight = new Map<string, number>(); // hash -> attempts
+    private attachTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     constructor(
         private readonly repo: DocumentRepository,
@@ -59,11 +69,14 @@ export class DocSyncProtocol {
             console.error('[sync] failed to send manifest:', e);
             this.sink.onPhase('error');
         }
+        void this.sendAttachManifest();
     }
 
     dispose(): void {
         for (const t of this.timers.values()) clearTimeout(t);
         this.timers.clear();
+        for (const t of this.attachTimers.values()) clearTimeout(t);
+        this.attachTimers.clear();
     }
 
     async handle(msg: SyncMessage): Promise<void> {
@@ -102,7 +115,114 @@ export class DocSyncProtocol {
                     console.error(`[sync] live-update merge failed for ${msg.id}:`, e),
                 );
                 return;
+            case 'attach-manifest':
+                await this.onAttachManifest(msg.items.map((i) => i.hash));
+                return;
+            case 'attach-need':
+                await this.onAttachNeed(msg.hash);
+                return;
+            case 'attach-data':
+                await this.onAttachData(msg.hash, msg.mime, msg.data);
+                return;
+            case 'attach-missing':
+                this.clearAttachInFlight(msg.hash);
+                this.attachPump();
+                return;
         }
+    }
+
+    // --- attachments ---------------------------------------------------
+
+    private async sendAttachManifest(): Promise<void> {
+        if (this.incompatiblePeer) return;
+        try {
+            const items = await this.repo.listAttachments();
+            if (items.length > 0) this.send({ t: 'attach-manifest', items });
+        } catch (e) {
+            console.error('[sync] failed to send attachment manifest:', e);
+        }
+    }
+
+    private async onAttachManifest(hashes: string[]): Promise<void> {
+        if (this.incompatiblePeer) return;
+        for (const hash of hashes) {
+            if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) continue;
+            try {
+                if (await this.repo.hasAttachment(hash)) continue;
+            } catch (e) {
+                console.error(`[sync] hasAttachment(${hash}) failed:`, e);
+                continue;
+            }
+            this.attachQueue.push(hash);
+        }
+        this.attachPump();
+    }
+
+    // Pull one attachment now (steady-state: a freshly inserted image).
+    requestAttachment(hash: string): void {
+        if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) return;
+        this.attachQueue.push(hash);
+        this.attachPump();
+    }
+
+    private attachPump(): void {
+        while (this.attachInFlight.size < MAX_ATTACH_IN_FLIGHT && this.attachQueue.length > 0) {
+            const hash = this.attachQueue.shift()!;
+            const attempts = (this.attachInFlight.get(hash) ?? 0) + 1;
+            this.attachInFlight.set(hash, attempts);
+            this.send({ t: 'attach-need', hash });
+            this.armAttachTimeout(hash);
+        }
+    }
+
+    private armAttachTimeout(hash: string): void {
+        const existing = this.attachTimers.get(hash);
+        if (existing) clearTimeout(existing);
+        this.attachTimers.set(
+            hash,
+            setTimeout(() => {
+                this.attachTimers.delete(hash);
+                const attempts = this.attachInFlight.get(hash);
+                if (attempts === undefined) return;
+                this.attachInFlight.delete(hash);
+                if (attempts < MAX_ATTACH_ATTEMPTS) {
+                    this.attachQueue.push(hash);
+                    this.attachPump();
+                } else {
+                    console.warn(`[sync] gave up pulling attachment ${hash} after ${attempts} attempts`);
+                }
+            }, ATTACH_TIMEOUT_MS),
+        );
+    }
+
+    private clearAttachInFlight(hash: string): void {
+        this.attachInFlight.delete(hash);
+        const timer = this.attachTimers.get(hash);
+        if (timer) {
+            clearTimeout(timer);
+            this.attachTimers.delete(hash);
+        }
+    }
+
+    private async onAttachNeed(hash: string): Promise<void> {
+        try {
+            const bytes = await this.repo.readAttachment(hash);
+            if (bytes) this.send({ t: 'attach-data', hash, mime: bytes.mime, data: bytes.data });
+            else this.send({ t: 'attach-missing', hash });
+        } catch (e) {
+            console.error(`[sync] readAttachment(${hash}) failed:`, e);
+            this.send({ t: 'attach-missing', hash });
+        }
+    }
+
+    private async onAttachData(hash: string, mime: string, data: string): Promise<void> {
+        this.clearAttachInFlight(hash);
+        try {
+            await this.repo.saveAttachment(hash, mime, data);
+        } catch (e) {
+            console.error(`[sync] saveAttachment(${hash}) failed:`, e);
+        }
+        this.attachPump();
     }
 
     // --- phase 1 --------------------------------------------------------

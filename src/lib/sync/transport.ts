@@ -154,6 +154,20 @@ export function broadcastDocDeleted(docId: string, deletedAt: number): void {
     broadcast({ t: 'doc-deleted', id: docId, deletedAt });
 }
 
+// The editor calls this right after it saves a newly inserted image, so
+// connected peers pull the bytes without waiting for the next reconnect.
+export function broadcastAttachmentAvailable(hash: string, mime: string, size: number): void {
+    broadcast({ t: 'attach-manifest', items: [{ hash, mime, size }] });
+}
+
+// The image node view calls this when it renders a reference whose bytes are
+// missing locally - ask every connected peer for them.
+export function pullAttachmentFromPeers(hash: string): void {
+    for (const { proto } of openProtos()) {
+        proto.requestAttachment(hash);
+    }
+}
+
 // --- transport helpers ---------------------------------------------------
 
 function parseDescPayload(raw: string): { epoch: number; description: RTCSessionDescriptionInit } {

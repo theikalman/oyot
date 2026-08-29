@@ -1,11 +1,12 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
-import { convertFileSrc } from '@tauri-apps/api/core';
 import type { Editor } from '@tiptap/core';
 import '@tiptap/extension-image';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 import { exitSuggestion } from '@tiptap/suggestion';
+import { ATTACHMENT_SCHEME } from '../attachments';
+import { broadcastAttachmentAvailable } from '$lib/sync';
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
@@ -72,7 +73,7 @@ export async function insertImageFromFile(editor: Editor): Promise<void> {
             mimeType
         });
 
-        insertImageNode(editor, hash, mimeType);
+        insertImageNode(editor, hash, mimeType, blob.size);
     } catch (error) {
         console.error('Failed to insert image:', error);
         alert('Failed to insert image. Please try again.');
@@ -92,28 +93,25 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
             mimeType: blob.type
         });
 
-        insertImageNode(editor, hash, blob.type);
+        insertImageNode(editor, hash, blob.type, blob.size);
     } catch (error) {
         console.error('Failed to insert image:', error);
     }
 }
 
-async function insertImageNode(editor: Editor, hash: string, mimeType: string): Promise<void> {
-    const localUrl = await invoke<string | null>('get_local_blob_url', { hash });
+// Store only a portable reference in the document. The node view
+// (ResizableImage) resolves it to a local URL at render time, and the sync
+// layer moves the bytes between devices.
+function insertImageNode(editor: Editor, hash: string, mimeType: string, size: number): void {
+    editor.chain().focus().setImage({
+        src: `${ATTACHMENT_SCHEME}${hash}`,
+        alt: `oyot:${hash}`
+    }).run();
 
-    if (localUrl) {
-        const assetUrl = convertFileSrc(localUrl);
-        editor.chain().focus().setImage({
-            src: assetUrl,
-            alt: `oyot:${hash}`
-        }).run();
-    } else {
-        editor.chain().focus().setImage({
-            src: `oyot-attachment://${hash}`,
-            alt: `oyot:${hash}`
-        }).run();
-
-        invoke('request_attachment', { hash }).catch(console.error);
+    try {
+        broadcastAttachmentAvailable(hash, mimeType, size);
+    } catch {
+        /* sync layer not initialised */
     }
 }
 
@@ -123,16 +121,4 @@ function validateFileSize(blob: Blob): boolean {
         return false;
     }
     return true;
-}
-
-export async function resolveAttachmentUrl(hash: string): Promise<string | null> {
-    try {
-        const localUrl = await invoke<string | null>('get_local_blob_url', { hash });
-        if (localUrl) {
-            return convertFileSrc(localUrl);
-        }
-        return null;
-    } catch {
-        return null;
-    }
 }

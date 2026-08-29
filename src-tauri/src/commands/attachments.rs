@@ -1,6 +1,24 @@
 use crate::db::AppState;
 use rusqlite::params;
 use sha2::{Digest, Sha256};
+use tauri::Emitter;
+
+fn ext_for_mime(mime_type: &str) -> &'static str {
+    match mime_type {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "bin",
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
 
 #[tauri::command]
 pub fn save_image(
@@ -13,17 +31,9 @@ pub fn save_image(
         .decode(&image_data)
         .map_err(|e| e.to_string())?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(&image_bytes);
-    let hash = hex::encode(hasher.finalize());
+    let hash = sha256_hex(&image_bytes);
 
-    let ext = match mime_type.as_str() {
-        "image/png" => "png",
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        _ => "bin",
-    };
+    let ext = ext_for_mime(&mime_type);
     let filename = format!("{}.{}", hash, ext);
 
     let attachments_dir = state.data_dir.join("attachments");
@@ -243,6 +253,146 @@ pub struct AttachmentHashInfo {
     pub hash: String,
     pub mime_type: String,
     pub is_fully_downloaded: bool,
+}
+
+// --- peer-to-peer attachment transfer -------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct AttachmentManifestEntry {
+    pub hash: String,
+    pub mime_type: String,
+    pub size: i64,
+}
+
+// Every attachment this device holds in full - advertised to a peer on connect
+// so it can pull the ones it is missing. Mirrors the document `sync-manifest`.
+#[tauri::command]
+pub fn list_attachment_manifest(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<AttachmentManifestEntry>, String> {
+    let db = state.db.lock();
+    let mut stmt = db
+        .prepare(
+            "SELECT hash, mime_type, local_path FROM attachments \
+             WHERE is_fully_downloaded = 1 AND local_path IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for row in rows.flatten() {
+        let (hash, mime_type, local_path) = row;
+        let size = state
+            .data_dir
+            .join(&local_path)
+            .metadata()
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+        if size == 0 {
+            continue; // file vanished under us - do not advertise it
+        }
+        out.push(AttachmentManifestEntry { hash, mime_type, size });
+    }
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+pub struct AttachmentBytesResponse {
+    pub hash: String,
+    pub mime_type: String,
+    pub data: String, // base64
+}
+
+// Read one attachment's bytes to answer a peer's `attach-need`.
+#[tauri::command]
+pub fn get_attachment_bytes(
+    state: tauri::State<'_, AppState>,
+    hash: String,
+) -> Result<Option<AttachmentBytesResponse>, String> {
+    use base64::Engine;
+
+    let row: Option<(String, String)> = {
+        let db = state.db.lock();
+        db.query_row(
+            "SELECT mime_type, local_path FROM attachments \
+             WHERE hash = ? AND is_fully_downloaded = 1 AND local_path IS NOT NULL",
+            params![&hash],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok()
+    };
+
+    let Some((mime_type, relative_path)) = row else {
+        return Ok(None);
+    };
+
+    let full_path = state.data_dir.join(relative_path);
+    let bytes = std::fs::read(&full_path).map_err(|e| e.to_string())?;
+
+    Ok(Some(AttachmentBytesResponse {
+        hash,
+        mime_type,
+        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    }))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AttachmentDownloadedEvent {
+    hash: String,
+}
+
+// Persist an attachment pulled from a peer (`attach-data`). The hash is the
+// content address, so mismatched bytes are rejected outright. Emits
+// `attachment-downloaded` so open editors can re-resolve the image.
+#[tauri::command]
+pub fn save_attachment_bytes(
+    state: tauri::State<'_, AppState>,
+    hash: String,
+    mime_type: String,
+    data: String,
+) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data)
+        .map_err(|e| e.to_string())?;
+
+    let actual = sha256_hex(&bytes);
+    if actual != hash {
+        return Err(format!(
+            "attachment hash mismatch: expected {hash}, got {actual}"
+        ));
+    }
+
+    let filename = format!("{}.{}", hash, ext_for_mime(&mime_type));
+    let attachments_dir = state.data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    std::fs::write(attachments_dir.join(&filename), &bytes).map_err(|e| e.to_string())?;
+
+    let relative_path = format!("attachments/{}", filename);
+    let now = current_timestamp();
+
+    {
+        let db = state.db.lock();
+        db.execute(
+            "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
+            params![&hash, &mime_type, &relative_path, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let _ = state
+        .app_handle
+        .emit("attachment-downloaded", AttachmentDownloadedEvent { hash });
+    Ok(())
 }
 
 fn current_timestamp() -> i64 {
