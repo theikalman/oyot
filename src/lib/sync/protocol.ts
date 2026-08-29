@@ -10,13 +10,9 @@
 // create/rename/delete/edit messages are a steady-state latency optimisation on
 // top - correctness comes from phases 1 and 2 re-running on every (re)connect.
 //
-// See docs/decisions/0003-full-document-set-sync.md.
-
-// v3 adds attachment (image binary) reconciliation (`attach-*`) and makes every
-// `sync-need` get an answer (`sync-none` when the holder has no delta). A v2
-// peer speaks neither; the `hello` mismatch already surfaces it as "needs
-// updating".
-export const SYNC_PROTOCOL_VERSION = 3;
+// There is no version negotiation: the app is single-user and every device runs
+// the same build. Both peers assume the same wire format. See
+// docs/decisions/0003-full-document-set-sync.md and 0007-drop-protocol-version.md.
 
 // One document as advertised in a `sync-manifest`. Mirrors the Rust
 // `DocSyncEntry` (commands/documents.rs) with hashes already base64-encoded.
@@ -42,7 +38,6 @@ export interface AttachmentManifestEntry {
 }
 
 export type SyncMessage =
-    | { t: 'hello'; v: number }
     | { t: 'sync-manifest'; docs: ManifestEntry[] }
     // sv = base64(Y.encodeStateVector(doc)); "" means "I have nothing, send all".
     | { t: 'sync-need'; id: string; sv: string }

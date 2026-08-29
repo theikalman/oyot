@@ -1,9 +1,5 @@
 import type { DocumentRepository } from '../DocumentRepository';
-import {
-    SYNC_PROTOCOL_VERSION,
-    type ManifestEntry,
-    type SyncMessage,
-} from '../protocol';
+import { type ManifestEntry, type SyncMessage } from '../protocol';
 
 export interface SyncProgressSink {
     onPhase(phase: 'reconciling' | 'transferring' | 'synced' | 'error'): void;
@@ -34,10 +30,10 @@ const MAX_ATTACH_ATTEMPTS = 2;
 // Runs the two-phase reconciliation (manifest, then delta) for ONE data channel,
 // plus the steady-state live-message fast path. Pure logic: it talks to a
 // DocumentRepository and a `send` function, never to the transport or the store
-// directly. Version-negotiated via `hello`.
+// directly. Both peers are assumed to run the same build - there is no version
+// handshake (see docs/decisions/0007-drop-protocol-version.md).
 export class DocSyncProtocol {
     private started = false;
-    private incompatiblePeer = false;
     private localDone = false;
     private peerDone = false;
 
@@ -61,7 +57,6 @@ export class DocSyncProtocol {
         if (this.started) return;
         this.started = true;
         this.sink.onPhase('reconciling');
-        this.send({ t: 'hello', v: SYNC_PROTOCOL_VERSION });
         try {
             const docs = await this.repo.listSyncState();
             this.send({ t: 'sync-manifest', docs });
@@ -81,13 +76,6 @@ export class DocSyncProtocol {
 
     async handle(msg: SyncMessage): Promise<void> {
         switch (msg.t) {
-            case 'hello':
-                if (msg.v !== SYNC_PROTOCOL_VERSION) {
-                    this.incompatiblePeer = true;
-                    this.sink.onPhase('error');
-                    console.warn(`[sync] peer speaks protocol v${msg.v}, we speak v${SYNC_PROTOCOL_VERSION}`);
-                }
-                return;
             case 'sync-manifest':
                 await this.onManifest(msg.docs);
                 return;
@@ -137,7 +125,6 @@ export class DocSyncProtocol {
     // --- attachments ---------------------------------------------------
 
     private async sendAttachManifest(): Promise<void> {
-        if (this.incompatiblePeer) return;
         try {
             const items = await this.repo.listAttachments();
             if (items.length > 0) this.send({ t: 'attach-manifest', items });
@@ -147,7 +134,6 @@ export class DocSyncProtocol {
     }
 
     private async onAttachManifest(hashes: string[]): Promise<void> {
-        if (this.incompatiblePeer) return;
         for (const hash of hashes) {
             if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) continue;
             try {
@@ -231,8 +217,6 @@ export class DocSyncProtocol {
     // --- phase 1 --------------------------------------------------------
 
     private async onManifest(remote: ManifestEntry[]): Promise<void> {
-        if (this.incompatiblePeer) return;
-
         const local = new Map((await this.repo.listSyncState()).map((e) => [e.id, e]));
 
         for (const entry of remote) {
