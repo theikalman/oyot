@@ -127,6 +127,99 @@ pub fn run_migrations(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    // Simulates a database created before ADR 0003 (no content_hash column).
+    fn legacy_db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE documents (
+                id TEXT PRIMARY KEY NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                crdt_state BLOB,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                is_deleted INTEGER DEFAULT 0
+            );
+            INSERT INTO documents (id, type, title, created_at, updated_at)
+                VALUES ('d1', 'note', 'One', 100, 200);",
+        )
+        .unwrap();
+        db
+    }
+
+    fn column_exists(db: &Connection, col: &str) -> bool {
+        db.prepare(&format!("SELECT {col} FROM documents LIMIT 0")).is_ok()
+    }
+
+    #[test]
+    fn migrates_a_legacy_database_and_backfills_title_timestamp() {
+        let db = legacy_db();
+        run_migrations(&db).unwrap();
+
+        assert!(column_exists(&db, "content_hash"));
+        assert!(column_exists(&db, "title_updated_at"));
+        assert!(column_exists(&db, "deleted_at"));
+
+        let title_ts: i64 = db
+            .query_row("SELECT title_updated_at FROM documents WHERE id = 'd1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title_ts, 200, "title_updated_at backfills from updated_at");
+
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn is_idempotent() {
+        let db = legacy_db();
+        run_migrations(&db).unwrap();
+        run_migrations(&db).unwrap();
+        run_migrations(&db).unwrap();
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn is_a_noop_on_a_fresh_schema() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        run_migrations(&db).unwrap();
+        assert!(column_exists(&db, "content_hash"));
+    }
+
+    // Mirrors the apply_remote_rename SQL so the last-writer-wins tiebreak is
+    // covered without a Tauri State harness.
+    #[test]
+    fn remote_rename_is_last_writer_wins() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at)
+             VALUES ('d1', 'note', 'Original', 1, 1, 10)",
+            [],
+        )
+        .unwrap();
+
+        let sql = "UPDATE documents SET title = ?1, title_updated_at = ?2 \
+                   WHERE id = ?3 AND (title_updated_at IS NULL OR title_updated_at < ?2)";
+
+        let stale = db.execute(sql, rusqlite::params!["Stale", 5_i64, "d1"]).unwrap();
+        assert_eq!(stale, 0, "an older stamp does not apply");
+
+        let fresh = db.execute(sql, rusqlite::params!["Fresh", 20_i64, "d1"]).unwrap();
+        assert_eq!(fresh, 1, "a newer stamp applies");
+
+        let title: String = db
+            .query_row("SELECT title FROM documents WHERE id = 'd1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "Fresh");
+    }
+}
+
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     let config_path = match app.path().app_data_dir() {
         Ok(dir) => dir.join("config.json"),
