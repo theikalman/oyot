@@ -46,6 +46,7 @@ pub async fn save_yjs_update(
     doc_id: String,
     update: Vec<u8>,
     merged_state: Vec<u8>,
+    content_hash: Option<Vec<u8>>,
 ) -> Result<(), String> {
     eprintln!("[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes", doc_id, update.len(), merged_state.len());
     let db_snapshot = state.snapshot.clone();
@@ -59,8 +60,8 @@ pub async fn save_yjs_update(
     {
         let db = state.db.lock();
         db.execute(
-            "UPDATE documents SET crdt_state = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
-            params![&merged_state, now, &doc_id],
+            "UPDATE documents SET crdt_state = ?, content_hash = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
+            params![&merged_state, &content_hash, now, &doc_id],
         )
         .map_err(|e| e.to_string())?;
     }

@@ -22,9 +22,12 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
             title TEXT NOT NULL,
             crdt_state BLOB,
+            content_hash BLOB,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
-            is_deleted INTEGER DEFAULT 0
+            title_updated_at INTEGER,
+            is_deleted INTEGER DEFAULT 0,
+            deleted_at INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS yjs_updates (
@@ -85,6 +88,42 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
         ",
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;
+    Ok(())
+}
+
+/// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
+/// once and bumps the version. `setup_database_tables` still owns the base
+/// `CREATE TABLE IF NOT EXISTS` shape for fresh installs; this only carries
+/// existing databases forward.
+pub fn run_migrations(db: &Connection) -> Result<(), String> {
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    // v1: columns that let the sync layer reconcile the whole document set
+    // (content hash as a change detector, last-writer-wins title, delete
+    // tombstone timestamp). See docs/decisions/0003-full-document-set-sync.md.
+    if version < 1 {
+        // `ALTER TABLE ... ADD COLUMN` is not idempotent, so guard on a fresh
+        // install where the column may already exist from a newer base schema.
+        let has_content_hash = db
+            .prepare("SELECT content_hash FROM documents LIMIT 0")
+            .is_ok();
+        if !has_content_hash {
+            db.execute_batch(
+                "
+                ALTER TABLE documents ADD COLUMN content_hash BLOB;
+                ALTER TABLE documents ADD COLUMN title_updated_at INTEGER;
+                ALTER TABLE documents ADD COLUMN deleted_at INTEGER;
+                UPDATE documents SET title_updated_at = updated_at WHERE title_updated_at IS NULL;
+                ",
+            )
+            .map_err(|e| format!("Migration v1 failed: {}", e))?;
+        }
+        db.execute_batch("PRAGMA user_version = 1;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -188,6 +227,7 @@ pub fn run() {
             {
                 let db = state.db.lock();
                 setup_database_tables(&db)?;
+                run_migrations(&db)?;
             }
 
             {
@@ -210,12 +250,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_all_documents,
+            get_all_documents_full,
             get_document,
             create_document,
             update_document,
             delete_document,
             list_document_metadata,
+            list_document_sync_state,
             ensure_document,
+            apply_remote_rename,
+            apply_remote_delete,
             search_documents,
             get_backlinks,
             get_journals,
