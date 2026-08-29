@@ -7,6 +7,7 @@ import { contentHash } from './hash';
 import {
     base64ToBytes,
     bytesToBase64,
+    type AttachmentManifestEntry,
     type ManifestEntry,
 } from './protocol';
 
@@ -142,6 +143,37 @@ export class DocumentRepository {
     async applyDelete(docId: string, deletedAt: number): Promise<void> {
         await invoke('apply_remote_delete', { docId, deletedAt });
         appStore.removeDocument(docId);
+    }
+
+    // --- attachments ---------------------------------------------------
+
+    // Every image binary we hold in full, to advertise to a peer.
+    async listAttachments(): Promise<AttachmentManifestEntry[]> {
+        const rows = await invoke<{ hash: string; mime_type: string; size: number }[]>(
+            'list_attachment_manifest',
+        );
+        return rows.map((r) => ({ hash: r.hash, mime: r.mime_type, size: r.size }));
+    }
+
+    // Do we already have this attachment's bytes on disk?
+    async hasAttachment(hash: string): Promise<boolean> {
+        const info = await invoke<{ is_fully_downloaded: boolean } | null>('get_attachment_info', {
+            hash,
+        });
+        return !!info && info.is_fully_downloaded;
+    }
+
+    // The bytes for a peer's `attach-need`, or null if we do not have them.
+    async readAttachment(hash: string): Promise<{ mime: string; data: string } | null> {
+        const res = await invoke<{ mime_type: string; data: string } | null>('get_attachment_bytes', {
+            hash,
+        });
+        return res ? { mime: res.mime_type, data: res.data } : null;
+    }
+
+    // Persist an attachment pulled from a peer. Rejects on hash mismatch.
+    async saveAttachment(hash: string, mime: string, data: string): Promise<void> {
+        await invoke('save_attachment_bytes', { hash, mimeType: mime, data });
     }
 
     // --- one-time maintenance -------------------------------------------

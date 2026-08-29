@@ -13,11 +13,14 @@ export {
     sendPairRequest,
     respondToPairRequest,
     disconnectPeer,
+    reconnectPeer,
     documentRepository,
     broadcastLocalUpdate,
     broadcastDocCreated,
     broadcastDocRenamed,
     broadcastDocDeleted,
+    broadcastAttachmentAvailable,
+    pullAttachmentFromPeers,
 } from './transport';
 
 export { DocumentRepository } from './DocumentRepository';

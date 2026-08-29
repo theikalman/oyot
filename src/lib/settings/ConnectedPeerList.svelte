@@ -11,18 +11,19 @@
         }>;
         connectedPeers: ConnectedPeer[];
         onDisconnect: (roomId: string) => void;
+        onReconnect: (peerNodeId: string) => void;
         onRemove: (peerNodeId: string) => void;
     }
 
-    let { pairedDevices, connectedPeers, onDisconnect, onRemove }: Props = $props();
+    let { pairedDevices, connectedPeers, onDisconnect, onReconnect, onRemove }: Props = $props();
 
     function isConnected(roomId: string): boolean {
         return connectedPeers.some(p => p.room_id === roomId);
     }
 
     // The app reconnects paired devices automatically (on startup, when signaling
-    // recovers, and with backoff after a drop), so there is no manual reconnect
-    // action - just a live hint while an attempt is in flight.
+    // recovers, and with backoff after a drop). The "Reconnect" action lets the
+    // user bypass the backoff wait and force an attempt right now.
     function peerStatus(pair: { peer_node_id: string; room_id: string }): 'connected' | 'connecting' | 'offline' {
         if (isConnected(pair.room_id)) return 'connected';
         if ($reconnectingPeerIds.has(pair.peer_node_id)) return 'connecting';
@@ -80,6 +81,13 @@
                                 Disconnect
                             </button>
                         {:else}
+                            <button
+                                class="btn-secondary"
+                                title="Reconnect now, bypassing the retry wait"
+                                onclick={() => onReconnect(pair.peer_node_id)}
+                            >
+                                {pstatus === 'connecting' ? 'Reconnect now' : 'Reconnect'}
+                            </button>
                             <button class="btn-danger" onclick={() => onRemove(pair.peer_node_id)}>
                                 Remove
                             </button>
@@ -191,5 +199,17 @@
     }
     .btn-danger:hover {
         background: #fef2f2;
+    }
+    .btn-secondary {
+        padding: 6px 12px;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .btn-secondary:hover {
+        background: var(--bg-hover);
     }
 </style>

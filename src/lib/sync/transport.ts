@@ -30,7 +30,15 @@ interface PeerSession {
     displayName: string;
     pc: RTCPeerConnection;
     polite: boolean;
+    // `epoch` is our own negotiation generation, bumped on every local rebuild so
+    // the peer can drop messages from a superseded negotiation of ours.
+    // `peerEpoch` is the highest epoch we have seen *from* the peer. Incoming
+    // messages are stale only if they go backwards relative to peerEpoch - the
+    // two counters advance independently (a manual reconnect rebuilds one side
+    // many more times than the other), so comparing env.epoch against our own
+    // `epoch` would wrongly reject the peer's current offers and answers.
     epoch: number;
+    peerEpoch: number;
     makingOffer: boolean;
     ignoreOffer: boolean;
     isSettingRemoteAnswerPending: boolean;
@@ -144,6 +152,20 @@ export function broadcastDocRenamed(docId: string, title: string, titleUpdatedAt
 
 export function broadcastDocDeleted(docId: string, deletedAt: number): void {
     broadcast({ t: 'doc-deleted', id: docId, deletedAt });
+}
+
+// The editor calls this right after it saves a newly inserted image, so
+// connected peers pull the bytes without waiting for the next reconnect.
+export function broadcastAttachmentAvailable(hash: string, mime: string, size: number): void {
+    broadcast({ t: 'attach-manifest', items: [{ hash, mime, size }] });
+}
+
+// The image node view calls this when it renders a reference whose bytes are
+// missing locally - ask every connected peer for them.
+export function pullAttachmentFromPeers(hash: string): void {
+    for (const { proto } of openProtos()) {
+        proto.requestAttachment(hash);
+    }
 }
 
 // --- transport helpers ---------------------------------------------------
@@ -268,6 +290,7 @@ async function ensurePeerConnection(
         pc,
         polite,
         epoch: (existing?.epoch ?? 0) + 1,
+        peerEpoch: existing?.peerEpoch ?? 0,
         makingOffer: false,
         ignoreOffer: false,
         isSettingRemoteAnswerPending: false,
@@ -427,10 +450,11 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
         session = built;
     }
 
-    if (env.epoch > 0 && env.epoch < session.epoch) {
-        console.log(`[sync] [${from}] ignoring stale description (epoch ${env.epoch} < ${session.epoch})`);
+    if (env.epoch > 0 && env.epoch < session.peerEpoch) {
+        console.log(`[sync] [${from}] ignoring stale description (epoch ${env.epoch} < peerEpoch ${session.peerEpoch})`);
         return;
     }
+    if (env.epoch > session.peerEpoch) session.peerEpoch = env.epoch;
 
     const { pc } = session;
     const description = env.description;
@@ -465,7 +489,7 @@ async function handleIceCandidate(from: string, env: IceEnvelope): Promise<void>
         console.warn(`[sync] [${from}] ICE candidate with no session, dropping`);
         return;
     }
-    if (env.epoch > 0 && env.epoch < session.epoch) return;
+    if (env.epoch > 0 && env.epoch < session.peerEpoch) return;
     try {
         await session.pc.addIceCandidate(new RTCIceCandidate(env.candidate));
     } catch (e) {
@@ -507,6 +531,48 @@ function pauseAllReconnects(): void {
         clearSessionTimers(session);
         session.reconnectAttempts = 0;
     }
+}
+
+// User-triggered "Reconnect now" for a single peer. Cancels any pending backoff
+// wait, resets the attempt counter, lifts an explicit-disconnect suppression, and
+// starts a fresh connection immediately. No-op if the peer is already connected.
+export async function reconnectPeer(peerNodeId: string): Promise<void> {
+    if (!identity) {
+        console.warn('[sync] reconnectPeer() called before identity was loaded, aborting');
+        return;
+    }
+    if (get(signalingStatus) !== 'connected') {
+        console.warn(`[sync] reconnectPeer(${peerNodeId}) ignored - signaling not connected`);
+        return;
+    }
+    const pair = get(pairedDevices).find((p) => p.peer_node_id === peerNodeId);
+    if (!pair) {
+        console.warn(`[sync] reconnectPeer(${peerNodeId}) - no matching pair, ignoring`);
+        return;
+    }
+
+    suppressReconnect.delete(peerNodeId);
+
+    const existing = sessions.get(peerNodeId);
+    if (existing) {
+        if (existing.pc.connectionState === 'connected' && existing.dataChannel?.readyState === 'open') {
+            console.log(`[sync] reconnectPeer(${peerNodeId}) - already connected, ignoring`);
+            return;
+        }
+        clearSessionTimers(existing);
+        existing.reconnectAttempts = 0;
+    }
+
+    // Initiate unconditionally (even when we are the polite peer): the user asked
+    // for a connection *now*, so we should not sit on the promote timeout waiting
+    // for the other side to offer. Perfect negotiation resolves the collision if
+    // both peers do this at once. Matches initiateOffer() on the pairing path.
+    console.log(`[sync] reconnectPeer(${peerNodeId}) - forcing immediate reconnect`);
+    markPeerReconnecting(peerNodeId, true);
+    await ensurePeerConnection(pair.peer_node_id, pair.room_id, pair.peer_display_name, {
+        initiate: true,
+        force: true,
+    });
 }
 
 export async function reconnectAllPairedDevices(reason: string): Promise<void> {

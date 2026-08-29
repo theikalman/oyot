@@ -13,6 +13,10 @@ than editing the old one.
 | [0001](0001-mqtt-over-iroh-for-signaling.md) | Use MQTT over Iroh's public relay for WebRTC signaling | Accepted |
 | [0002](0002-signaling-retry-and-perfect-negotiation.md) | MQTT reconnect and perfect negotiation for peer connections | Accepted |
 | [0003](0003-full-document-set-sync.md) | Reconcile the whole document set with a manifest + delta protocol | Accepted |
+| [0004](0004-manual-reconnect-and-per-direction-epoch.md) | Bring back a manual "Reconnect", track the epoch per direction | Accepted |
+| [0005](0005-attachment-sync.md) | Sync image attachments as content-addressed blobs alongside the CRDT | Accepted |
+| [0006](0006-answer-every-sync-need.md) | Every `sync-need` gets an answer (`sync-none` when there is no delta) | Accepted |
+| [0007](0007-drop-protocol-version.md) | Drop the sync protocol version and the `hello` handshake | Accepted |
 
 ## Format
 

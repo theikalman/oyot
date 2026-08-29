@@ -90,6 +90,25 @@ class FakeRepo {
             d.ydoc = new Y.Doc();
         }
     }
+
+    // --- attachments ---
+    attachments = new Map<string, { mime: string; data: string }>();
+
+    async listAttachments(): Promise<{ hash: string; mime: string; size: number }[]> {
+        return [...this.attachments].map(([hash, a]) => ({ hash, mime: a.mime, size: a.data.length }));
+    }
+
+    async hasAttachment(hash: string): Promise<boolean> {
+        return this.attachments.has(hash);
+    }
+
+    async readAttachment(hash: string): Promise<{ mime: string; data: string } | null> {
+        return this.attachments.get(hash) ?? null;
+    }
+
+    async saveAttachment(hash: string, mime: string, data: string): Promise<void> {
+        this.attachments.set(hash, { mime, data });
+    }
 }
 
 function silentSink(): SyncProgressSink {
@@ -230,12 +249,46 @@ describe('DocSyncProtocol', () => {
             return r;
         };
 
-        await converge(a, b);
+        const { syncedA, syncedB } = await converge(a, b);
         assertConverged(a, b);
         expect(a.text('doc')).toBe('shared MORE');
         // a real delta moved, and it is smaller than a full re-encode
         expect(deltaBytes).toBeGreaterThan(0);
         expect(deltaBytes).toBeLessThan(Y.encodeStateAsUpdate(a.docs.get('doc')!.ydoc).length);
+        // the side that had nothing to send (A) still settles the doc and
+        // reaches "synced" - it is not left waiting on B's `sync-need`.
+        expect(syncedA && syncedB).toBe(true);
+    });
+
+    it('a `sync-need` the holder cannot fill is answered with `sync-none`', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        // Same doc, but B is strictly ahead - A has no delta for B's request.
+        a.seed('doc', 'base');
+        b.docs.set('doc', { ...a.docs.get('doc')!, ydoc: new Y.Doc() });
+        Y.applyUpdate(b.docs.get('doc')!.ydoc, Y.encodeStateAsUpdate(a.docs.get('doc')!.ydoc));
+        b.docs.get('doc')!.ydoc.getText('content').insert(4, '!');
+
+        const queue: Array<{ to: 'a' | 'b'; msg: SyncMessage }> = [];
+        const pa = new DocSyncProtocol(a as never, (m) => void queue.push({ to: 'b', msg: m }), silentSink());
+        const pb = new DocSyncProtocol(b as never, (m) => void queue.push({ to: 'a', msg: m }), silentSink());
+
+        await pa.start();
+        await pb.start();
+
+        let aSentNone = false;
+        let guard = 0;
+        while (queue.length > 0) {
+            if (guard++ > 5000) throw new Error('did not converge');
+            const { to, msg } = queue.shift()!;
+            if (to === 'b' && msg.t === 'sync-none') aSentNone = true;
+            await (to === 'a' ? pa : pb).handle(msg);
+        }
+        pa.dispose();
+        pb.dispose();
+
+        expect(aSentNone).toBe(true); // A answered rather than going silent
+        expect(a.text('doc')).toBe('base!'); // and B's edit still reached A
     });
 
     it('idle reconnect of an identical set is a no-op', async () => {
@@ -251,5 +304,44 @@ describe('DocSyncProtocol', () => {
 
         await converge(a, b);
         expect(deltas).toBe(0);
+    });
+
+    it('a peer pulls attachment bytes it is missing', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.attachments.set('abc123', { mime: 'image/png', data: 'AAAA' });
+        a.attachments.set('def456', { mime: 'image/jpeg', data: 'BBBB' });
+        b.attachments.set('abc123', { mime: 'image/png', data: 'AAAA' }); // already has one
+
+        await converge(a, b);
+
+        expect(b.attachments.get('def456')).toEqual({ mime: 'image/jpeg', data: 'BBBB' });
+        expect(a.attachments.size).toBe(2); // unchanged
+    });
+
+    it('attachment transfer does not block the document finish gate', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('d1', 'hello');
+        a.attachments.set('img', { mime: 'image/png', data: 'X'.repeat(1000) });
+
+        const { syncedA, syncedB } = await converge(a, b);
+
+        expect(syncedA && syncedB).toBe(true);
+        expect(b.attachments.has('img')).toBe(true);
+    });
+
+    it('a holder that lost the bytes answers attach-missing without crashing', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        // A advertises a hash (via a hand-rolled manifest) it cannot actually serve.
+        const sent: SyncMessage[] = [];
+        const proto = new DocSyncProtocol(b as never, (m) => void sent.push(m), silentSink());
+        await proto.start();
+        await proto.handle({ t: 'attach-manifest', items: [{ hash: 'ghost', mime: 'image/png', size: 1 }] });
+        await proto.handle({ t: 'attach-missing', hash: 'ghost' });
+
+        expect(b.attachments.has('ghost')).toBe(false);
+        proto.dispose();
     });
 });

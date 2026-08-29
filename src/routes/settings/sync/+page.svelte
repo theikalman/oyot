@@ -19,6 +19,7 @@
         sendPairRequest,
         respondToPairRequest,
         disconnectPeer,
+        reconnectPeer,
     } from '$lib/sync';
     import { IdentityCard } from '$lib/settings';
     import { SignalingConfig } from '$lib/settings';
@@ -88,6 +89,10 @@
         disconnectPeer(roomId);
     }
 
+    async function handleReconnect(peerNodeId: string) {
+        await reconnectPeer(peerNodeId);
+    }
+
     async function handleRemovePeer(peerNodeId: string) {
         try {
             await invoke('remove_pair', { peerNodeId });
@@ -122,6 +127,7 @@
         pairedDevices={paired}
         connectedPeers={connected}
         onDisconnect={handleDisconnect}
+        onReconnect={handleReconnect}
         onRemove={handleRemovePeer}
     />
 
