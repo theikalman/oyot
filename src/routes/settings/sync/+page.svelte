@@ -19,7 +19,7 @@
         sendPairRequest,
         respondToPairRequest,
         disconnectPeer,
-    } from '$lib/services/WebRtcSyncService';
+    } from '$lib/sync';
     import { IdentityCard } from '$lib/settings';
     import { SignalingConfig } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';

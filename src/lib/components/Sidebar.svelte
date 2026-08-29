@@ -1,10 +1,15 @@
 <script lang="ts">
     import { appStore, documents } from '../stores/app';
-    import { pairedDevices, connectedPeerIds } from '../stores/sync';
+    import { pairedDevices, connectedPeerIds, roomSync } from '../stores/sync';
     import type { Document, DocumentSummary } from '../types';
     import { invoke } from "@tauri-apps/api/core";
     import { goto } from "$app/navigation";
-    import { broadcastDocCreated, broadcastDocRenamed, broadcastDocDeleted } from '../services/WebRtcSyncService';
+    import {
+        createNote,
+        createJournalForDate as createJournalForDateAction,
+        renameDocument,
+        deleteDocument as deleteDocumentAction,
+    } from '../services/documentActions';
 
     function handleDocClick(doc: DocumentSummary) {
         invoke<Document>('get_document', { docId: doc.id }).then(fullDoc => {
@@ -37,26 +42,7 @@
         if (!newDocTitle.trim()) return;
 
         try {
-            const newDoc: Document = await invoke('create_document', {
-                docType: 'note',
-                title: newDocTitle.trim(),
-                crdtState: []
-            });
-
-            const summary: DocumentSummary = {
-                id: newDoc.id,
-                doc_type: newDoc.doc_type,
-                title: newDoc.title,
-                todo_count: 0,
-                completed_todo_count: 0,
-                created_at: newDoc.created_at,
-                updated_at: newDoc.updated_at,
-                has_content: false
-            };
-            appStore.addDocument(summary);
-            appStore.setCurrentDocument(newDoc);
-            broadcastDocCreated(newDoc);
-
+            await createNote(newDocTitle.trim());
             newDocTitle = '';
             showModal = false;
         } catch (error) {
@@ -99,23 +85,11 @@
 
     async function confirmRename() {
         if (!renameDoc || !renameTitle.trim()) return;
-        const target = renameDoc;
-        const docId = target.id;
+        const docId = renameDoc.id;
         const title = renameTitle.trim();
 
         try {
-            const updated: Document = await invoke('update_document', { docId, title });
-            broadcastDocRenamed(docId, title, updated.updated_at);
-
-            appStore.updateDocumentInList({
-                ...target,
-                title: updated.title,
-                updated_at: updated.updated_at
-            });
-
-            if (currentDocId === docId) {
-                appStore.setCurrentDocument(updated);
-            }
+            await renameDocument(docId, title);
         } catch (err) {
             console.error('[Sidebar] Failed to rename document:', err);
         } finally {
@@ -142,9 +116,7 @@
         }
 
         try {
-            await invoke('delete_document', { docId });
-            broadcastDocDeleted(docId);
-            appStore.removeDocument(docId);
+            await deleteDocumentAction(docId);
 
             if (wasOpen) {
                 const nextNote = filterNotes().find((d: DocumentSummary) => d.id !== docId);
@@ -213,25 +185,7 @@
 
     async function createJournalForDate(dateTitle: string) {
         try {
-            const newDoc: Document = await invoke('create_document', {
-                docType: 'journal',
-                title: dateTitle,
-                crdtState: []
-            });
-
-            const summary: DocumentSummary = {
-                id: newDoc.id,
-                doc_type: newDoc.doc_type,
-                title: newDoc.title,
-                todo_count: 0,
-                completed_todo_count: 0,
-                created_at: newDoc.created_at,
-                updated_at: newDoc.updated_at,
-                has_content: false
-            };
-            appStore.addDocument(summary);
-            appStore.setCurrentDocument(newDoc);
-            broadcastDocCreated(newDoc);
+            await createJournalForDateAction(dateTitle);
         } catch (err) {
             console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
         }
@@ -373,10 +327,24 @@
                 {:else}
                     <ul class="device-list">
                         {#each $pairedDevices as device}
+                            {@const online = $connectedPeerIds.has(device.peer_node_id)}
+                            {@const rs = $roomSync[device.room_id]}
                             <li class="device-item">
-                                <span class="device-dot" class:online={$connectedPeerIds.has(device.peer_node_id)}></span>
+                                <span class="device-dot" class:online></span>
                                 <span class="device-name">{device.peer_display_name}</span>
-                                <span class="device-status">{$connectedPeerIds.has(device.peer_node_id) ? 'Online' : 'Offline'}</span>
+                                <span class="device-status">
+                                    {#if !online}
+                                        Offline
+                                    {:else if rs?.phase === 'transferring' && rs.total > 0}
+                                        {rs.total - rs.pending}/{rs.total}
+                                    {:else if rs?.phase === 'reconciling' || rs?.phase === 'transferring'}
+                                        Syncing…
+                                    {:else if rs?.phase === 'error'}
+                                        Error
+                                    {:else}
+                                        Online
+                                    {/if}
+                                </span>
                             </li>
                         {/each}
                     </ul>

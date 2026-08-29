@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Document, DocumentSummary, SearchResult, Theme, ViewMode, SyncPeer } from '../types';
+import type { Document, DocumentSummary, SearchResult, Theme, ViewMode } from '../types';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
@@ -52,43 +52,3 @@ export const currentDocument = derived(appStore, $s => $s.currentDocument);
 export const documents = derived(appStore, $s => $s.documents);
 export const isLoading = derived(appStore, $s => $s.isLoading);
 export const theme = derived(appStore, $s => $s.theme);
-
-export type SyncStatus = 'synced' | 'syncing' | 'offline';
-
-function createSyncStore() {
-    const { subscribe, set, update } = writable({
-        nodeId: null as string | null,
-        peers: [] as SyncPeer[],
-        status: 'offline' as SyncStatus,
-        isEnabled: false
-    });
-
-    return {
-        subscribe,
-        setNodeId: (nodeId: string) => update(s => ({ ...s, nodeId })),
-        setPeers: (peers: SyncPeer[]) => update(s => ({ ...s, peers })),
-        addPeer: (peer: SyncPeer) => update(s => ({
-            ...s,
-            peers: [...s.peers.filter(p => p.node_id !== peer.node_id), peer]
-        })),
-        removePeer: (nodeId: string) => update(s => ({
-            ...s,
-            peers: s.peers.filter(p => p.node_id !== nodeId)
-        })),
-        setStatus: (status: SyncStatus) => update(s => ({ ...s, status })),
-        setEnabled: (enabled: boolean) => update(s => ({ ...s, isEnabled: enabled })),
-        markPeerOnline: (nodeId: string) => update(s => ({
-            ...s,
-            peers: s.peers.map(p => p.node_id === nodeId ? { ...p, is_online: true } : p)
-        })),
-        markPeerOffline: (nodeId: string) => update(s => ({
-            ...s,
-            peers: s.peers.map(p => p.node_id === nodeId ? { ...p, is_online: false } : p)
-        }))
-    };
-}
-
-export const syncStore = createSyncStore();
-export const nodeId = derived(syncStore, $s => $s.nodeId);
-export const syncPeers = derived(syncStore, $s => $s.peers);
-export const syncStatus = derived(syncStore, $s => $s.status);

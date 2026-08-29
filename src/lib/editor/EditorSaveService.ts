@@ -1,9 +1,9 @@
-import { invoke } from '@tauri-apps/api/core';
 import * as Y from 'yjs';
 import { toasts } from '$lib/services/toast';
 import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';
-import { broadcastDocUpdate } from '$lib/services/WebRtcSyncService';
+import { documentRepository, broadcastLocalUpdate } from '$lib/sync';
+import { bytesToBase64 } from '$lib/sync/protocol';
 
 export interface SaveServiceOptions {
     debounceMs?: number;
@@ -67,23 +67,17 @@ export class EditorSaveService {
 
         try {
             const snapshot = Y.encodeStateAsUpdate(this.ydoc);
-            const mergedState = Array.from(snapshot);
-            const update = Array.from(snapshot);
 
-            if (update.length === 0) {
+            if (snapshot.length === 0) {
                 console.warn(`[EditorSaveService] [${docId}] No update to save, skipping`);
                 return null;
             }
 
-            console.log(`[EditorSaveService] [${docId}] Saving Yjs state (${update.length} bytes)`);
-            await invoke('save_yjs_update', {
-                docId,
-                update,
-                mergedState,
-            });
-            console.log(`[EditorSaveService] [${docId}] save_yjs_update completed`);
+            console.log(`[EditorSaveService] [${docId}] Saving Yjs state (${snapshot.length} bytes)`);
+            await documentRepository.saveLocalUpdate(docId, snapshot);
+            console.log(`[EditorSaveService] [${docId}] save completed`);
 
-            broadcastDocUpdate(docId, snapshot);
+            broadcastLocalUpdate(docId, bytesToBase64(snapshot));
 
             appStore.markDocumentHasContent(docId);
             return this.currentDoc;
