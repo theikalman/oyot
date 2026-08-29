@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { ConnectedPeer } from '$lib/stores/sync';
-    import { formatLastSync } from '$lib/stores/sync';
+    import { formatLastSync, reconnectingPeerIds } from '$lib/stores/sync';
 
     interface Props {
         pairedDevices: Array<{
@@ -12,13 +12,21 @@
         connectedPeers: ConnectedPeer[];
         onDisconnect: (roomId: string) => void;
         onRemove: (peerNodeId: string) => void;
-        onReconnect: (pair: { peer_node_id: string; peer_display_name: string; room_id: string; last_synchronized: number | null }) => void;
     }
 
-    let { pairedDevices, connectedPeers, onDisconnect, onRemove, onReconnect }: Props = $props();
+    let { pairedDevices, connectedPeers, onDisconnect, onRemove }: Props = $props();
 
     function isConnected(roomId: string): boolean {
         return connectedPeers.some(p => p.room_id === roomId);
+    }
+
+    // The app reconnects paired devices automatically (on startup, when signaling
+    // recovers, and with backoff after a drop), so there is no manual reconnect
+    // action - just a live hint while an attempt is in flight.
+    function peerStatus(pair: { peer_node_id: string; room_id: string }): 'connected' | 'connecting' | 'offline' {
+        if (isConnected(pair.room_id)) return 'connected';
+        if ($reconnectingPeerIds.has(pair.peer_node_id)) return 'connecting';
+        return 'offline';
     }
 </script>
 
@@ -29,13 +37,14 @@
     {:else}
         <ul class="peer-list">
             {#each pairedDevices as pair}
+                {@const pstatus = peerStatus(pair)}
                 <li class="peer-item">
                     <div class="peer-info">
                         <div class="peer-header">
                             <span class="peer-icon">📱</span>
                             <span class="peer-name">{pair.peer_display_name}</span>
-                            <span class="peer-status {isConnected(pair.room_id) ? 'online' : 'offline'}">
-                                {isConnected(pair.room_id) ? 'Connected' : 'Offline'}
+                            <span class="peer-status {pstatus === 'connected' ? 'online' : pstatus}">
+                                {pstatus === 'connected' ? 'Connected' : pstatus === 'connecting' ? 'Connecting…' : 'Offline'}
                             </span>
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>
@@ -44,14 +53,11 @@
                         {/if}
                     </div>
                     <div class="peer-actions">
-                        {#if isConnected(pair.room_id)}
+                        {#if pstatus === 'connected'}
                             <button class="btn-danger" onclick={() => onDisconnect(pair.room_id)}>
                                 Disconnect
                             </button>
                         {:else}
-                            <button class="btn-secondary" onclick={() => onReconnect(pair)}>
-                                Reconnect
-                            </button>
                             <button class="btn-danger" onclick={() => onRemove(pair.peer_node_id)}>
                                 Remove
                             </button>
@@ -125,9 +131,17 @@
         background: var(--bg-hover);
         color: var(--text-muted);
     }
+    .peer-status.connecting {
+        background: #fef3c7;
+        color: #92400e;
+    }
     :global([data-theme="dark"]) .peer-status.online {
         background: #14532d;
         color: #86efac;
+    }
+    :global([data-theme="dark"]) .peer-status.connecting {
+        background: #451a03;
+        color: #fcd34d;
     }
     .peer-id {
         font-family: monospace;
@@ -155,17 +169,5 @@
     }
     .btn-danger:hover {
         background: #fef2f2;
-    }
-    .btn-secondary {
-        padding: 6px 12px;
-        background: transparent;
-        color: var(--text-primary);
-        border: 1px solid var(--border-light);
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-    }
-    .btn-secondary:hover {
-        background: var(--bg-hover);
     }
 </style>

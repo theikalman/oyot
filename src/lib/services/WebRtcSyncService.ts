@@ -735,14 +735,6 @@ export async function initiateOffer(peerNodeId: string, peerUserId: string, peer
     await ensurePeerConnection(peerNodeId, roomId, peerDisplayName, { initiate: true, force: true });
 }
 
-// Re-establishes a WebRTC connection to a device we're already paired with. The
-// automatic sweep / backoff paths call ensurePeerConnection directly; this stays
-// for the manual "Reconnect" affordance.
-export async function reconnectToPeer(pair: DevicePair): Promise<void> {
-    suppressReconnect.delete(pair.peer_node_id);
-    await ensurePeerConnection(pair.peer_node_id, pair.room_id, pair.peer_display_name, { initiate: true, force: true });
-}
-
 // Step 1 of the pairing handshake: tell a specific node_id (typed or QR-scanned into the
 // same input field, never picked from an open discovery list) that we'd like to pair.
 export async function sendPairRequest(peerNodeId: string): Promise<void> {
