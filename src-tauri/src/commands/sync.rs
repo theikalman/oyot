@@ -96,6 +96,23 @@ pub async fn save_yjs_update(
     Ok(())
 }
 
+// Sets only the content hash for a document, without touching crdt_state or the
+// update log. Used by the one-time hash backfill after upgrading.
+#[tauri::command]
+pub fn set_content_hash(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    content_hash: Vec<u8>,
+) -> Result<(), String> {
+    let db = state.db.lock();
+    db.execute(
+        "UPDATE documents SET content_hash = ? WHERE id = ?",
+        params![&content_hash, &doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn load_document(
     state: tauri::State<'_, AppState>,

@@ -281,6 +281,7 @@ pub fn run() {
             get_all_attachment_hashes,
             get_yjs_state,
             save_yjs_update,
+            set_content_hash,
             load_document,
             get_identity,
             set_display_name,
