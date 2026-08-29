@@ -92,15 +92,21 @@ impl SignalingManager {
 
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
         eprintln!("[Signaling] connect() broker_url={} node_id={}", broker_url, node_id);
-        let client = MqttSignalingClient::new(broker_url, node_id).await?;
 
-        // Only ever subscribe to our own node-scoped topics. Nothing broadcasts presence
-        // and nothing is discoverable except by a device that already knows our node_id
-        // out-of-band (QR/manual entry).
-        for suffix in ["pair-request", "pair-response", "offer", "answer", "ice-candidate"] {
-            client.subscribe(&format!("signaling/{}/{}", node_id, suffix)).await?;
+        // Tear down any previous client generation so its reconnect loop and publish
+        // task stop instead of racing the new one.
+        if let Some(old) = self.mqtt_client.lock().take() {
+            eprintln!("[Signaling] Shutting down previous MQTT client generation");
+            old.shutdown();
         }
-        eprintln!("[Signaling] Subscribed to node-scoped signaling topics for node_id={}", node_id);
+
+        let client = MqttSignalingClient::new(broker_url, node_id).await?;
+        // Topic subscription now happens inside the client's poll loop on every
+        // ConnAck, so it is replayed automatically after a reconnect.
+
+        if let Some(app_handle) = &self.app_handle {
+            let _ = app_handle.emit("mqtt-status", "connecting");
+        }
 
         let (publish_tx, mut publish_rx) = mpsc::channel::<(String, Vec<u8>)>(100);
         let mqtt_client_clone = self.mqtt_client.clone();
@@ -256,13 +262,30 @@ impl SignalingManager {
 
     pub fn disconnect(&self) {
         eprintln!("[Signaling] disconnect() called, tearing down MQTT client");
-        *self.mqtt_client.lock() = None;
+        if let Some(old) = self.mqtt_client.lock().take() {
+            old.shutdown();
+        }
         *self.publish_tx.lock() = None;
         self.authorized_peers.lock().clear();
     }
 
+    /// True only while a live MQTT session exists (post-ConnAck). False while
+    /// connecting, reconnecting after a drop, or fully disconnected.
     pub fn is_connected(&self) -> bool {
-        self.mqtt_client.lock().is_some()
+        self.mqtt_client
+            .lock()
+            .as_ref()
+            .map(|c| c.is_connected())
+            .unwrap_or(false)
+    }
+
+    /// Tri-state view for the frontend: "connected" | "connecting" | "disconnected".
+    pub fn mqtt_connection_status(&self) -> &'static str {
+        match &*self.mqtt_client.lock() {
+            None => "disconnected",
+            Some(c) if c.is_connected() => "connected",
+            Some(_) => "connecting",
+        }
     }
 
     async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
