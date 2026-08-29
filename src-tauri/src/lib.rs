@@ -348,7 +348,6 @@ pub fn run() {
             create_document,
             update_document,
             delete_document,
-            list_document_metadata,
             list_document_sync_state,
             ensure_document,
             apply_remote_rename,

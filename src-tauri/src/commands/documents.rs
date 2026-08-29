@@ -174,39 +174,6 @@ pub struct DocSyncEntry {
     pub content_hash: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DocumentMetadataEntry {
-    pub id: String,
-    pub doc_type: String,
-    pub title: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-// Legacy manifest (metadata only, no tombstones/hash). Superseded by
-// list_document_sync_state; kept until the v1 sync protocol path is removed.
-#[tauri::command]
-pub fn list_document_metadata(state: tauri::State<'_, AppState>) -> Result<Vec<DocumentMetadataEntry>, String> {
-    let db = state.db.lock();
-    let mut stmt = db
-        .prepare("SELECT id, type, title, created_at, updated_at FROM documents WHERE is_deleted = 0")
-        .map_err(|e| e.to_string())?;
-    let entries: Vec<DocumentMetadataEntry> = stmt
-        .query_map([], |row| {
-            Ok(DocumentMetadataEntry {
-                id: row.get(0)?,
-                doc_type: row.get(1)?,
-                title: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(entries)
-}
-
 // The full document manifest a paired device sends on connect so the peer can
 // reconcile its entire document set: every row including tombstones, each with a
 // `content_hash` (change detector) and `title_updated_at` (last-writer-wins on
