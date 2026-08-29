@@ -97,6 +97,9 @@ export class DocSyncProtocol {
             case 'sync-delta':
                 await this.onDelta(msg.id, msg.update);
                 return;
+            case 'sync-none':
+                this.onNone(msg.id);
+                return;
             case 'sync-done':
                 this.peerDone = true;
                 this.maybeFinish();
@@ -319,9 +322,25 @@ export class DocSyncProtocol {
         try {
             const update = await this.repo.computeDelta(id, sv);
             if (update) this.send({ t: 'sync-delta', id, update });
+            else this.send({ t: 'sync-none', id });
         } catch (e) {
             console.error(`[sync] computeDelta failed for ${id}:`, e);
+            // Still answer, so the asker does not wait out its timeouts. Its
+            // next reconnect's manifest re-attempts the exchange.
+            this.send({ t: 'sync-none', id });
         }
+    }
+
+    // The holder has nothing for us on this doc - settle it now.
+    private onNone(id: string): void {
+        const wasTracked = this.inFlight.delete(id);
+        const timer = this.timers.get(id);
+        if (timer) {
+            clearTimeout(timer);
+            this.timers.delete(id);
+        }
+        if (wasTracked) this.settle();
+        else this.pump();
     }
 
     private async onDelta(id: string, update: string): Promise<void> {

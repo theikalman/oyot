@@ -249,12 +249,46 @@ describe('DocSyncProtocol', () => {
             return r;
         };
 
-        await converge(a, b);
+        const { syncedA, syncedB } = await converge(a, b);
         assertConverged(a, b);
         expect(a.text('doc')).toBe('shared MORE');
         // a real delta moved, and it is smaller than a full re-encode
         expect(deltaBytes).toBeGreaterThan(0);
         expect(deltaBytes).toBeLessThan(Y.encodeStateAsUpdate(a.docs.get('doc')!.ydoc).length);
+        // the side that had nothing to send (A) still settles the doc and
+        // reaches "synced" - it is not left waiting on B's `sync-need`.
+        expect(syncedA && syncedB).toBe(true);
+    });
+
+    it('a `sync-need` the holder cannot fill is answered with `sync-none`', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        // Same doc, but B is strictly ahead - A has no delta for B's request.
+        a.seed('doc', 'base');
+        b.docs.set('doc', { ...a.docs.get('doc')!, ydoc: new Y.Doc() });
+        Y.applyUpdate(b.docs.get('doc')!.ydoc, Y.encodeStateAsUpdate(a.docs.get('doc')!.ydoc));
+        b.docs.get('doc')!.ydoc.getText('content').insert(4, '!');
+
+        const queue: Array<{ to: 'a' | 'b'; msg: SyncMessage }> = [];
+        const pa = new DocSyncProtocol(a as never, (m) => void queue.push({ to: 'b', msg: m }), silentSink());
+        const pb = new DocSyncProtocol(b as never, (m) => void queue.push({ to: 'a', msg: m }), silentSink());
+
+        await pa.start();
+        await pb.start();
+
+        let aSentNone = false;
+        let guard = 0;
+        while (queue.length > 0) {
+            if (guard++ > 5000) throw new Error('did not converge');
+            const { to, msg } = queue.shift()!;
+            if (to === 'b' && msg.t === 'sync-none') aSentNone = true;
+            await (to === 'a' ? pa : pb).handle(msg);
+        }
+        pa.dispose();
+        pb.dispose();
+
+        expect(aSentNone).toBe(true); // A answered rather than going silent
+        expect(a.text('doc')).toBe('base!'); // and B's edit still reached A
     });
 
     it('idle reconnect of an identical set is a no-op', async () => {

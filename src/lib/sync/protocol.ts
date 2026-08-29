@@ -12,9 +12,10 @@
 //
 // See docs/decisions/0003-full-document-set-sync.md.
 
-// v3 adds attachment (image binary) reconciliation - `attach-*` messages. A v2
-// peer never sends `attach-manifest`, so it simply never transfers images; the
-// `hello` mismatch already surfaces it as "needs updating".
+// v3 adds attachment (image binary) reconciliation (`attach-*`) and makes every
+// `sync-need` get an answer (`sync-none` when the holder has no delta). A v2
+// peer speaks neither; the `hello` mismatch already surfaces it as "needs
+// updating".
 export const SYNC_PROTOCOL_VERSION = 3;
 
 // One document as advertised in a `sync-manifest`. Mirrors the Rust
@@ -47,6 +48,10 @@ export type SyncMessage =
     | { t: 'sync-need'; id: string; sv: string }
     // update = base64(Y.encodeStateAsUpdate(doc, remoteSv)); framing layer chunks it.
     | { t: 'sync-delta'; id: string; update: string }
+    // answer to a `sync-need` when the holder has nothing the asker is missing
+    // (asker is equal-or-ahead). Lets the asker settle the doc at once instead
+    // of waiting out two `sync-need` timeouts.
+    | { t: 'sync-none'; id: string }
     // sender has emitted every `sync-need` it intends to.
     | { t: 'sync-done' }
     // --- steady-state optimisations ---
