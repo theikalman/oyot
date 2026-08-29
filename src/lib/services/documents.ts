@@ -26,53 +26,6 @@ export async function loadDocument(id: string): Promise<Document> {
     }
 }
 
-export async function createDocument(
-    docType: DocType,
-    title: string,
-    crdtState?: Uint8Array
-): Promise<Document> {
-    try {
-        const doc: Document = await invoke('create_document', {
-            docType,
-            title,
-            crdtState: crdtState ? Array.from(crdtState) : []
-        });
-        return doc;
-    } catch (error) {
-        console.error('Failed to create document:', error);
-        toasts.error('Failed to create document');
-        throw error;
-    }
-}
-
-export async function saveCrdtUpdate(
-    docId: string,
-    update: Uint8Array
-): Promise<Document> {
-    try {
-        const doc: Document = await invoke('save_crdt_update', {
-            docId,
-            update: Array.from(update)
-        });
-        return doc;
-    } catch (error) {
-        console.error('Failed to save document:', error);
-        toasts.error('Failed to save document');
-        throw error;
-    }
-}
-
-export async function getOrCreateTodayJournal(): Promise<Document> {
-    try {
-        const doc: Document = await invoke('get_or_create_today_journal');
-        return doc;
-    } catch (error) {
-        console.error('Failed to get/create today journal:', error);
-        toasts.error('Failed to get today journal');
-        throw error;
-    }
-}
-
 export async function cleanupOrphanedImages(): Promise<number> {
     try {
         const count: number = await invoke('cleanup_orphaned_images');
