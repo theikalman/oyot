@@ -8,11 +8,19 @@ RUST_PATH := /opt/homebrew/opt/rustup/bin:$(HOME)/.rustup/toolchains/stable-aarc
 export PATH := $(RUST_PATH):$(PATH)
 endif
 
-# Android SDK — override by setting env vars before calling make
+# Android SDK - override by setting env vars before calling make
 ANDROID_HOME ?= $(HOME)/Android
 ANDROID_SDK_ROOT ?= $(HOME)/Android
 export ANDROID_HOME
 export ANDROID_SDK_ROOT
+
+# Android NDK - must match `ndkVersion` in src-tauri/gen/android/app/build.gradle.kts.
+# Used both by the Rust cross-compile (Tauri) and by AGP's native-debug-symbol extraction.
+ANDROID_NDK_VERSION ?= 30.0.15729638
+ANDROID_NDK_HOME ?= $(ANDROID_HOME)/ndk/$(ANDROID_NDK_VERSION)
+NDK_HOME ?= $(ANDROID_NDK_HOME)
+export ANDROID_NDK_HOME
+export NDK_HOME
 
 help:
 	@echo "Available commands:"
@@ -131,14 +139,27 @@ release-android:
 
 release-android-aab:
 	@echo "Building Android App Bundle..."
-	npm run tauri android build -- --aab
 	@mkdir -p dist/android
+	@echo "Using NDK: $(ANDROID_NDK_HOME)"
+	@test -d "$(ANDROID_NDK_HOME)" || { \
+		echo "ERROR: NDK not found at $(ANDROID_NDK_HOME)"; \
+		echo "Install it (sdkmanager \"ndk;$(ANDROID_NDK_VERSION)\") or set ANDROID_NDK_VERSION/ANDROID_NDK_HOME."; \
+		exit 1; \
+	}
+	@echo "Pinning SDK + NDK for AGP (enables native debug symbol extraction)..."
+	@printf 'sdk.dir=%s\nndk.dir=%s\n' "$(ANDROID_HOME)" "$(ANDROID_NDK_HOME)" \
+		> src-tauri/gen/android/local.properties
+	npm run tauri android build -- --aab
 	cp $(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab \
 		$(REPOPATH)/oyot/dist/android/oyot-release.aab
 	jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
 		-keystore $(REPOPATH)/oyot/oyot.jks -storepass ajiyakin123 \
 		$(REPOPATH)/oyot/dist/android/oyot-release.aab oyot
-	@echo "Android App Bundle → dist/android/oyot-release.aab"
+	@unzip -l $(REPOPATH)/oyot/dist/android/oyot-release.aab \
+		| grep -q 'com.android.tools.build.debugsymbols' \
+		&& echo "OK: native debug symbols bundled in AAB" \
+		|| { echo "ERROR: native debug symbols missing from AAB (AGP could not find the NDK)"; exit 1; }
+	@echo "Android App Bundle -> dist/android/oyot-release.aab"
 
 release-ios:
 	@echo "Building iOS release..."

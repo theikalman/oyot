@@ -15,6 +15,9 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 36
+    // Must match ANDROID_NDK_VERSION in the repo Makefile. AGP needs a resolvable
+    // NDK to extract native debug symbols (debugSymbolLevel below) into the AAB.
+    ndkVersion = "30.0.15729638"
     namespace = "com.ajiyakin.oyot"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
