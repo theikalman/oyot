@@ -33,11 +33,6 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
-                jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
-                jniLibs.keepDebugSymbols.add("*/x86/*.so")
-                jniLibs.keepDebugSymbols.add("*/x86_64/*.so")
-            }
         }
         getByName("release") {
             isMinifyEnabled = true
@@ -57,6 +52,22 @@ android {
     }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+// Keep unstripped native symbols in the APK for DEBUG builds only (helps lldb / native
+// crash inspection). This must not leak into release: a project-wide
+// `packaging { jniLibs.keepDebugSymbols }` makes the release strip step a no-op, which in
+// turn makes AGP skip native-debug-symbol extraction for the AAB ("... has already been
+// stripped"), so Play Console reports missing debug symbols.
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.packaging.jniLibs.keepDebugSymbols.addAll(
+            "*/arm64-v8a/*.so",
+            "*/armeabi-v7a/*.so",
+            "*/x86/*.so",
+            "*/x86_64/*.so"
+        )
     }
 }
 

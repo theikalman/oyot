@@ -146,9 +146,8 @@ release-android-aab:
 		echo "Install it (sdkmanager \"ndk;$(ANDROID_NDK_VERSION)\") or set ANDROID_NDK_VERSION/ANDROID_NDK_HOME."; \
 		exit 1; \
 	}
-	@echo "Pinning SDK + NDK for AGP (enables native debug symbol extraction)..."
-	@printf 'sdk.dir=%s\nndk.dir=%s\n' "$(ANDROID_HOME)" "$(ANDROID_NDK_HOME)" \
-		> src-tauri/gen/android/local.properties
+	@echo "Pinning SDK dir for AGP (NDK is selected via ndkVersion in app/build.gradle.kts)..."
+	@printf 'sdk.dir=%s\n' "$(ANDROID_HOME)" > src-tauri/gen/android/local.properties
 	npm run tauri android build -- --aab
 	cp $(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab \
 		$(REPOPATH)/oyot/dist/android/oyot-release.aab
@@ -158,7 +157,7 @@ release-android-aab:
 	@unzip -l $(REPOPATH)/oyot/dist/android/oyot-release.aab \
 		| grep -q 'com.android.tools.build.debugsymbols' \
 		&& echo "OK: native debug symbols bundled in AAB" \
-		|| { echo "ERROR: native debug symbols missing from AAB (AGP could not find the NDK)"; exit 1; }
+		|| { echo "ERROR: native debug symbols missing from AAB - check the release strip step is not a no-op"; exit 1; }
 	@echo "Android App Bundle -> dist/android/oyot-release.aab"
 
 release-ios:
