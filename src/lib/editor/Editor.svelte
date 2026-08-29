@@ -9,7 +9,6 @@
     import EditorInstance from './EditorInstance.svelte';
     import { createSaveService, type EditorSaveService } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
-    import { requestDocSync } from '$lib/services/WebRtcSyncService';
     import * as Y from 'yjs';
 
     interface Props {
@@ -29,7 +28,6 @@
     let isSaving = $state(false);
     let unlistenSyncEvent: (() => void) | null = null;
     let previousDocId = $state<string | null>(null);
-    let lastRequestedSyncDocId: string | null = null;
 
     function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
@@ -119,10 +117,6 @@
         const newDoc = current;
         if (newDoc) {
             handleDocumentChange(newDoc, previousDocId ? { id: previousDocId } as Document : null);
-            if (newDoc.id !== lastRequestedSyncDocId) {
-                lastRequestedSyncDocId = newDoc.id;
-                requestDocSync(newDoc.id);
-            }
         }
     });
 </script>

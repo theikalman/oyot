@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { ConnectedPeer } from '$lib/stores/sync';
-    import { formatLastSync, reconnectingPeerIds } from '$lib/stores/sync';
+    import { formatLastSync, reconnectingPeerIds, roomSync } from '$lib/stores/sync';
 
     interface Props {
         pairedDevices: Array<{
@@ -28,6 +28,26 @@
         if ($reconnectingPeerIds.has(pair.peer_node_id)) return 'connecting';
         return 'offline';
     }
+
+    // Fine-grained label for a connected peer, from the document-sync phase.
+    function syncLabel(pair: { room_id: string; last_synchronized: number | null }): string {
+        const rs = $roomSync[pair.room_id];
+        if (!rs) return 'Connected';
+        switch (rs.phase) {
+            case 'reconciling':
+                return 'Syncing…';
+            case 'transferring':
+                return rs.total > 0 ? `Syncing ${rs.total - rs.pending}/${rs.total}…` : 'Syncing…';
+            case 'synced': {
+                const at = rs.lastSyncedAt ?? pair.last_synchronized;
+                return at ? `Synced · ${formatLastSync(at)}` : 'Synced';
+            }
+            case 'error':
+                return 'Sync error · retrying';
+            default:
+                return 'Connected';
+        }
+    }
 </script>
 
 <section class="section">
@@ -48,7 +68,9 @@
                             </span>
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>
-                        {#if pair.last_synchronized}
+                        {#if pstatus === 'connected'}
+                            <span class="peer-sync">{syncLabel(pair)}</span>
+                        {:else if pair.last_synchronized}
                             <span class="peer-sync">Last sync: {formatLastSync(pair.last_synchronized)}</span>
                         {/if}
                     </div>

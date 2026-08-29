@@ -29,6 +29,24 @@ export interface PendingPairRequest {
 export type SignalingStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
 
+// Per-room document-sync progress, driven by DocSyncProtocol.
+export type RoomSyncPhase =
+    | 'idle'
+    | 'connecting'
+    | 'reconciling'
+    | 'transferring'
+    | 'synced'
+    | 'error';
+
+export interface RoomSync {
+    phase: RoomSyncPhase;
+    pending: number;
+    total: number;
+    lastSyncedAt: number | null;
+}
+
+const EMPTY_ROOM_SYNC: RoomSync = { phase: 'idle', pending: 0, total: 0, lastSyncedAt: null };
+
 function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
@@ -37,6 +55,7 @@ function createSyncStore() {
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
+        roomSync: {} as Record<string, RoomSync>,
         isSyncEnabled: true,
         pendingPairRequest: null as PendingPairRequest | null,
         pairingState: null as PairingState,
@@ -66,6 +85,33 @@ function createSyncStore() {
                     : [...s.reconnectingPeers, peerNodeId])
                 : s.reconnectingPeers.filter(id => id !== peerNodeId),
         })),
+        setRoomSyncPhase: (roomId: string, phase: RoomSyncPhase) => update(s => ({
+            ...s,
+            roomSync: { ...s.roomSync, [roomId]: { ...(s.roomSync[roomId] ?? EMPTY_ROOM_SYNC), phase } },
+        })),
+        setRoomSyncProgress: (roomId: string, pending: number, total: number) => update(s => ({
+            ...s,
+            roomSync: {
+                ...s.roomSync,
+                [roomId]: {
+                    ...(s.roomSync[roomId] ?? EMPTY_ROOM_SYNC),
+                    pending,
+                    total,
+                    phase: pending > 0 ? 'transferring' : s.roomSync[roomId]?.phase ?? 'reconciling',
+                },
+            },
+        })),
+        markRoomSynced: (roomId: string, at: number) => update(s => ({
+            ...s,
+            roomSync: {
+                ...s.roomSync,
+                [roomId]: { ...(s.roomSync[roomId] ?? EMPTY_ROOM_SYNC), phase: 'synced', pending: 0, lastSyncedAt: at },
+            },
+        })),
+        clearRoomSync: (roomId: string) => update(s => {
+            const { [roomId]: _removed, ...rest } = s.roomSync;
+            return { ...s, roomSync: rest };
+        }),
         setPendingPairRequest: (req: PendingPairRequest | null) =>
             update(s => ({ ...s, pendingPairRequest: req })),
         setPairingState: (state: PairingState) => update(s => ({ ...s, pairingState: state })),
@@ -82,6 +128,15 @@ export const connectedPeerIds = derived(connectedPeers, $peers => new Set($peers
 export const reconnectingPeerIds = derived(syncStore, $s => new Set($s.reconnectingPeers));
 export const pendingPairRequest = derived(syncStore, $s => $s.pendingPairRequest);
 export const pairingState = derived(syncStore, $s => $s.pairingState);
+export const roomSync = derived(syncStore, $s => $s.roomSync);
+
+// Worst-case sync phase across currently-connected rooms, for the global badge.
+export const aggregateSyncPhase = derived(syncStore, ($s): RoomSyncPhase => {
+    if ($s.connectedPeers.length === 0) return 'idle';
+    const active = $s.connectedPeers.map(p => $s.roomSync[p.room_id]?.phase ?? 'connecting');
+    const order: RoomSyncPhase[] = ['error', 'connecting', 'idle', 'reconciling', 'transferring', 'synced'];
+    return order.find(p => active.includes(p)) ?? 'synced';
+});
 
 export function formatLastSync(timestamp: number | null): string {
     if (!timestamp) return 'Never';

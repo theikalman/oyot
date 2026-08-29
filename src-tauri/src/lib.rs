@@ -22,9 +22,12 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             type TEXT NOT NULL CHECK(type IN ('journal', 'note')),
             title TEXT NOT NULL,
             crdt_state BLOB,
+            content_hash BLOB,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
-            is_deleted INTEGER DEFAULT 0
+            title_updated_at INTEGER,
+            is_deleted INTEGER DEFAULT 0,
+            deleted_at INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS yjs_updates (
@@ -86,6 +89,135 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;
     Ok(())
+}
+
+/// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
+/// once and bumps the version. `setup_database_tables` still owns the base
+/// `CREATE TABLE IF NOT EXISTS` shape for fresh installs; this only carries
+/// existing databases forward.
+pub fn run_migrations(db: &Connection) -> Result<(), String> {
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    // v1: columns that let the sync layer reconcile the whole document set
+    // (content hash as a change detector, last-writer-wins title, delete
+    // tombstone timestamp). See docs/decisions/0003-full-document-set-sync.md.
+    if version < 1 {
+        // `ALTER TABLE ... ADD COLUMN` is not idempotent, so guard on a fresh
+        // install where the column may already exist from a newer base schema.
+        let has_content_hash = db
+            .prepare("SELECT content_hash FROM documents LIMIT 0")
+            .is_ok();
+        if !has_content_hash {
+            db.execute_batch(
+                "
+                ALTER TABLE documents ADD COLUMN content_hash BLOB;
+                ALTER TABLE documents ADD COLUMN title_updated_at INTEGER;
+                ALTER TABLE documents ADD COLUMN deleted_at INTEGER;
+                UPDATE documents SET title_updated_at = updated_at WHERE title_updated_at IS NULL;
+                ",
+            )
+            .map_err(|e| format!("Migration v1 failed: {}", e))?;
+        }
+        db.execute_batch("PRAGMA user_version = 1;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    // Simulates a database created before ADR 0003 (no content_hash column).
+    fn legacy_db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE documents (
+                id TEXT PRIMARY KEY NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                crdt_state BLOB,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                is_deleted INTEGER DEFAULT 0
+            );
+            INSERT INTO documents (id, type, title, created_at, updated_at)
+                VALUES ('d1', 'note', 'One', 100, 200);",
+        )
+        .unwrap();
+        db
+    }
+
+    fn column_exists(db: &Connection, col: &str) -> bool {
+        db.prepare(&format!("SELECT {col} FROM documents LIMIT 0")).is_ok()
+    }
+
+    #[test]
+    fn migrates_a_legacy_database_and_backfills_title_timestamp() {
+        let db = legacy_db();
+        run_migrations(&db).unwrap();
+
+        assert!(column_exists(&db, "content_hash"));
+        assert!(column_exists(&db, "title_updated_at"));
+        assert!(column_exists(&db, "deleted_at"));
+
+        let title_ts: i64 = db
+            .query_row("SELECT title_updated_at FROM documents WHERE id = 'd1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title_ts, 200, "title_updated_at backfills from updated_at");
+
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn is_idempotent() {
+        let db = legacy_db();
+        run_migrations(&db).unwrap();
+        run_migrations(&db).unwrap();
+        run_migrations(&db).unwrap();
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn is_a_noop_on_a_fresh_schema() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        run_migrations(&db).unwrap();
+        assert!(column_exists(&db, "content_hash"));
+    }
+
+    // Mirrors the apply_remote_rename SQL so the last-writer-wins tiebreak is
+    // covered without a Tauri State harness.
+    #[test]
+    fn remote_rename_is_last_writer_wins() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at)
+             VALUES ('d1', 'note', 'Original', 1, 1, 10)",
+            [],
+        )
+        .unwrap();
+
+        let sql = "UPDATE documents SET title = ?1, title_updated_at = ?2 \
+                   WHERE id = ?3 AND (title_updated_at IS NULL OR title_updated_at < ?2)";
+
+        let stale = db.execute(sql, rusqlite::params!["Stale", 5_i64, "d1"]).unwrap();
+        assert_eq!(stale, 0, "an older stamp does not apply");
+
+        let fresh = db.execute(sql, rusqlite::params!["Fresh", 20_i64, "d1"]).unwrap();
+        assert_eq!(fresh, 1, "a newer stamp applies");
+
+        let title: String = db
+            .query_row("SELECT title FROM documents WHERE id = 'd1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "Fresh");
+    }
 }
 
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
@@ -188,6 +320,7 @@ pub fn run() {
             {
                 let db = state.db.lock();
                 setup_database_tables(&db)?;
+                run_migrations(&db)?;
             }
 
             {
@@ -210,12 +343,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_all_documents,
+            get_all_documents_full,
             get_document,
             create_document,
             update_document,
             delete_document,
-            list_document_metadata,
+            list_document_sync_state,
             ensure_document,
+            apply_remote_rename,
+            apply_remote_delete,
             search_documents,
             get_backlinks,
             get_journals,
@@ -237,6 +373,7 @@ pub fn run() {
             get_all_attachment_hashes,
             get_yjs_state,
             save_yjs_update,
+            set_content_hash,
             load_document,
             get_identity,
             set_display_name,

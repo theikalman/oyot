@@ -11,7 +11,15 @@ pub struct Document {
     pub created_at: i64,
     pub updated_at: i64,
     pub crdt_state: Option<Vec<u8>>,
+    pub content_hash: Option<Vec<u8>>,
+    pub title_updated_at: i64,
+    pub is_deleted: bool,
+    pub deleted_at: Option<i64>,
 }
+
+// Column list backing `row_to_document`; keep the two in lockstep.
+const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, crdt_state, \
+     content_hash, COALESCE(title_updated_at, updated_at), is_deleted, deleted_at";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DocumentSummary {
@@ -79,6 +87,7 @@ fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSumm
 }
 
 fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
+    let is_deleted_int: i64 = row.get(8)?;
     Ok(Document {
         id: row.get(0)?,
         doc_type: row.get(1)?,
@@ -86,6 +95,10 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
         crdt_state: row.get(5)?,
+        content_hash: row.get(6)?,
+        title_updated_at: row.get(7)?,
+        is_deleted: is_deleted_int != 0,
+        deleted_at: row.get(9)?,
     })
 }
 
@@ -96,36 +109,52 @@ fn current_timestamp() -> i64 {
         .as_millis() as i64
 }
 
-#[tauri::command]
-pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
-    let db = state.db.lock();
-    let mut stmt = db.prepare(
+fn query_all_documents(db: &rusqlite::Connection, include_empty: bool) -> Result<IndexData, String> {
+    let content_filter = if include_empty {
+        ""
+    } else {
+        "AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+              OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))"
+    };
+    let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
                 CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
                        OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
                      THEN 1 ELSE 0 END as has_content
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
-         WHERE d.is_deleted = 0
-           AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-                OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))
+         WHERE d.is_deleted = 0 {content_filter}
          ORDER BY d.created_at DESC"
-    ).map_err(|e| e.to_string())?;
-
+    );
+    let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
     let documents: Vec<DocumentSummary> = stmt
         .query_map([], row_to_document_summary)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-
     Ok(IndexData { documents })
+}
+
+#[tauri::command]
+pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
+    let db = state.db.lock();
+    query_all_documents(&db, false)
+}
+
+// Like get_all_documents but also returns documents that have no CRDT content
+// yet - e.g. one just learned from a paired device whose delta is still in
+// flight. The sidebar shows these with a "syncing" affordance.
+#[tauri::command]
+pub fn get_all_documents_full(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
+    let db = state.db.lock();
+    query_all_documents(&db, true)
 }
 
 #[tauri::command]
 pub fn get_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result<Document, String> {
     let db = state.db.lock();
     db.query_row(
-        "SELECT id, type, title, created_at, updated_at, crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
+        &format!("SELECT {DOCUMENT_COLUMNS} FROM documents WHERE id = ? AND is_deleted = 0"),
         params![doc_id],
         row_to_document,
     )
@@ -133,33 +162,48 @@ pub fn get_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DocumentMetadataEntry {
+pub struct DocSyncEntry {
     pub id: String,
     pub doc_type: String,
     pub title: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub title_updated_at: i64,
+    pub is_deleted: bool,
+    pub deleted_at: Option<i64>,
+    pub content_hash: Option<Vec<u8>>,
 }
 
-// Full document manifest exchanged between paired devices so a peer can learn
-// about documents it has never seen, independent of whether they have any Yjs
-// content yet (unlike get_all_documents, which is scoped to the sidebar and
-// only lists documents that already have saved content).
+// The full document manifest a paired device sends on connect so the peer can
+// reconcile its entire document set: every row including tombstones, each with a
+// `content_hash` (change detector) and `title_updated_at` (last-writer-wins on
+// rename). Unlike get_all_documents this is not scoped to the sidebar and does
+// not filter out content-less or deleted rows.
+// See docs/decisions/0003-full-document-set-sync.md.
 #[tauri::command]
-pub fn list_document_metadata(state: tauri::State<'_, AppState>) -> Result<Vec<DocumentMetadataEntry>, String> {
+pub fn list_document_sync_state(state: tauri::State<'_, AppState>) -> Result<Vec<DocSyncEntry>, String> {
     let db = state.db.lock();
     let mut stmt = db
-        .prepare("SELECT id, type, title, created_at, updated_at FROM documents WHERE is_deleted = 0")
+        .prepare(
+            "SELECT id, type, title, created_at, updated_at, \
+                    COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, content_hash \
+             FROM documents",
+        )
         .map_err(|e| e.to_string())?;
 
-    let entries: Vec<DocumentMetadataEntry> = stmt
+    let entries: Vec<DocSyncEntry> = stmt
         .query_map([], |row| {
-            Ok(DocumentMetadataEntry {
+            let is_deleted_int: i64 = row.get(6)?;
+            Ok(DocSyncEntry {
                 id: row.get(0)?,
                 doc_type: row.get(1)?,
                 title: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
+                title_updated_at: row.get(5)?,
+                is_deleted: is_deleted_int != 0,
+                deleted_at: row.get(7)?,
+                content_hash: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -182,12 +226,14 @@ pub fn ensure_document(
     title: String,
     created_at: i64,
     updated_at: i64,
+    title_updated_at: Option<i64>,
 ) -> Result<Document, String> {
+    let title_updated_at = title_updated_at.unwrap_or(updated_at);
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT OR IGNORE INTO documents (id, type, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, created_at, updated_at],
+            "INSERT OR IGNORE INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            params![&doc_id, &doc_type, &title, created_at, updated_at, title_updated_at],
         )
         .map_err(|e| e.to_string())?;
         db.execute(
@@ -198,6 +244,54 @@ pub fn ensure_document(
     }
 
     get_document(state, doc_id)
+}
+
+// Applies a peer's rename, last-writer-wins on `title_updated_at`: an older or
+// equal stamp is ignored so the two devices converge on the same title without a
+// central clock. Returns true if the local row changed.
+#[tauri::command]
+pub fn apply_remote_rename(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    title: String,
+    title_updated_at: i64,
+) -> Result<bool, String> {
+    let db = state.db.lock();
+    let changed = db
+        .execute(
+            "UPDATE documents SET title = ?1, title_updated_at = ?2 \
+             WHERE id = ?3 AND (title_updated_at IS NULL OR title_updated_at < ?2)",
+            params![&title, title_updated_at, &doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed > 0 {
+        db.execute(
+            "UPDATE document_index SET title = ? WHERE document_id = ?",
+            params![&title, &doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(changed > 0)
+}
+
+// Applies a peer's deletion as a tombstone (the row is kept so the delete keeps
+// propagating). Idempotent; also drops the CRDT history like a local delete.
+#[tauri::command]
+pub fn apply_remote_delete(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    deleted_at: i64,
+) -> Result<(), String> {
+    {
+        let db = state.db.lock();
+        db.execute(
+            "UPDATE documents SET is_deleted = 1, deleted_at = COALESCE(deleted_at, ?) WHERE id = ?",
+            params![deleted_at, &doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    state.snapshot.delete_document_data(&doc_id)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -216,8 +310,8 @@ pub fn create_document(
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT INTO documents (id, type, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, now, now],
+            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            params![&doc_id, &doc_type, &title, now, now, now],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -244,8 +338,8 @@ pub fn update_document(
     {
         let db = state.db.lock();
         db.execute(
-            "UPDATE documents SET title = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
-            params![&title, now, &doc_id],
+            "UPDATE documents SET title = ?, updated_at = ?, title_updated_at = ? WHERE id = ? AND is_deleted = 0",
+            params![&title, now, now, &doc_id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -264,10 +358,11 @@ pub fn update_document(
 
 #[tauri::command]
 pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result<(), String> {
+    let now = current_timestamp();
     let db = state.db.lock();
     db.execute(
-        "UPDATE documents SET is_deleted = 1 WHERE id = ?",
-        params![&doc_id],
+        "UPDATE documents SET is_deleted = 1, deleted_at = ? WHERE id = ?",
+        params![now, &doc_id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -367,7 +462,7 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
     let existing = {
         let db = state.db.lock();
         db.query_row(
-            "SELECT id, type, title, created_at, updated_at, crdt_state FROM documents WHERE type = 'journal' AND title = ? AND is_deleted = 0",
+            &format!("SELECT {DOCUMENT_COLUMNS} FROM documents WHERE type = 'journal' AND title = ? AND is_deleted = 0"),
             params![&today_title],
             row_to_document,
         ).ok()
@@ -381,8 +476,8 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT INTO documents (id, type, title, created_at, updated_at) VALUES (?, 'journal', ?, ?, ?)",
-            params![&doc_id, &today_title, now, now],
+            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, 'journal', ?, ?, ?, ?)",
+            params![&doc_id, &today_title, now, now, now],
         )
         .map_err(|e| e.to_string())?;
     }

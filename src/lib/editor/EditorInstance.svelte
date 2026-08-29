@@ -29,7 +29,6 @@
         createInitialContent,
         createCollaborationExtension,
     } from '$lib/yjs/YjsEditorExtension';
-    import { createYjsSyncService } from '$lib/yjs/YjsSyncService';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',

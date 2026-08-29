@@ -3,7 +3,7 @@
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
     import type { Snippet } from 'svelte';
-    import { initSync, getCleanup } from '$lib/services/WebRtcSyncService';
+    import { initSync, shutdownSync } from '$lib/sync';
 
     let { children }: { children: Snippet } = $props();
 
@@ -14,7 +14,7 @@
     });
 
     onDestroy(() => {
-        getCleanup()();
+        shutdownSync();
     });
 
     let currentPath = $derived($page.url.pathname);

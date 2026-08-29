@@ -1,10 +1,9 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount } from 'svelte';
     import { appStore, isLoading, currentDocument } from '$lib/stores/app';
     import { initializeTheme, applyTheme } from '$lib/services/theme';
-    import { initializeSync, getSyncCleanup } from '$lib/services/sync';
-    import { loadAllDocuments, getOrCreateTodayJournal, cleanupOrphanedImages, toDocumentSummary } from '$lib/services/documents';
-    import { broadcastDocCreated } from '$lib/services/WebRtcSyncService';
+    import { loadAllDocuments, cleanupOrphanedImages } from '$lib/services/documents';
+    import { ensureTodayJournal } from '$lib/services/documentActions';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Editor from '$lib/editor/Editor.svelte';
     import SyncStatus from '$lib/components/SyncStatus.svelte';
@@ -18,11 +17,8 @@
             const indexData = await loadAllDocuments();
             appStore.setDocuments(indexData.documents);
 
-            const todayJournal = await getOrCreateTodayJournal();
-            const summary = toDocumentSummary(todayJournal);
-            appStore.addDocument(summary);
+            const todayJournal = await ensureTodayJournal();
             appStore.setCurrentDocument(todayJournal);
-            broadcastDocCreated(todayJournal);
 
             await cleanupOrphanedImages();
         } catch (error) {
@@ -40,18 +36,7 @@
             console.error('Failed to load theme:', error);
         }
 
-        try {
-            await initializeSync();
-        } catch (error) {
-            console.error('Failed to init sync:', error);
-        }
-
         await init();
-    });
-
-    onDestroy(() => {
-        const cleanup = getSyncCleanup();
-        cleanup();
     });
 
     $effect(() => {

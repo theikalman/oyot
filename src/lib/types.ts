@@ -5,6 +5,10 @@ export interface Document {
     created_at: number;
     updated_at: number;
     crdt_state?: number[] | null;
+    content_hash?: number[] | null;
+    title_updated_at: number;
+    is_deleted: boolean;
+    deleted_at?: number | null;
 }
 
 export interface DocumentSummary {

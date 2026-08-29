@@ -1,13 +1,19 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
-    import { appStore, theme, syncStore } from '$lib/stores/app';
+    import { appStore, theme } from '$lib/stores/app';
+    import { signalingStatus, connectedPeers } from '$lib/stores/sync';
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
 
     let currentTheme = $derived($theme);
     let currentDocId = $derived($appStore.currentDocument?.id);
-    let syncStatus = $derived($syncStore);
-    let isSyncEnabled = $derived(syncStatus.isEnabled);
+    let syncSummary = $derived(
+        $connectedPeers.length > 0
+            ? `${$connectedPeers.length} device${$connectedPeers.length !== 1 ? 's' : ''} connected`
+            : $signalingStatus === 'connected'
+              ? 'Ready to pair'
+              : 'Offline',
+    );
 
     async function handleThemeToggle() {
         const next: Theme = currentTheme === 'light' ? 'dark' : 'light';
@@ -51,7 +57,7 @@
                 <div class="setting-info">
                     <span class="setting-label">Sync Settings</span>
                     <span class="setting-desc">
-                        {isSyncEnabled ? 'Enabled' : 'Disabled'} • Manage paired devices and sync options
+                        {syncSummary} • Manage paired devices and sync options
                     </span>
                 </div>
                 <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
