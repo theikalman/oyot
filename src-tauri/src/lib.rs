@@ -27,7 +27,8 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             updated_at INTEGER NOT NULL,
             title_updated_at INTEGER,
             is_deleted INTEGER DEFAULT 0,
-            deleted_at INTEGER
+            deleted_at INTEGER,
+            lifecycle_updated_at INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS yjs_updates (
@@ -91,6 +92,10 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// The schema version `run_migrations` brings a database up to. Bump it in the
+/// same change that adds the migration block.
+pub const SCHEMA_VERSION: i64 = 2;
+
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
 /// `CREATE TABLE IF NOT EXISTS` shape for fresh installs; this only carries
@@ -121,6 +126,33 @@ pub fn run_migrations(db: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Migration v1 failed: {}", e))?;
         }
         db.execute_batch("PRAGMA user_version = 1;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
+    // v2: `lifecycle_updated_at` turns the delete flag into a last-writer-wins
+    // register, the same shape `title_updated_at` gives the title. Without it a
+    // revived document loses to any peer still holding the tombstone, because
+    // reconciliation branched on `is_deleted` alone with no way to tell which
+    // side observed it later.
+    if version < 2 {
+        let has_lifecycle = db
+            .prepare("SELECT lifecycle_updated_at FROM documents LIMIT 0")
+            .is_ok();
+        if !has_lifecycle {
+            db.execute_batch("ALTER TABLE documents ADD COLUMN lifecycle_updated_at INTEGER;")
+                .map_err(|e| format!("Migration v2 failed: {}", e))?;
+        }
+        // Seed from the best stamp already on the row: a tombstone's own
+        // timestamp if it has one, otherwise whenever the row last changed.
+        db.execute_batch(
+            "UPDATE documents
+                SET lifecycle_updated_at =
+                    COALESCE(deleted_at, title_updated_at, updated_at, created_at)
+              WHERE lifecycle_updated_at IS NULL;",
+        )
+        .map_err(|e| format!("Migration v2 backfill failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 2;")
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
@@ -370,7 +402,7 @@ mod migration_tests {
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -382,7 +414,7 @@ mod migration_tests {
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -391,6 +423,123 @@ mod migration_tests {
         setup_database_tables(&db).unwrap();
         run_migrations(&db).unwrap();
         assert!(column_exists(&db, "content_hash"));
+    }
+
+    #[test]
+    fn migrates_v1_to_v2_and_seeds_the_lifecycle_stamp() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        // Simulate a v1 database: schema has the column, but no row was ever
+        // stamped because the code that writes it did not exist yet.
+        db.execute_batch(
+            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at, is_deleted, deleted_at)
+                 VALUES ('live', 'note', 'Live', 10, 20, 30, 0, NULL);
+             INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at, is_deleted, deleted_at)
+                 VALUES ('dead', 'note', 'Dead', 10, 20, 30, 1, 99);
+             UPDATE documents SET lifecycle_updated_at = NULL;
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let stamp = |id: &str| -> i64 {
+            db.query_row(
+                "SELECT lifecycle_updated_at FROM documents WHERE id = ?",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(stamp("dead"), 99, "a tombstone seeds from its deleted_at");
+        assert_eq!(stamp("live"), 30, "a live row seeds from title_updated_at");
+
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    // Mirrors the get_or_create_today_journal upsert. A journal id is derived
+    // from its date, so a deleted journal's tombstone still owns the id and the
+    // old plain INSERT failed the primary key, taking app startup with it.
+    #[test]
+    fn creating_a_journal_revives_its_tombstone() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+
+        let upsert = "INSERT INTO documents
+                          (id, type, title, created_at, updated_at, title_updated_at,
+                           is_deleted, deleted_at, lifecycle_updated_at)
+                      VALUES (?1, 'journal', ?2, ?3, ?3, ?3, 0, NULL, ?3)
+                      ON CONFLICT(id) DO UPDATE SET
+                          is_deleted           = 0,
+                          deleted_at           = NULL,
+                          lifecycle_updated_at = CASE
+                              WHEN documents.is_deleted = 1 THEN excluded.lifecycle_updated_at
+                              ELSE documents.lifecycle_updated_at
+                          END";
+
+        db.execute(
+            upsert,
+            rusqlite::params!["14 Sep 2026", "2026-09-14", 100_i64],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE documents SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![200_i64, "14 Sep 2026"],
+        )
+        .unwrap();
+
+        // The call that used to fail with UNIQUE constraint failed.
+        db.execute(
+            upsert,
+            rusqlite::params!["14 Sep 2026", "2026-09-14", 300_i64],
+        )
+        .unwrap();
+
+        let (deleted, stamp): (i64, i64) = db
+            .query_row(
+                "SELECT is_deleted, lifecycle_updated_at FROM documents WHERE id = '14 Sep 2026'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(deleted, 0, "the tombstone is cleared");
+        assert_eq!(stamp, 300, "the revival is stamped later than the delete");
+
+        let rows: i64 = db
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "revival reuses the row, it does not duplicate it");
+    }
+
+    // Mirrors apply_remote_delete: a peer's tombstone only applies when it is
+    // the later observation, otherwise it would undo a revival that came after.
+    #[test]
+    fn a_remote_tombstone_loses_to_a_later_revival() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at, is_deleted, lifecycle_updated_at)
+                 VALUES ('d1', 'note', 'One', 1, 1, 1, 0, 500)",
+            [],
+        )
+        .unwrap();
+
+        let sql = "UPDATE documents
+                      SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1
+                    WHERE id = ?2
+                      AND (lifecycle_updated_at IS NULL OR lifecycle_updated_at < ?1)";
+
+        let stale = db.execute(sql, rusqlite::params![400_i64, "d1"]).unwrap();
+        assert_eq!(
+            stale, 0,
+            "a tombstone older than our revival does not apply"
+        );
+
+        let fresh = db.execute(sql, rusqlite::params![600_i64, "d1"]).unwrap();
+        assert_eq!(fresh, 1, "a newer tombstone applies");
     }
 
     // Mirrors the apply_remote_rename SQL so the last-writer-wins tiebreak is

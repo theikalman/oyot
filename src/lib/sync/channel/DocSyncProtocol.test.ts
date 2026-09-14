@@ -17,6 +17,7 @@ class FakeRepo {
             createdAt: number;
             isDeleted: boolean;
             deletedAt: number | null;
+            lifecycleUpdatedAt: number;
             ydoc: Y.Doc;
         }
     >();
@@ -31,8 +32,32 @@ class FakeRepo {
             createdAt: 1,
             isDeleted: false,
             deletedAt: null,
+            lifecycleUpdatedAt: 1,
             ydoc,
         });
+    }
+
+    // Mirrors the Rust delete: tombstone the row, stamp the lifecycle register,
+    // drop the CRDT history.
+    remove(id: string, at: number): void {
+        const d = this.docs.get(id);
+        if (!d) throw new Error(`remove of unknown ${id}`);
+        d.isDeleted = true;
+        d.deletedAt = at;
+        d.lifecycleUpdatedAt = at;
+        d.ydoc = new Y.Doc();
+    }
+
+    // Mirrors the create upsert: clear the tombstone and stamp it later than
+    // the delete it supersedes.
+    revive(id: string, at: number, text: string): void {
+        const d = this.docs.get(id);
+        if (!d) throw new Error(`revive of unknown ${id}`);
+        d.isDeleted = false;
+        d.deletedAt = null;
+        d.lifecycleUpdatedAt = at;
+        d.ydoc = new Y.Doc();
+        d.ydoc.getText('content').insert(0, text);
     }
 
     text(id: string): string {
@@ -51,6 +76,7 @@ class FakeRepo {
                 createdAt: d.createdAt,
                 isDeleted: d.isDeleted,
                 deletedAt: d.deletedAt,
+                lifecycleUpdatedAt: d.lifecycleUpdatedAt,
                 contentHash: state.length <= 2 ? null : await contentHashBase64(state),
             });
         }
@@ -78,7 +104,18 @@ class FakeRepo {
     }
 
     async ensureDoc(entry: ManifestEntry): Promise<void> {
-        if (this.docs.has(entry.id)) return;
+        const existing = this.docs.get(entry.id);
+        const stamp = entry.lifecycleUpdatedAt ?? entry.createdAt;
+        if (existing) {
+            // Clears a local tombstone only when the peer observed the revival
+            // later than we observed the delete.
+            if (existing.isDeleted && existing.lifecycleUpdatedAt < stamp) {
+                existing.isDeleted = false;
+                existing.deletedAt = null;
+                existing.lifecycleUpdatedAt = stamp;
+            }
+            return;
+        }
         this.docs.set(entry.id, {
             docType: entry.docType,
             title: entry.title,
@@ -86,6 +123,7 @@ class FakeRepo {
             createdAt: entry.createdAt,
             isDeleted: false,
             deletedAt: null,
+            lifecycleUpdatedAt: stamp,
             ydoc: new Y.Doc(),
         });
     }
@@ -98,13 +136,14 @@ class FakeRepo {
         }
     }
 
-    async applyDelete(id: string, deletedAt: number): Promise<void> {
+    async applyDelete(id: string, deletedAt: number): Promise<boolean> {
         const d = this.docs.get(id);
-        if (d) {
-            d.isDeleted = true;
-            d.deletedAt = deletedAt;
-            d.ydoc = new Y.Doc();
-        }
+        if (!d || d.lifecycleUpdatedAt >= deletedAt) return false;
+        d.isDeleted = true;
+        d.deletedAt = deletedAt;
+        d.lifecycleUpdatedAt = deletedAt;
+        d.ydoc = new Y.Doc();
+        return true;
     }
 
     // --- attachments ---
@@ -229,6 +268,78 @@ describe('DocSyncProtocol', () => {
         const merged = a.text('doc');
         expect(merged).toContain('A-edit');
         expect(merged).toContain('B-edit');
+    });
+
+    // A journal id is derived from its date, so deleting one and letting the
+    // app recreate it reuses the same row. Before the lifecycle stamp existed
+    // the peer's surviving tombstone re-deleted the revival on the next
+    // exchange, and the journal vanished again.
+    it('revival beats an older tombstone on both sides', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('14 Sep 2026', 'first draft');
+        b.docs.set('14 Sep 2026', { ...a.docs.get('14 Sep 2026')!, ydoc: new Y.Doc() });
+        Y.applyUpdate(
+            b.docs.get('14 Sep 2026')!.ydoc,
+            Y.encodeStateAsUpdate(a.docs.get('14 Sep 2026')!.ydoc),
+        );
+
+        // Both observe the delete, then A recreates the journal afterwards.
+        a.remove('14 Sep 2026', 100);
+        b.remove('14 Sep 2026', 100);
+        a.revive('14 Sep 2026', 200, 'second draft');
+
+        await converge(a, b);
+
+        expect(a.docs.get('14 Sep 2026')!.isDeleted).toBe(false);
+        expect(b.docs.get('14 Sep 2026')!.isDeleted).toBe(false);
+        assertConverged(a, b);
+        expect(b.text('14 Sep 2026')).toBe('second draft');
+    });
+
+    it('a tombstone newer than a revival still wins', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('doc', 'content');
+        b.docs.set('doc', { ...a.docs.get('doc')!, ydoc: new Y.Doc() });
+
+        a.revive('doc', 100, 'revived');
+        b.remove('doc', 300);
+
+        await converge(a, b);
+
+        expect(a.docs.get('doc')!.isDeleted).toBe(true);
+        expect(b.docs.get('doc')!.isDeleted).toBe(true);
+    });
+
+    it('delete and revive in opposite orders converge', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('doc', 'base');
+        b.docs.set('doc', { ...a.docs.get('doc')!, ydoc: new Y.Doc() });
+
+        // A deletes late; B revived earlier. The later observation must win on
+        // both sides regardless of which side reports it.
+        a.remove('doc', 500);
+        b.revive('doc', 400, 'stale revival');
+
+        await converge(a, b);
+
+        expect(a.docs.get('doc')!.isDeleted).toBe(true);
+        expect(b.docs.get('doc')!.isDeleted).toBe(true);
+    });
+
+    it('a plain tombstone still propagates to a peer that has the document', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('doc', 'content');
+        b.docs.set('doc', { ...a.docs.get('doc')!, ydoc: new Y.Doc() });
+
+        a.remove('doc', 100);
+
+        await converge(a, b);
+
+        expect(b.docs.get('doc')!.isDeleted).toBe(true);
     });
 
     it('rename race: higher title_updated_at wins on both sides', async () => {

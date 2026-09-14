@@ -7,6 +7,7 @@ import { contentHash } from './hash';
 import {
     base64ToBytes,
     bytesToBase64,
+    lifecycleStamp,
     EMPTY_UPDATE_LEN,
     type AttachmentManifestEntry,
     type ManifestEntry,
@@ -22,6 +23,7 @@ interface RawSyncEntry {
     title_updated_at: number;
     is_deleted: boolean;
     deleted_at: number | null;
+    lifecycle_updated_at: number;
     content_hash: number[] | null;
 }
 
@@ -55,6 +57,7 @@ export class DocumentRepository {
             createdAt: r.created_at,
             isDeleted: r.is_deleted,
             deletedAt: r.deleted_at,
+            lifecycleUpdatedAt: r.lifecycle_updated_at,
             contentHash: r.content_hash ? bytesToBase64(Uint8Array.from(r.content_hash)) : null,
         }));
     }
@@ -119,12 +122,15 @@ export class DocumentRepository {
     // Materialize a document row learned from a peer. Never clobbers a known row.
     async ensureDoc(entry: ManifestEntry): Promise<void> {
         const doc = await invoke<Document>('ensure_document', {
-            docId: entry.id,
-            docType: entry.docType,
-            title: entry.title,
-            createdAt: entry.createdAt,
-            updatedAt: entry.titleUpdatedAt,
-            titleUpdatedAt: entry.titleUpdatedAt,
+            entry: {
+                docId: entry.id,
+                docType: entry.docType,
+                title: entry.title,
+                createdAt: entry.createdAt,
+                updatedAt: entry.titleUpdatedAt,
+                titleUpdatedAt: entry.titleUpdatedAt,
+                lifecycleUpdatedAt: lifecycleStamp(entry),
+            },
         });
         appStore.addDocument(toSummary(doc));
     }
@@ -142,9 +148,12 @@ export class DocumentRepository {
         }
     }
 
-    async applyDelete(docId: string, deletedAt: number): Promise<void> {
-        await invoke('apply_remote_delete', { docId, deletedAt });
-        appStore.removeDocument(docId);
+    // Returns true if the tombstone won. A losing tombstone (we revived the
+    // document after the peer deleted it) must not remove it from the sidebar.
+    async applyDelete(docId: string, deletedAt: number): Promise<boolean> {
+        const applied = await invoke<boolean>('apply_remote_delete', { docId, deletedAt });
+        if (applied) appStore.removeDocument(docId);
+        return applied;
     }
 
     // --- attachments ---------------------------------------------------

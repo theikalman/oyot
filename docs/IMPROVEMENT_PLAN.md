@@ -27,6 +27,8 @@ codebase.
 
 ## Phase 0 - CI and tooling guardrails
 
+> **Status: done.** See `.github/workflows/ci.yml` and `make verify`.
+
 Nothing currently runs the test suite. `npm test` (17 passing), `npm run check`,
 `cargo clippy` and `cargo test` all pass locally but are unenforced, so every
 fix below could silently regress.
@@ -108,6 +110,9 @@ script, then wire `npm run lint` into the `frontend` CI job.
 ---
 
 ## Phase 1 - Data loss and blocking bugs
+
+> **Status: done.** 1.2b landed as
+> [ADR 0008](decisions/0008-deletion-as-last-writer-wins.md).
 
 ### 1.1 Stop dropping the last second of typing on every document switch
 

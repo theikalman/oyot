@@ -2,8 +2,9 @@
     import { onMount } from 'svelte';
     import { appStore, isLoading, currentDocument } from '$lib/stores/app';
     import { initializeTheme, applyTheme } from '$lib/services/theme';
-    import { loadAllDocuments, cleanupOrphanedImages } from '$lib/services/documents';
+    import { loadAllDocuments, loadDocument, cleanupOrphanedImages } from '$lib/services/documents';
     import { ensureTodayJournal } from '$lib/services/documentActions';
+    import { toasts } from '$lib/services/toast';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Editor from '$lib/editor/Editor.svelte';
     import SyncStatus from '$lib/components/SyncStatus.svelte';
@@ -17,12 +18,25 @@
             const indexData = await loadAllDocuments();
             appStore.setDocuments(indexData.documents);
 
-            const todayJournal = await ensureTodayJournal();
-            appStore.setCurrentDocument(todayJournal);
+            // Opening today's journal is a convenience, not a precondition. It
+            // used to share a try block with everything below, so one failure
+            // here left currentDocument null and the editor pane stuck on
+            // "Loading..." with no way back short of picking a note by hand.
+            try {
+                appStore.setCurrentDocument(await ensureTodayJournal());
+            } catch (error) {
+                console.error("Failed to open today's journal:", error);
+                toasts.error("Could not open today's journal");
+                const fallback = indexData.documents[0];
+                if (fallback) {
+                    appStore.setCurrentDocument(await loadDocument(fallback.id));
+                }
+            }
 
             await cleanupOrphanedImages();
         } catch (error) {
             console.error('Failed to initialize:', error);
+            toasts.error('Failed to load documents');
         } finally {
             appStore.setLoading(false);
         }

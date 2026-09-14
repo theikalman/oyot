@@ -18,6 +18,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0005](0005-attachment-sync.md)                          | Sync image attachments as content-addressed blobs alongside the CRDT  | Accepted |
 | [0006](0006-answer-every-sync-need.md)                   | Every `sync-need` gets an answer (`sync-none` when there is no delta) | Accepted |
 | [0007](0007-drop-protocol-version.md)                    | Drop the sync protocol version and the `hello` handshake              | Accepted |
+| [0008](0008-deletion-as-last-writer-wins.md)             | Make deletion a last-writer-wins register                             | Accepted |
 
 ## Format
 

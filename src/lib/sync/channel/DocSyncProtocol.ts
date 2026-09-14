@@ -1,5 +1,5 @@
 import type { DocumentRepository } from '../DocumentRepository';
-import { type ManifestEntry, type SyncMessage } from '../protocol';
+import { lifecycleStamp, type ManifestEntry, type SyncMessage } from '../protocol';
 
 export interface SyncProgressSink {
     onPhase(phase: 'reconciling' | 'transferring' | 'synced' | 'error'): void;
@@ -245,9 +245,18 @@ export class DocSyncProtocol {
         entry: ManifestEntry,
         local: ManifestEntry | undefined,
     ): Promise<void> {
+        // `isDeleted` is a last-writer-wins register keyed on the lifecycle
+        // stamp, the same shape the title already uses. Branching on the flag
+        // alone could not express "I revived this after you deleted it", so a
+        // revived journal was re-deleted on the next manifest exchange.
+        const remoteStamp = lifecycleStamp(entry);
+        const localStamp = local ? lifecycleStamp(local) : -1;
+
         if (entry.isDeleted) {
-            if (!local || !local.isDeleted) {
-                await this.repo.applyDelete(entry.id, entry.deletedAt ?? Date.now());
+            // A tombstone for a document we have never seen is nothing to do:
+            // there is no row to mark, and we will not advertise it onward.
+            if (local && remoteStamp > localStamp) {
+                await this.repo.applyDelete(entry.id, entry.deletedAt ?? remoteStamp);
             }
             return;
         }
@@ -258,9 +267,15 @@ export class DocSyncProtocol {
             return;
         }
 
-        // We hold a tombstone for a doc the peer still has live: tombstone wins,
-        // our manifest will tell them to delete it. Nothing to pull.
-        if (local.isDeleted) return;
+        // We hold a tombstone the peer does not. Ours wins only if we observed
+        // it at least as late; otherwise the peer revived the document after
+        // our delete, so accept the revival and pull its content.
+        if (local.isDeleted) {
+            if (localStamp >= remoteStamp) return;
+            await this.repo.ensureDoc(entry);
+            this.enqueue({ id: entry.id, sv: '', attempts: 0 });
+            return;
+        }
 
         if (entry.titleUpdatedAt > local.titleUpdatedAt) {
             await this.repo.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
@@ -361,6 +376,8 @@ export class DocSyncProtocol {
     }
 
     private async onLiveCreated(entry: ManifestEntry): Promise<void> {
+        // ensureDoc clears a local tombstone when the peer's stamp is newer, so
+        // a create broadcast doubles as the revival signal.
         await this.repo.ensureDoc(entry);
         // Pull its content out-of-band; not tracked against the finish gate.
         this.send({ t: 'sync-need', id: entry.id, sv: '' });

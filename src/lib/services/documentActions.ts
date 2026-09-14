@@ -24,6 +24,7 @@ function announceCreated(doc: Document): void {
         title: doc.title,
         titleUpdatedAt: doc.title_updated_at,
         createdAt: doc.created_at,
+        lifecycleUpdatedAt: doc.lifecycle_updated_at ?? doc.created_at,
     });
 }
 

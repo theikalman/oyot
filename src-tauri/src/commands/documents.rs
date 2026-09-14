@@ -15,11 +15,13 @@ pub struct Document {
     pub title_updated_at: i64,
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
+    pub lifecycle_updated_at: i64,
 }
 
 // Column list backing `row_to_document`; keep the two in lockstep.
 const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, crdt_state, \
-     content_hash, COALESCE(title_updated_at, updated_at), is_deleted, deleted_at";
+     content_hash, COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
+     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at)";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DocumentSummary {
@@ -99,6 +101,7 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
         title_updated_at: row.get(7)?,
         is_deleted: is_deleted_int != 0,
         deleted_at: row.get(9)?,
+        lifecycle_updated_at: row.get(10)?,
     })
 }
 
@@ -174,6 +177,7 @@ pub struct DocSyncEntry {
     pub title_updated_at: i64,
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
+    pub lifecycle_updated_at: i64,
     pub content_hash: Option<Vec<u8>>,
 }
 
@@ -191,7 +195,9 @@ pub fn list_document_sync_state(
     let mut stmt = db
         .prepare(
             "SELECT id, type, title, created_at, updated_at, \
-                    COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, content_hash \
+                    COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
+                    COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
+                    content_hash \
              FROM documents",
         )
         .map_err(|e| e.to_string())?;
@@ -208,7 +214,8 @@ pub fn list_document_sync_state(
                 title_updated_at: row.get(5)?,
                 is_deleted: is_deleted_int != 0,
                 deleted_at: row.get(7)?,
-                content_hash: row.get(8)?,
+                lifecycle_updated_at: row.get(8)?,
+                content_hash: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -216,6 +223,20 @@ pub fn list_document_sync_state(
         .collect();
 
     Ok(entries)
+}
+
+// One document as a peer advertised it. Mirrors the frontend `ManifestEntry`;
+// grouped into a struct rather than passed as eight positional arguments.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureDocumentRequest {
+    pub doc_id: String,
+    pub doc_type: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub title_updated_at: Option<i64>,
+    pub lifecycle_updated_at: Option<i64>,
 }
 
 // Idempotently materializes a document row learned about from a peer (via
@@ -226,19 +247,46 @@ pub fn list_document_sync_state(
 #[tauri::command]
 pub fn ensure_document(
     state: tauri::State<'_, AppState>,
-    doc_id: String,
-    doc_type: String,
-    title: String,
-    created_at: i64,
-    updated_at: i64,
-    title_updated_at: Option<i64>,
+    entry: EnsureDocumentRequest,
 ) -> Result<Document, String> {
+    let EnsureDocumentRequest {
+        doc_id,
+        doc_type,
+        title,
+        created_at,
+        updated_at,
+        title_updated_at,
+        lifecycle_updated_at,
+    } = entry;
     let title_updated_at = title_updated_at.unwrap_or(updated_at);
+    let lifecycle_updated_at = lifecycle_updated_at.unwrap_or(created_at);
     {
         let db = state.db.lock();
+        // Insert what we do not have, and clear a local tombstone only when the
+        // peer's lifecycle stamp is newer than ours. Title and created_at are
+        // never overwritten here: apply_remote_rename owns the title, and the
+        // local row is authoritative for its own creation time.
         db.execute(
-            "INSERT OR IGNORE INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, created_at, updated_at, title_updated_at],
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                 is_deleted           = 0,
+                 deleted_at           = NULL,
+                 lifecycle_updated_at = excluded.lifecycle_updated_at
+             WHERE documents.is_deleted = 1
+               AND (documents.lifecycle_updated_at IS NULL
+                    OR documents.lifecycle_updated_at < excluded.lifecycle_updated_at)",
+            params![
+                &doc_id,
+                &doc_type,
+                &title,
+                created_at,
+                updated_at,
+                title_updated_at,
+                lifecycle_updated_at
+            ],
         )
         .map_err(|e| e.to_string())?;
         db.execute(
@@ -281,22 +329,36 @@ pub fn apply_remote_rename(
 
 // Applies a peer's deletion as a tombstone (the row is kept so the delete keeps
 // propagating). Idempotent; also drops the CRDT history like a local delete.
+// Returns true if the local row changed, i.e. the peer's tombstone was the
+// later observation. A losing tombstone leaves the document alone.
 #[tauri::command]
 pub fn apply_remote_delete(
     state: tauri::State<'_, AppState>,
     doc_id: String,
     deleted_at: i64,
-) -> Result<(), String> {
-    {
+) -> Result<bool, String> {
+    let applied = {
         let db = state.db.lock();
+        // Last-writer-wins: a tombstone only applies if the peer observed the
+        // delete later than whatever we last observed for this row. Otherwise a
+        // stale tombstone would undo a revival that happened after it.
         db.execute(
-            "UPDATE documents SET is_deleted = 1, deleted_at = COALESCE(deleted_at, ?) WHERE id = ?",
+            "UPDATE documents
+                SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1
+              WHERE id = ?2
+                AND (lifecycle_updated_at IS NULL OR lifecycle_updated_at < ?1)",
             params![deleted_at, &doc_id],
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+    };
+
+    // Only drop the CRDT history if the tombstone actually won. Doing it
+    // unconditionally would empty a document whose revival we had already
+    // accepted, while leaving the row live.
+    if applied > 0 {
+        state.snapshot.delete_document_data(&doc_id)?;
     }
-    state.snapshot.delete_document_data(&doc_id)?;
-    Ok(())
+    Ok(applied > 0)
 }
 
 #[tauri::command]
@@ -305,6 +367,10 @@ pub fn create_document(
     doc_type: String,
     title: String,
 ) -> Result<Document, String> {
+    // Journal ids are derived from the date so two devices creating the same
+    // day's entry converge on one row. That also means a deleted journal's
+    // tombstone still holds the id, so a plain INSERT would fail the primary
+    // key. Revive it instead.
     let doc_id = if doc_type == "journal" {
         format_journal_date(&title).unwrap_or_else(|| title.clone())
     } else {
@@ -315,8 +381,16 @@ pub fn create_document(
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, now, now, now],
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?4, 0, NULL, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                 is_deleted           = 0,
+                 deleted_at           = NULL,
+                 updated_at           = excluded.updated_at,
+                 lifecycle_updated_at = excluded.lifecycle_updated_at",
+            params![&doc_id, &doc_type, &title, now],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -366,7 +440,7 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
     let now = current_timestamp();
     let db = state.db.lock();
     db.execute(
-        "UPDATE documents SET is_deleted = 1, deleted_at = ? WHERE id = ?",
+        "UPDATE documents SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1 WHERE id = ?2",
         params![now, &doc_id],
     )
     .map_err(|e| e.to_string())?;
@@ -464,33 +538,33 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
     let today_title = get_today_date();
     let doc_id = format_journal_date(&today_title).unwrap_or_else(|| today_title.clone());
 
-    let existing = {
-        let db = state.db.lock();
-        db.query_row(
-            &format!("SELECT {DOCUMENT_COLUMNS} FROM documents WHERE type = 'journal' AND title = ? AND is_deleted = 0"),
-            params![&today_title],
-            row_to_document,
-        ).ok()
-    };
-
-    if let Some(doc) = existing {
-        return Ok(doc);
-    }
-
     let now = current_timestamp();
+
+    // One upsert rather than SELECT-then-INSERT: the old form released the
+    // mutex between the two, and failed outright once the day's journal had
+    // been deleted, because the tombstone still owned the id. Failing here took
+    // the whole app down with it, since startup awaits this before it can show
+    // a document.
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, 'journal', ?, ?, ?, ?)",
-            params![&doc_id, &today_title, now, now, now],
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, 'journal', ?2, ?3, ?3, ?3, 0, NULL, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+                 is_deleted           = 0,
+                 deleted_at           = NULL,
+                 lifecycle_updated_at = CASE
+                     WHEN documents.is_deleted = 1 THEN excluded.lifecycle_updated_at
+                     ELSE documents.lifecycle_updated_at
+                 END",
+            params![&doc_id, &today_title, now],
         )
         .map_err(|e| e.to_string())?;
-    }
 
-    {
-        let db = state.db.lock();
         db.execute(
-            "INSERT INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
+            "INSERT OR IGNORE INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
             params![&doc_id, &today_title],
         )
         .map_err(|e| e.to_string())?;

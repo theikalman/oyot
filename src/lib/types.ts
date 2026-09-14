@@ -9,6 +9,7 @@ export interface Document {
     title_updated_at: number;
     is_deleted: boolean;
     deleted_at?: number | null;
+    lifecycle_updated_at?: number | null;
 }
 
 export interface DocumentSummary {

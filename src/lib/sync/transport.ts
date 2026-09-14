@@ -124,12 +124,15 @@ export function broadcastLocalUpdate(docId: string, update: string): void {
     broadcast({ t: 'live-update', id: docId, update });
 }
 
+// Also the revival signal: a peer holding a tombstone for this id clears it
+// when `lifecycleUpdatedAt` is newer than the stamp on its own tombstone.
 export function broadcastDocCreated(entry: {
     id: string;
     docType: string;
     title: string;
     titleUpdatedAt: number;
     createdAt: number;
+    lifecycleUpdatedAt: number;
 }): void {
     broadcast({
         t: 'doc-created',
@@ -141,6 +144,7 @@ export function broadcastDocCreated(entry: {
             createdAt: entry.createdAt,
             isDeleted: false,
             deletedAt: null,
+            lifecycleUpdatedAt: entry.lifecycleUpdatedAt,
             contentHash: null,
         },
     });
