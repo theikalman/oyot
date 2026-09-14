@@ -24,7 +24,7 @@ interface RawSyncEntry {
     is_deleted: boolean;
     deleted_at: number | null;
     lifecycle_updated_at: number;
-    content_hash: number[] | null;
+    content_hash: string | null; // base64
 }
 
 function toSummary(doc: Document): DocumentSummary {
@@ -58,15 +58,15 @@ export class DocumentRepository {
             isDeleted: r.is_deleted,
             deletedAt: r.deleted_at,
             lifecycleUpdatedAt: r.lifecycle_updated_at,
-            contentHash: r.content_hash ? bytesToBase64(Uint8Array.from(r.content_hash)) : null,
+            contentHash: r.content_hash,
         }));
     }
 
     private async loadDoc(docId: string): Promise<Y.Doc> {
-        const res = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', { docId });
+        const res = await invoke<{ doc_id: string; state: string }>('get_yjs_state', { docId });
         const ydoc = new Y.Doc();
-        if (res.state && res.state.length > 0) {
-            Y.applyUpdate(ydoc, new Uint8Array(res.state));
+        if (res.state) {
+            Y.applyUpdate(ydoc, base64ToBytes(res.state));
         }
         return ydoc;
     }
@@ -101,9 +101,9 @@ export class DocumentRepository {
         const hash = await contentHash(merged);
         await invoke('save_yjs_update', {
             docId,
-            update: Array.from(updateBytes),
-            mergedState: Array.from(merged),
-            contentHash: Array.from(hash),
+            update: bytesToBase64(updateBytes),
+            mergedState: bytesToBase64(merged),
+            contentHash: bytesToBase64(hash),
             origin: 'remote',
         });
         appStore.markDocumentHasContent(docId);
@@ -115,9 +115,9 @@ export class DocumentRepository {
         const hash = await contentHash(mergedState);
         await invoke('save_yjs_update', {
             docId,
-            update: Array.from(mergedState),
-            mergedState: Array.from(mergedState),
-            contentHash: Array.from(hash),
+            update: bytesToBase64(mergedState),
+            mergedState: bytesToBase64(mergedState),
+            contentHash: bytesToBase64(hash),
             origin: 'local',
         });
     }
@@ -206,7 +206,10 @@ export class DocumentRepository {
                 const state = Y.encodeStateAsUpdate(ydoc);
                 if (state.length <= EMPTY_UPDATE_LEN) continue;
                 const hash = await contentHash(state);
-                await invoke('set_content_hash', { docId: row.id, contentHash: Array.from(hash) });
+                await invoke('set_content_hash', {
+                    docId: row.id,
+                    contentHash: bytesToBase64(hash),
+                });
             } catch (e) {
                 console.warn(`[sync] hash backfill failed for ${row.id}:`, e);
             }

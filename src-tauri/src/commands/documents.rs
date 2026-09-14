@@ -1,4 +1,6 @@
 use crate::db::AppState;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -154,7 +156,8 @@ pub struct DocSyncEntry {
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
     pub lifecycle_updated_at: i64,
-    pub content_hash: Option<Vec<u8>>,
+    /// base64 of the content hash, matching how it crosses IPC elsewhere.
+    pub content_hash: Option<String>,
 }
 
 // The full document manifest a paired device sends on connect so the peer can
@@ -191,7 +194,7 @@ pub fn list_document_sync_state(
                 is_deleted: is_deleted_int != 0,
                 deleted_at: row.get(7)?,
                 lifecycle_updated_at: row.get(8)?,
-                content_hash: row.get(9)?,
+                content_hash: row.get::<_, Option<Vec<u8>>>(9)?.map(|h| BASE64.encode(h)),
             })
         })
         .map_err(|e| e.to_string())?

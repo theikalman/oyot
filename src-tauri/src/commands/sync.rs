@@ -1,13 +1,26 @@
 use crate::db::AppState;
 use crate::indexer;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
+// Yjs state crosses the IPC boundary as base64 rather than a JSON array of
+// numbers. A number array serialises to roughly 3.6 bytes of JSON per byte of
+// payload; base64 is 1.33. On a document of any size this was the dominant cost
+// of a save.
+fn decode(field: &str, value: &str) -> Result<Vec<u8>, String> {
+    BASE64
+        .decode(value)
+        .map_err(|e| format!("{field} is not valid base64: {e}"))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct YjsStateResult {
     pub doc_id: String,
-    pub state: Vec<u8>,
+    /// base64 of the merged Yjs state; empty string when there is none.
+    pub state: String,
 }
 
 #[tauri::command]
@@ -32,7 +45,7 @@ pub fn get_yjs_state(
     );
     Ok(YjsStateResult {
         doc_id,
-        state: state_vec,
+        state: BASE64.encode(&state_vec),
     })
 }
 
@@ -51,11 +64,16 @@ pub enum UpdateOrigin {
 pub async fn save_yjs_update(
     state: tauri::State<'_, AppState>,
     doc_id: String,
-    update: Vec<u8>,
-    merged_state: Vec<u8>,
-    content_hash: Option<Vec<u8>>,
+    update: String,
+    merged_state: String,
+    content_hash: Option<String>,
     origin: UpdateOrigin,
 ) -> Result<(), String> {
+    let update = decode("update", &update)?;
+    let merged_state = decode("merged_state", &merged_state)?;
+    let content_hash = content_hash
+        .map(|h| decode("content_hash", &h))
+        .transpose()?;
     eprintln!(
         "[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes",
         doc_id,
@@ -113,8 +131,9 @@ pub async fn save_yjs_update(
 pub fn set_content_hash(
     state: tauri::State<'_, AppState>,
     doc_id: String,
-    content_hash: Vec<u8>,
+    content_hash: String,
 ) -> Result<(), String> {
+    let content_hash = decode("content_hash", &content_hash)?;
     let db = state.db.lock();
     db.execute(
         "UPDATE documents SET content_hash = ? WHERE id = ?",

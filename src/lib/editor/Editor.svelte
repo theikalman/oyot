@@ -15,6 +15,7 @@
     } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
     import { REMOTE_ORIGIN } from './yjs';
+    import { base64ToBytes } from '$lib/sync/protocol';
     import * as Y from 'yjs';
 
     interface Props {
@@ -75,14 +76,11 @@
         if (!current?.id) return;
         console.log(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
         try {
-            const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', {
+            const stateResult = await invoke<{ doc_id: string; state: string }>('get_yjs_state', {
                 docId: current.id,
             });
-            console.log(
-                `[Editor] [${current.id}] Fetched state: ${stateResult.state?.length ?? 0} bytes, ydoc present=${!!ydoc}`,
-            );
-            if (stateResult.state && stateResult.state.length > 0 && ydoc) {
-                Y.applyUpdate(ydoc, new Uint8Array(stateResult.state), REMOTE_ORIGIN);
+            if (stateResult.state && ydoc) {
+                Y.applyUpdate(ydoc, base64ToBytes(stateResult.state), REMOTE_ORIGIN);
                 console.log(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
             }
         } catch (error) {
