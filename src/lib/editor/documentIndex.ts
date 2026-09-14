@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { attachmentHash } from '$lib/tiptap/attachmentRef';
 
 // What SQL needs to know about a document that only the editor can see.
 //
@@ -12,6 +13,13 @@ export interface DocumentIndex {
     text: string;
     /** Ids of documents this one links to, deduplicated. */
     linkTargets: string[];
+    /**
+     * Content hashes of the images this document embeds, deduplicated.
+     *
+     * The only record of which attachments are still in use. Without it,
+     * collecting unreferenced blobs has nothing to check a blob against.
+     */
+    attachmentHashes: string[];
     todoCount: number;
     completedTodoCount: number;
 }
@@ -19,6 +27,7 @@ export interface DocumentIndex {
 export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
     const parts: string[] = [];
     const linkTargets = new Set<string>();
+    const attachmentHashes = new Set<string>();
     let todoCount = 0;
     let completedTodoCount = 0;
 
@@ -45,8 +54,11 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
                 return true;
             }
             case 'image': {
-                // Alt text carries the attachment hash, which is noise in a
-                // search index.
+                // The hash is what says this attachment is still in use. It is
+                // noise in the search text, so it is collected and not pushed
+                // into `parts`.
+                const hash = attachmentHash(node.attrs.src, node.attrs.alt);
+                if (hash) attachmentHashes.add(hash);
                 return false;
             }
             default:
@@ -60,6 +72,7 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
     return {
         text: parts.join(' ').replace(/\s+/g, ' ').trim(),
         linkTargets: [...linkTargets],
+        attachmentHashes: [...attachmentHashes],
         todoCount,
         completedTodoCount,
     };

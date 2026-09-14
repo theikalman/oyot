@@ -1,5 +1,6 @@
 import { log } from '$lib/log';
 import { invoke } from '@tauri-apps/api/core';
+import { documentRepository } from '$lib/sync';
 import { toasts } from './toast';
 import type { Document, DocumentSummary, IndexData } from '../types';
 
@@ -25,6 +26,20 @@ export async function loadDocument(id: string): Promise<Document> {
         toasts.error('Failed to load document');
         throw error;
     }
+}
+
+// Build any missing derived rows, then collect the images nothing references.
+//
+// The order matters: collection refuses to run while a document still has no
+// index, because an unindexed document's images look unreferenced.
+export async function reindexAndCollect(): Promise<void> {
+    try {
+        const indexed = await documentRepository.backfillIndex();
+        if (indexed > 0) log.debug(`Built a search index for ${indexed} document(s)`);
+    } catch (error) {
+        console.error('Failed to backfill document indexes:', error);
+    }
+    await cleanupOrphanedImages();
 }
 
 export async function cleanupOrphanedImages(): Promise<number> {

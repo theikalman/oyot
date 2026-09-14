@@ -1,5 +1,6 @@
 use crate::db::AppState;
-use rusqlite::params;
+use crate::indexer;
+use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use tauri::Emitter;
 
@@ -147,22 +148,79 @@ pub fn save_image(
 }
 
 #[tauri::command]
-pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32, String> {
-    let orphaned: Vec<String> = {
-        let db = state.db.lock();
-        let mut stmt = db
-            .prepare("SELECT local_path FROM attachments WHERE is_fully_downloaded = 0 AND local_path IS NOT NULL")
-            .map_err(|e| e.to_string())?;
-        let rows: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        rows
-    };
+/// Documents whose derived rows predate the indexer recording attachments.
+///
+/// Collection is unsafe while any exist: their images are on the page but not
+/// in `document_attachments`, so they would look unreferenced. The frontend
+/// renders each of these and saves an index, which is the only way to build
+/// one for content this device has never displayed.
+pub fn unindexed_document_ids(db: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id FROM documents
+              WHERE is_deleted = 0
+                AND length(crdt_state) > 2
+                AND index_version < ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map(params![indexer::INDEX_VERSION], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(ids)
+}
 
-    let count = orphaned.len() as i32;
-    for path in &orphaned {
+#[tauri::command]
+pub fn list_unindexed_documents(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    let db = state.db.lock();
+    unindexed_document_ids(&db)
+}
+
+/// Attachments no live document embeds any more, with their stored paths.
+pub fn unreferenced_attachments(db: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT a.hash, a.local_path FROM attachments a
+              WHERE a.local_path IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM document_attachments r
+                                 JOIN documents d ON d.id = r.document_id
+                                WHERE r.hash = a.hash AND d.is_deleted = 0)",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(rows)
+}
+
+/// Delete the blobs no document refers to any more.
+///
+/// This used to delete rows with `is_fully_downloaded = 0`, which nothing
+/// writes: `store_attachment` always writes 1. So it collected nothing, while
+/// reporting a count and a toast, and an image removed from every note stayed
+/// on disk and kept being advertised to peers. There was no reference data to
+/// do better with until now.
+///
+/// Returns 0 without touching anything while any document is still unindexed,
+/// because an unindexed document's images look unreferenced.
+#[tauri::command]
+pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32, String> {
+    let orphaned = {
+        let db = state.db.lock();
+        if !unindexed_document_ids(&db)?.is_empty() {
+            trace!("[cmd] cleanup_orphaned_images skipped, documents still to index");
+            return Ok(0);
+        }
+        unreferenced_attachments(&db)?
+    };
+    if orphaned.is_empty() {
+        return Ok(0);
+    }
+
+    for (_, path) in &orphaned {
         let full_path = state.data_dir.join(path);
         if full_path.exists() {
             let _ = std::fs::remove_file(&full_path);
@@ -170,24 +228,16 @@ pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32,
     }
 
     let db = state.db.lock();
-    db.execute(
-        "UPDATE attachments SET local_path = NULL, is_fully_downloaded = 0 WHERE is_fully_downloaded = 0",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
+    let mut removed = 0;
+    for (hash, _) in &orphaned {
+        // The row goes with the file. Leaving it would keep the attachment in
+        // our manifest with no bytes behind it.
+        removed += db
+            .execute("DELETE FROM attachments WHERE hash = ?", params![hash])
+            .map_err(|e| e.to_string())?;
+    }
 
-    Ok(count)
-}
-
-#[tauri::command]
-pub fn request_attachment(state: tauri::State<'_, AppState>, hash: String) -> Result<(), String> {
-    let db = state.db.lock();
-    db.execute(
-        "UPDATE attachments SET is_fully_downloaded = 0 WHERE hash = ?",
-        params![&hash],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(removed as i32)
 }
 
 #[tauri::command]
@@ -264,10 +314,18 @@ pub fn list_attachment_manifest(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<AttachmentManifestEntry>, String> {
     let db = state.db.lock();
+    // Only what a live document still embeds. Advertising everything we hold
+    // means a peer that has collected an orphan pulls it straight back from
+    // us on the next connect, and collects it again: the two devices trade
+    // the same dead blob forever. ADR 0005 deferred this scan; collecting
+    // unreferenced blobs is what makes it necessary.
     let mut stmt = db
         .prepare(
-            "SELECT hash, mime_type, local_path FROM attachments \
-             WHERE is_fully_downloaded = 1 AND local_path IS NOT NULL",
+            "SELECT a.hash, a.mime_type, a.local_path FROM attachments a \
+             WHERE a.is_fully_downloaded = 1 AND a.local_path IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM document_attachments r \
+                            JOIN documents d ON d.id = r.document_id \
+                           WHERE r.hash = a.hash AND d.is_deleted = 0)",
         )
         .map_err(|e| e.to_string())?;
 
@@ -385,4 +443,117 @@ fn current_timestamp() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indexer::{update_document_index, DocumentIndexInput, INDEX_VERSION};
+
+    fn db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        crate::setup_database_tables(&db).unwrap();
+        db.execute_batch(
+            "INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at)
+                 VALUES ('d1', 'note', 'One', x'00010203', 1, 1);
+             INSERT INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at)
+                 VALUES ('h1', 'image/png', 'attachments/h1.png', 1, 1),
+                        ('h2', 'image/png', 'attachments/h2.png', 1, 1);",
+        )
+        .unwrap();
+        db
+    }
+
+    fn index_with(hashes: &[&str]) -> DocumentIndexInput {
+        DocumentIndexInput {
+            text: "body".into(),
+            link_targets: vec![],
+            attachment_hashes: hashes.iter().map(|s| s.to_string()).collect(),
+            todo_count: 0,
+            completed_todo_count: 0,
+        }
+    }
+
+    #[test]
+    fn an_attachment_no_document_embeds_is_unreferenced() {
+        let db = db();
+        update_document_index(&db, "d1", "One", &index_with(&["h1"])).unwrap();
+
+        let orphans: Vec<String> = unreferenced_attachments(&db)
+            .unwrap()
+            .into_iter()
+            .map(|(h, _)| h)
+            .collect();
+        assert_eq!(orphans, vec!["h2"], "h1 is still on the page");
+    }
+
+    // The case the old implementation could not see at all: the image is
+    // removed from the note, so the blob is dead, but it stayed on disk and
+    // kept being advertised to peers forever.
+    #[test]
+    fn removing_an_image_from_a_note_makes_its_blob_collectable() {
+        let db = db();
+        update_document_index(&db, "d1", "One", &index_with(&["h1", "h2"])).unwrap();
+        assert!(unreferenced_attachments(&db).unwrap().is_empty());
+
+        update_document_index(&db, "d1", "One", &index_with(&["h1"])).unwrap();
+
+        let orphans: Vec<String> = unreferenced_attachments(&db)
+            .unwrap()
+            .into_iter()
+            .map(|(h, _)| h)
+            .collect();
+        assert_eq!(orphans, vec!["h2"]);
+    }
+
+    #[test]
+    fn a_deleted_documents_attachments_are_collectable() {
+        let db = db();
+        update_document_index(&db, "d1", "One", &index_with(&["h1", "h2"])).unwrap();
+        crate::commands::documents::tombstone_document(&db, "d1", 900).unwrap();
+
+        assert_eq!(unreferenced_attachments(&db).unwrap().len(), 2);
+    }
+
+    // Collection has to wait for these: their images are on the page but not
+    // in the reference table, so they would all look unreferenced.
+    #[test]
+    fn a_document_that_has_never_been_indexed_blocks_collection() {
+        let db = db();
+        assert_eq!(unindexed_document_ids(&db).unwrap(), vec!["d1"]);
+
+        update_document_index(&db, "d1", "One", &index_with(&["h1"])).unwrap();
+        assert!(unindexed_document_ids(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_empty_document_needs_no_index() {
+        let db = db();
+        db.execute(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('blank', 'note', 'Blank', 1, 1)",
+            [],
+        )
+        .unwrap();
+        update_document_index(&db, "d1", "One", &index_with(&[])).unwrap();
+
+        assert!(
+            unindexed_document_ids(&db).unwrap().is_empty(),
+            "a document with no content has nothing to index"
+        );
+    }
+
+    #[test]
+    fn a_stale_index_version_counts_as_unindexed() {
+        let db = db();
+        update_document_index(&db, "d1", "One", &index_with(&["h1"])).unwrap();
+        db.execute(
+            "UPDATE documents SET index_version = ?1 WHERE id = 'd1'",
+            params![INDEX_VERSION - 1],
+        )
+        .unwrap();
+
+        assert_eq!(unindexed_document_ids(&db).unwrap(), vec!["d1"]);
+    }
 }

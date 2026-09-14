@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { appStore, isLoading, currentDocument } from '$lib/stores/app';
     import { initializeTheme, applyTheme } from '$lib/services/theme';
-    import { loadAllDocuments, loadDocument, cleanupOrphanedImages } from '$lib/services/documents';
+    import { loadAllDocuments, loadDocument, reindexAndCollect } from '$lib/services/documents';
     import { ensureTodayJournal } from '$lib/services/documentActions';
     import { toasts } from '$lib/services/toast';
     import Sidebar from '$lib/components/Sidebar.svelte';
@@ -33,7 +33,7 @@
                 }
             }
 
-            await cleanupOrphanedImages();
+            await reindexAndCollect();
         } catch (error) {
             // loadAllDocuments already reports its own failure to the user.
             console.error('Failed to initialize:', error);

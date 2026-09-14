@@ -101,7 +101,13 @@ describe('extractDocumentIndex', () => {
 
     it('handles an empty document', () => {
         const index = extractDocumentIndex(doc(para()));
-        expect(index).toEqual({ text: '', linkTargets: [], todoCount: 0, completedTodoCount: 0 });
+        expect(index).toEqual({
+            text: '',
+            linkTargets: [],
+            attachmentHashes: [],
+            todoCount: 0,
+            completedTodoCount: 0,
+        });
     });
 
     it('ignores a link with no target', () => {

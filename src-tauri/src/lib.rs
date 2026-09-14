@@ -28,7 +28,8 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             title_updated_at INTEGER,
             is_deleted INTEGER DEFAULT 0,
             deleted_at INTEGER,
-            lifecycle_updated_at INTEGER
+            lifecycle_updated_at INTEGER,
+            index_version INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS document_index (
@@ -56,6 +57,18 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             title,
             body
         );
+
+        -- Which documents embed which attachments. The only record of what is
+        -- still in use, and therefore the only basis for collecting what is
+        -- not. Derived from content, so the editor extracts it on save and the
+        -- sync layer on merge, the same way links are.
+        CREATE TABLE IF NOT EXISTS document_attachments (
+            document_id TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            PRIMARY KEY (document_id, hash),
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_attachments_hash ON document_attachments(hash);
 
         CREATE TABLE IF NOT EXISTS attachments (
             hash TEXT PRIMARY KEY,
@@ -100,7 +113,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -241,6 +254,42 @@ pub fn run_migrations(db: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v6: record which documents embed which attachments, so a blob no
+    // document references any more can be identified and collected. Before
+    // this there was no way to tell, and `cleanup_orphaned_images` deleted
+    // partially-downloaded rows instead, which nothing ever creates.
+    //
+    // `index_version` says whether a document's derived rows were built by a
+    // version of the indexer that records attachments. Collection is unsafe
+    // until every document has been, or it would delete blobs belonging to
+    // documents it simply has not looked at.
+    if version < 6 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS document_attachments (
+                 document_id TEXT NOT NULL,
+                 hash TEXT NOT NULL,
+                 PRIMARY KEY (document_id, hash),
+                 FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_document_attachments_hash
+                 ON document_attachments(hash);",
+        )
+        .map_err(|e| format!("Migration v6 failed: {}", e))?;
+
+        let has_index_version = db
+            .prepare("SELECT index_version FROM documents LIMIT 0")
+            .is_ok();
+        if !has_index_version {
+            db.execute_batch(
+                "ALTER TABLE documents ADD COLUMN index_version INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(|e| format!("Migration v6 index_version failed: {}", e))?;
+        }
+
+        db.execute_batch("PRAGMA user_version = 6;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -295,7 +344,7 @@ pub fn run() {
             save_image,
             import_image_from_path,
             cleanup_orphaned_images,
-            request_attachment,
+            list_unindexed_documents,
             get_attachment_info,
             get_local_blob_url,
             list_attachment_manifest,

@@ -82,11 +82,23 @@ describe('indexFromYDoc', () => {
         expect(indexFromYDoc(ydoc).text).toContain('right');
     });
 
+    it('collects the attachments a document still embeds', () => {
+        // The only record of which blobs are in use, and the thing orphan
+        // collection checks a blob against.
+        const hash = 'a'.repeat(64);
+        const ydoc = ydocOf([
+            { type: 'image', attrs: { src: `oyot-attachment://${hash}`, alt: `oyot:${hash}` } },
+        ]);
+
+        expect(indexFromYDoc(ydoc).attachmentHashes).toEqual([hash]);
+    });
+
     it('returns an empty index for an empty document', () => {
         const ydoc = ydocOf([]);
         expect(indexFromYDoc(ydoc)).toEqual({
             text: '',
             linkTargets: [],
+            attachmentHashes: [],
             todoCount: 0,
             completedTodoCount: 0,
         });

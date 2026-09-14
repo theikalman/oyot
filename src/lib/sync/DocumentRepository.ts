@@ -323,6 +323,45 @@ export class DocumentRepository {
 
     // --- one-time maintenance -------------------------------------------
 
+    // Build the derived rows for documents that have never had them.
+    //
+    // Search, backlinks, task counts and attachment references are all read
+    // out of a rendered document, so before this they only existed for
+    // documents saved on this device since the feature shipped. Everything
+    // else was unsearchable, and its images looked unreferenced, which is why
+    // collecting them has to wait for this to finish.
+    //
+    // Rendering is the same headless path a merge uses. One document at a
+    // time, off the startup critical path; a failure on one is logged and the
+    // rest continue.
+    async backfillIndex(): Promise<number> {
+        const indexer = await loadRemoteIndexer();
+        if (!indexer) return 0;
+
+        let ids: string[];
+        try {
+            ids = await invoke<string[]>('list_unindexed_documents');
+        } catch (e) {
+            console.warn('[sync] could not list documents needing an index:', e);
+            return 0;
+        }
+
+        let done = 0;
+        for (const docId of ids) {
+            try {
+                const ydoc = await this.loadDoc(docId);
+                const index = indexer(ydoc);
+                const state = Y.encodeStateAsUpdate(ydoc);
+                ydoc.destroy();
+                await this.saveLocalUpdate(docId, state, index);
+                done++;
+            } catch (e) {
+                console.warn(`[sync] could not index ${docId}:`, e);
+            }
+        }
+        return done;
+    }
+
     // Backfill content hashes for rows written before the hashing code existed.
     // Cheap, idempotent, runs once off the critical path after an upgrade.
     async backfillHashes(): Promise<void> {

@@ -183,6 +183,7 @@ describe('EditorSaveService', () => {
         svc.setIndexReader(() => ({
             text: 'two tasks',
             linkTargets: [],
+            attachmentHashes: [],
             todoCount: 2,
             completedTodoCount: 1,
         }));

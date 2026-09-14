@@ -750,6 +750,7 @@ mod tests {
             "d1",
             "One",
             &crate::indexer::DocumentIndexInput {
+                attachment_hashes: vec![],
                 text: "findable".into(),
                 link_targets: vec![],
                 todo_count: 0,
@@ -878,6 +879,7 @@ mod tests {
             "d1",
             "One",
             &crate::indexer::DocumentIndexInput {
+                attachment_hashes: vec![],
                 text: "the quarterly meeting notes".into(),
                 link_targets: vec![],
                 todo_count: 0,
@@ -919,6 +921,7 @@ mod tests {
             "d1",
             "One",
             &crate::indexer::DocumentIndexInput {
+                attachment_hashes: vec![],
                 text: "findable".into(),
                 link_targets: vec![],
                 todo_count: 0,
