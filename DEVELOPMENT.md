@@ -106,6 +106,35 @@ Formatting is not negotiable in CI, so run `make fmt` before committing.
 Prettier config lives in `.prettierrc`, eslint in `eslint.config.js`, and
 rustfmt uses the default profile.
 
+## Security model
+
+The webview is treated as the untrusted surface, because it renders document
+content and image attachments that arrive from paired devices.
+
+**The frontend has no filesystem permission.** `src-tauri/capabilities/`
+grants only `core`, `dialog`, `opener`, `os` (and `barcode-scanner` on mobile).
+Inserting an image opens the native dialog, which returns a path, and
+`import_image_from_path` reads the bytes in Rust. Plugin ACLs constrain the
+webview, not Rust, so nothing needs to be opened up for that read. Avoid
+reaching for `@tauri-apps/plugin-fs` in the frontend; add a command instead.
+
+**Attachments are raster only.** `ext_for_mime` in
+`src-tauri/src/commands/attachments.rs` is the allowlist, and every entry point
+goes through `store_attachment`, which enforces it along with the 10MB cap. SVG
+is excluded on purpose: it can carry script, and an attachment from a peer is
+rendered in the webview.
+
+**The asset protocol is scoped to the attachment directory**
+(`$APPDATA/attachments/**` in `tauri.conf.json`), so a resolved `asset:` URL
+cannot reach anything else.
+
+**The CSP allows only self and the IPC origin.** No remote script, style, or
+connection. The MQTT connection is made from Rust and is not subject to it.
+
+Peer identity is still an unauthenticated UUID, and MQTT signaling is
+unencrypted and unauthenticated. That is the largest open gap; see
+`docs/IMPROVEMENT_PLAN.md` Phase 5.
+
 ## Project Structure
 
 ```

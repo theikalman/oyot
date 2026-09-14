@@ -1,5 +1,4 @@
 import { open } from '@tauri-apps/plugin-dialog';
-import { readFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import type { Editor } from '@tiptap/core';
 import '@tiptap/extension-image';
@@ -7,8 +6,13 @@ import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../
 import { exitSuggestion } from '@tiptap/suggestion';
 import { ATTACHMENT_SCHEME } from '../attachments';
 import { broadcastAttachmentAvailable } from '$lib/sync';
+import { toasts } from '$lib/services/toast';
 
+// Mirrors MAX_IMAGE_BYTES in src-tauri/src/commands/attachments.rs, which is
+// the authority; this is only here to fail fast with a clearer message.
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+
+const ACCEPTED_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
 
 function arrayBufferToBase64(buffer: Uint8Array): string {
     let binary = '';
@@ -19,18 +23,10 @@ function arrayBufferToBase64(buffer: Uint8Array): string {
     return btoa(binary);
 }
 
-function getMimeType(filePath: string): string {
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    const mimeTypes: Record<string, string> = {
-        png: 'image/png',
-        jpg: 'image/jpeg',
-        jpeg: 'image/jpeg',
-        gif: 'image/gif',
-        webp: 'image/webp',
-        svg: 'image/svg+xml',
-    };
-    return mimeTypes[ext ?? ''] ?? 'image/png';
-}
+// Raster only. SVG is a script-bearing document and attachments are rendered
+// in the webview, so the store refuses it; keeping it out of the picker means
+// the user gets a greyed-out file rather than an error after choosing one.
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 
 export function registerImageCommand(_editor: Editor): void {
     const command: SlashCommand = {
@@ -54,34 +50,32 @@ export function registerImageCommand(_editor: Editor): void {
 export async function insertImageFromFile(editor: Editor): Promise<void> {
     const filePath = await open({
         multiple: false,
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
+        filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
     });
 
     if (!filePath) return;
 
     try {
-        const fileContent = await readFile(filePath);
-        const mimeType = getMimeType(filePath);
-        const blob = new Blob([fileContent], { type: mimeType });
-
-        if (!validateFileSize(blob)) return;
-
-        const base64 = arrayBufferToBase64(fileContent);
-
-        const hash: string = await invoke('save_image', {
-            imageData: base64,
-            mimeType,
-        });
-
-        insertImageNode(editor, hash, mimeType, blob.size);
+        // Rust reads the file, so the webview needs no filesystem permission
+        // and a large image never crosses IPC as base64. It enforces the type
+        // allowlist and the size cap on the way in.
+        const stored = await invoke<{ hash: string; mime_type: string; size: number }>(
+            'import_image_from_path',
+            { path: filePath },
+        );
+        insertImageNode(editor, stored.hash, stored.mime_type, stored.size);
     } catch (error) {
         console.error('Failed to insert image:', error);
-        alert('Failed to insert image. Please try again.');
+        toasts.error(typeof error === 'string' ? error : 'Failed to insert image');
     }
 }
 
 export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<void> {
     if (!validateFileSize(blob)) return;
+    if (!ACCEPTED_MIME.has(blob.type)) {
+        toasts.error('Only PNG, JPEG, GIF and WebP images are supported');
+        return;
+    }
 
     try {
         const arrayBuffer = await blob.arrayBuffer();
@@ -96,6 +90,7 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
         insertImageNode(editor, hash, blob.type, blob.size);
     } catch (error) {
         console.error('Failed to insert image:', error);
+        toasts.error(typeof error === 'string' ? error : 'Failed to insert image');
     }
 }
 
@@ -121,7 +116,7 @@ function insertImageNode(editor: Editor, hash: string, mimeType: string, size: n
 
 function validateFileSize(blob: Blob): boolean {
     if (blob.size > MAX_IMAGE_SIZE) {
-        alert('Image file is too large. Maximum size is 10MB.');
+        toasts.error('Image is too large. Maximum size is 10MB.');
         return false;
     }
     return true;

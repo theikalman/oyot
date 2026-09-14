@@ -240,7 +240,6 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init());
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -306,6 +305,7 @@ pub fn run() {
             get_mqtt_broker_url,
             save_mqtt_broker_url,
             save_image,
+            import_image_from_path,
             delete_image,
             cleanup_orphaned_images,
             get_attachment_path,
@@ -540,6 +540,72 @@ mod migration_tests {
 
         let fresh = db.execute(sql, rusqlite::params![600_i64, "d1"]).unwrap();
         assert_eq!(fresh, 1, "a newer tombstone applies");
+    }
+
+    #[test]
+    fn configure_connection_enables_foreign_keys() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+
+        let on: i64 = db
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(on, 1, "foreign_keys defaults to OFF and must be turned on");
+
+        let busy: i64 = db
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(busy, 5000);
+    }
+
+    // The ON DELETE CASCADE declared on yjs_updates and yjs_snapshots never
+    // fired, because foreign_keys was off. Nothing hard-deletes a document
+    // today (delete_document is a tombstone that clears content explicitly),
+    // so this is about the declaration finally meaning what it says.
+    #[test]
+    fn deleting_a_document_row_cascades_to_its_crdt_data() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+
+        db.execute_batch(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('d1', 'note', 'One', 1, 1);
+             INSERT INTO yjs_updates (document_id, update_blob, created_at)
+                 VALUES ('d1', x'0102', 1);
+             INSERT INTO yjs_snapshots (document_id, snapshot_blob, last_update_id, updated_at)
+                 VALUES ('d1', x'0304', 1, 1);",
+        )
+        .unwrap();
+
+        db.execute("DELETE FROM documents WHERE id = 'd1'", [])
+            .unwrap();
+
+        let updates: i64 = db
+            .query_row("SELECT COUNT(*) FROM yjs_updates", [], |r| r.get(0))
+            .unwrap();
+        let snapshots: i64 = db
+            .query_row("SELECT COUNT(*) FROM yjs_snapshots", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(updates, 0);
+        assert_eq!(snapshots, 0);
+    }
+
+    // The flip side: content for a document we have never heard of is now
+    // refused rather than written as an orphan row that nothing would ever
+    // read. The sync layer already catches and logs this; the next manifest
+    // exchange materialises the row and pulls the content properly.
+    #[test]
+    fn crdt_data_for_an_unknown_document_is_refused() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+
+        let result = db.execute(
+            "INSERT INTO yjs_updates (document_id, update_blob, created_at) VALUES ('ghost', x'01', 1)",
+            [],
+        );
+        assert!(result.is_err(), "an orphan update must not be accepted");
     }
 
     // Mirrors pairing::save_pair. The transport calls it on every transition to

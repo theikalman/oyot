@@ -3,15 +3,125 @@ use rusqlite::params;
 use sha2::{Digest, Sha256};
 use tauri::Emitter;
 
-fn ext_for_mime(mime_type: &str) -> &'static str {
+/// Largest image we will take in, from disk or from a paste. Mirrors the
+/// check the editor does before it calls in, and is the backstop for the peer
+/// transfer path, which has no UI in front of it.
+pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+
+/// The image types we store, and the extension each is written with.
+///
+/// Raster only, deliberately. SVG is a script-bearing document, and an
+/// attachment arrives from a peer and is rendered in the webview, so accepting
+/// it would let a peer run script in the app's origin. Nothing in the editor
+/// produces SVG: the picker filters it out and paste/drop yields raster.
+fn ext_for_mime(mime_type: &str) -> Option<&'static str> {
     match mime_type {
-        "image/png" => "png",
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        _ => "bin",
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        _ => None,
     }
+}
+
+fn filename_for(hash: &str, mime_type: &str) -> Result<String, String> {
+    let ext =
+        ext_for_mime(mime_type).ok_or_else(|| format!("unsupported image type: {mime_type}"))?;
+    Ok(format!("{hash}.{ext}"))
+}
+
+fn mime_for_extension(path: &std::path::Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Write bytes into the attachment store and record the row. Shared by every
+/// entry point so the size cap, the type allowlist and the content address are
+/// enforced in exactly one place.
+fn store_attachment(
+    state: &AppState,
+    bytes: &[u8],
+    mime_type: &str,
+) -> Result<StoredImage, String> {
+    if bytes.is_empty() {
+        return Err("image is empty".to_string());
+    }
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "image is {} bytes, over the {} byte limit",
+            bytes.len(),
+            MAX_IMAGE_BYTES
+        ));
+    }
+
+    let hash = sha256_hex(bytes);
+    let filename = filename_for(&hash, mime_type)?;
+
+    let attachments_dir = state.data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    std::fs::write(attachments_dir.join(&filename), bytes).map_err(|e| e.to_string())?;
+
+    let relative_path = format!("attachments/{filename}");
+    let now = current_timestamp();
+
+    let db = state.db.lock();
+    db.execute(
+        "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
+        params![&hash, mime_type, &relative_path, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(StoredImage {
+        hash,
+        mime_type: mime_type.to_string(),
+        size: bytes.len() as i64,
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct StoredImage {
+    pub hash: String,
+    pub mime_type: String,
+    pub size: i64,
+}
+
+/// Read an image the user picked in the native file dialog.
+///
+/// The read happens here rather than in the webview so the frontend needs no
+/// filesystem permission at all: the `fs` plugin's scope is an ACL on the
+/// webview, and granting it the whole disk (which is what `readFile` on an
+/// arbitrary picked path required) was the app's broadest privilege. It also
+/// avoids shipping the file through IPC as base64, which inflated a 10MB image
+/// to roughly 13MB of JSON.
+///
+/// `path` comes from the dialog plugin, i.e. from the user, not from a
+/// document or a peer.
+#[tauri::command]
+pub fn import_image_from_path(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<StoredImage, String> {
+    let path = std::path::PathBuf::from(path);
+    let mime_type = mime_for_extension(&path)
+        .ok_or_else(|| "unsupported image type: only PNG, JPEG, GIF and WebP".to_string())?;
+
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() as usize > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "image is {} bytes, over the {} byte limit",
+            meta.len(),
+            MAX_IMAGE_BYTES
+        ));
+    }
+
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    store_attachment(&state, &bytes, mime_type)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -20,6 +130,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Store an image the webview already holds in memory: a paste or a drag-drop,
+/// where the bytes come from a Blob and base64 over IPC is the only route.
 #[tauri::command]
 pub fn save_image(
     state: tauri::State<'_, AppState>,
@@ -31,28 +143,7 @@ pub fn save_image(
         .decode(&image_data)
         .map_err(|e| e.to_string())?;
 
-    let hash = sha256_hex(&image_bytes);
-
-    let ext = ext_for_mime(&mime_type);
-    let filename = format!("{}.{}", hash, ext);
-
-    let attachments_dir = state.data_dir.join("attachments");
-    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-
-    let full_path = attachments_dir.join(&filename);
-    std::fs::write(&full_path, &image_bytes).map_err(|e| e.to_string())?;
-
-    let relative_path = format!("attachments/{}", filename);
-    let now = current_timestamp();
-
-    let db = state.db.lock();
-    db.execute(
-        "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
-        params![&hash, &mime_type, &relative_path, now],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(hash)
+    store_attachment(&state, &image_bytes, &mime_type).map(|s| s.hash)
 }
 
 #[tauri::command]
@@ -372,22 +463,10 @@ pub fn save_attachment_bytes(
         ));
     }
 
-    let filename = format!("{}.{}", hash, ext_for_mime(&mime_type));
-    let attachments_dir = state.data_dir.join("attachments");
-    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-    std::fs::write(attachments_dir.join(&filename), &bytes).map_err(|e| e.to_string())?;
-
-    let relative_path = format!("attachments/{}", filename);
-    let now = current_timestamp();
-
-    {
-        let db = state.db.lock();
-        db.execute(
-            "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
-            params![&hash, &mime_type, &relative_path, now],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+    // A peer controls both the bytes and the declared type, and the result is
+    // rendered in our webview, so this path gets the same allowlist and cap as
+    // a local import rather than trusting the manifest.
+    store_attachment(&state, &bytes, &mime_type)?;
 
     let _ = state
         .app_handle
