@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { attachFraming } from './Framing';
+import { describe, it, expect, vi } from 'vitest';
+import { attachFraming, MAX_CHUNKS, REASSEMBLY_TIMEOUT_MS, DRAIN_TIMEOUT_MS } from './Framing';
 
 // Minimal RTCDataChannel stand-in: an EventTarget with send()/readyState that
 // forwards each sent string to its wired partner as a 'message' event.
@@ -75,5 +75,162 @@ describe('Framing', () => {
         await sender.send({ hello: 'world' });
         await flush();
         expect(received).toHaveLength(0);
+    });
+
+    // --- malformed input ---------------------------------------------------
+
+    it('rejects a begin frame claiming more chunks than the limit', async () => {
+        const [a, b] = pair();
+        const framed = attachFraming(b as unknown as RTCDataChannel, () => {});
+
+        for (const n of [MAX_CHUNKS + 1, 2 ** 31, -1, 0, 1.5, 'lots']) {
+            a.send(JSON.stringify({ k: 1, id: 1, n }));
+        }
+        await flush();
+
+        expect(framed.pendingCount()).toBe(0);
+        framed.detach();
+    });
+
+    it('ignores a chunk index outside the declared range', async () => {
+        const [a, b] = pair();
+        const received: unknown[] = [];
+        const framed = attachFraming(b as unknown as RTCDataChannel, (m) => received.push(m));
+
+        a.send(JSON.stringify({ k: 1, id: 7, n: 2 }));
+        await flush();
+        for (const i of [-1, 2, 99, 1.5]) {
+            a.send(JSON.stringify({ k: 2, id: 7, i, p: 'AAAA' }));
+        }
+        await flush();
+
+        // Still waiting on both real chunks, and nothing was delivered.
+        expect(framed.pendingCount()).toBe(1);
+        expect(received).toHaveLength(0);
+        framed.detach();
+    });
+
+    it('a duplicate chunk does not complete the message early', async () => {
+        const [a, b] = pair();
+        const received: unknown[] = [];
+        const framed = attachFraming(b as unknown as RTCDataChannel, (m) => received.push(m));
+
+        a.send(JSON.stringify({ k: 1, id: 3, n: 2 }));
+        await flush();
+        a.send(JSON.stringify({ k: 2, id: 3, i: 0, p: 'AAAA' }));
+        a.send(JSON.stringify({ k: 2, id: 3, i: 0, p: 'AAAA' }));
+        await flush();
+
+        expect(received).toHaveLength(0);
+        expect(framed.pendingCount()).toBe(1);
+        framed.detach();
+    });
+
+    // --- reclaiming partial messages ---------------------------------------
+
+    it('discards a partial message whose chunks never arrive', async () => {
+        vi.useFakeTimers();
+        try {
+            const [a, b] = pair();
+            let clock = 0;
+            const framed = attachFraming(
+                b as unknown as RTCDataChannel,
+                () => {},
+                () => clock,
+            );
+
+            a.send(JSON.stringify({ k: 1, id: 1, n: 4 }));
+            await vi.advanceTimersByTimeAsync(0);
+            a.send(JSON.stringify({ k: 2, id: 1, i: 0, p: 'AAAA' }));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(framed.pendingCount()).toBe(1);
+
+            // Sender goes away. The sweep must reclaim the buffered chunk.
+            clock = REASSEMBLY_TIMEOUT_MS + 1;
+            await vi.advanceTimersByTimeAsync(REASSEMBLY_TIMEOUT_MS + 1);
+
+            expect(framed.pendingCount()).toBe(0);
+            framed.detach();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('detach drops buffered partials and stops listening', async () => {
+        const [a, b] = pair();
+        const received: unknown[] = [];
+        const framed = attachFraming(b as unknown as RTCDataChannel, (m) => received.push(m));
+
+        a.send(JSON.stringify({ k: 1, id: 1, n: 2 }));
+        await flush();
+        a.send(JSON.stringify({ k: 2, id: 1, i: 0, p: 'AAAA' }));
+        await flush();
+        expect(framed.pendingCount()).toBe(1);
+
+        framed.detach();
+        expect(framed.pendingCount()).toBe(0);
+
+        a.send(JSON.stringify({ k: 0, d: { after: 'detach' } }));
+        await flush();
+        expect(received).toHaveLength(0);
+    });
+
+    // --- backpressure ------------------------------------------------------
+
+    it('a send blocked on drain resolves when the channel closes', async () => {
+        vi.useFakeTimers();
+        try {
+            const [a, b] = pair();
+            attachFraming(b as unknown as RTCDataChannel, () => {});
+            const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
+
+            // Over BUFFER_HIGH, so the send loop parks on waitForDrain.
+            a.bufferedAmount = 8 * 1024 * 1024;
+
+            let settled = false;
+            const pending = sender.send({ body: 'x'.repeat(200 * 1024) }).then(() => {
+                settled = true;
+            });
+
+            await vi.advanceTimersByTimeAsync(10);
+            expect(settled).toBe(false);
+
+            // The channel dies mid-transfer. 'bufferedamountlow' will never
+            // fire, so only the close listener can release the wait.
+            a.readyState = 'closed';
+            a.dispatchEvent(new Event('close'));
+            await vi.advanceTimersByTimeAsync(0);
+            await pending;
+
+            expect(settled).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('a send blocked on drain gives up after the timeout', async () => {
+        vi.useFakeTimers();
+        try {
+            const [a, b] = pair();
+            attachFraming(b as unknown as RTCDataChannel, () => {});
+            const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
+
+            a.bufferedAmount = 8 * 1024 * 1024;
+
+            let settled = false;
+            const pending = sender.send({ body: 'x'.repeat(200 * 1024) }).then(() => {
+                settled = true;
+            });
+
+            // One timeout window is enough: giving up abandons the whole
+            // message rather than retrying per chunk, so a wedged channel
+            // cannot cost DRAIN_TIMEOUT_MS once per chunk.
+            await vi.advanceTimersByTimeAsync(DRAIN_TIMEOUT_MS + 10);
+            await pending;
+
+            expect(settled).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
