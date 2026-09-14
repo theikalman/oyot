@@ -4,6 +4,7 @@
 - **Date:** 2026-08-29
 - **Extends:** [0003](0003-full-document-set-sync.md) (decision 6 assumed images
   ride inside the Yjs document as base64; they do not)
+- **Amended by:** [0013](0013-derived-rows-are-built-wherever-content-arrives.md) (the deferred reference scan), [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md) (framing and timeouts)
 
 ## Context
 

@@ -5,6 +5,7 @@
 - **Supersedes:** part of [0002](0002-signaling-retry-and-perfect-negotiation.md)
   (decision 2, "The manual 'Reconnect' button is removed", and the
   "Keeping the manual 'Reconnect' button as a fallback" rejection)
+- **Amended by:** [0011](0011-boot-id-for-signaling-sessions.md) (decision 2)
 
 ## Context
 

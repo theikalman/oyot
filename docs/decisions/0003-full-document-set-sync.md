@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-29
+- **Amended by:** [0008](0008-deletion-as-last-writer-wins.md) (decision 5), [0010](0010-apply-remote-updates-into-the-open-document.md) (decision 8), [0012](0012-deletion-propagates-transitively.md) (decision 5 again), [0013](0013-derived-rows-are-built-wherever-content-arrives.md), [0014](0014-the-merged-blob-is-the-only-content-store.md)
 
 ## Context
 

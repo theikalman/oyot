@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-18
+- **Amended by:** [0009](0009-authenticated-signaling.md) (how a sender is authenticated), [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md) (what the reference broker is for)
 
 ## Context
 
