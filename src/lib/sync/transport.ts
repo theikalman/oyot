@@ -16,6 +16,15 @@ import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
 import { DocSyncProtocol, type SyncProgressSink } from './channel/DocSyncProtocol';
 import { isSyncMessage, type SyncMessage } from './protocol';
+import {
+    admitEnvelope,
+    parseDescPayload,
+    parseIcePayload,
+    serializeDesc,
+    serializeIce,
+    type DescEnvelope,
+    type IceEnvelope,
+} from './signaling/envelope';
 
 // One negotiation session per paired peer, keyed by peer node_id. Implements the
 // WHATWG "perfect negotiation" pattern so two peers that offer at the same time
@@ -33,13 +42,15 @@ interface PeerSession {
     polite: boolean;
     // `epoch` is our own negotiation generation, bumped on every local rebuild so
     // the peer can drop messages from a superseded negotiation of ours.
-    // `peerEpoch` is the highest epoch we have seen *from* the peer. Incoming
-    // messages are stale only if they go backwards relative to peerEpoch - the
-    // two counters advance independently (a manual reconnect rebuilds one side
-    // many more times than the other), so comparing env.epoch against our own
-    // `epoch` would wrongly reject the peer's current offers and answers.
+    // `peerEpoch` is the highest epoch we have seen *from* the peer, and
+    // `peerBoot` says which run of the peer produced it. Incoming messages are
+    // stale only if they go backwards within one run: the two counters advance
+    // independently (a manual reconnect rebuilds one side many more times than
+    // the other), and they restart when the peer's process does. See
+    // signaling/envelope.ts.
     epoch: number;
     peerEpoch: number;
+    peerBoot: string | null;
     makingOffer: boolean;
     ignoreOffer: boolean;
     isSettingRemoteAnswerPending: boolean;
@@ -50,18 +61,6 @@ interface PeerSession {
     reconnectTimer?: ReturnType<typeof setTimeout>;
     graceTimer?: ReturnType<typeof setTimeout>;
     promoteTimer?: ReturnType<typeof setTimeout>;
-}
-
-interface DescEnvelope {
-    epoch: number;
-    description: RTCSessionDescriptionInit;
-    roomId?: string;
-    displayName?: string;
-}
-
-interface IceEnvelope {
-    epoch: number;
-    candidate: RTCIceCandidateInit;
 }
 
 const repo = new DocumentRepository();
@@ -175,31 +174,12 @@ export function pullAttachmentFromPeers(hash: string): void {
 
 // --- transport helpers ---------------------------------------------------
 
-function parseDescPayload(raw: string): { epoch: number; description: RTCSessionDescriptionInit } {
-    const o = JSON.parse(raw);
-    if (o && typeof o === 'object' && o.description && typeof o.description === 'object') {
-        return { epoch: typeof o.epoch === 'number' ? o.epoch : 0, description: o.description };
-    }
-    if (o && typeof o === 'object' && typeof o.type === 'string') {
-        return { epoch: 0, description: o as RTCSessionDescriptionInit }; // legacy
-    }
-    throw new Error('unrecognised description payload');
-}
-
-function parseIcePayload(raw: string): { epoch: number; candidate: RTCIceCandidateInit } {
-    const o = JSON.parse(raw);
-    if (o && typeof o === 'object' && o.candidate && typeof o.candidate === 'object') {
-        return { epoch: typeof o.epoch === 'number' ? o.epoch : 0, candidate: o.candidate };
-    }
-    return { epoch: 0, candidate: o as RTCIceCandidateInit }; // legacy bare candidate
-}
-
 async function sendDescription(
     peerId: string,
     session: PeerSession,
     desc: RTCSessionDescription,
 ): Promise<void> {
-    const payload = JSON.stringify({ epoch: session.epoch, description: desc.toJSON() });
+    const payload = serializeDesc(session.epoch, desc.toJSON());
     const cmd = desc.type === 'answer' ? 'mqtt_publish_answer' : 'mqtt_publish_offer';
     log.debug(`[sync] [${peerId}] -> ${desc.type} (epoch=${session.epoch})`);
     await invoke(cmd, { peerId, sdp: payload }).catch((e) =>
@@ -212,7 +192,7 @@ async function sendIceCandidate(
     session: PeerSession,
     candidate: RTCIceCandidate,
 ): Promise<void> {
-    const payload = JSON.stringify({ epoch: session.epoch, candidate: candidate.toJSON() });
+    const payload = serializeIce(session.epoch, candidate.toJSON());
     await invoke('mqtt_publish_ice_candidate', { peerId, candidate: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ICE candidate:`, e),
     );
@@ -319,6 +299,7 @@ async function ensurePeerConnection(
         polite,
         epoch: (existing?.epoch ?? 0) + 1,
         peerEpoch: existing?.peerEpoch ?? 0,
+        peerBoot: existing?.peerBoot ?? null,
         makingOffer: false,
         ignoreOffer: false,
         isSettingRemoteAnswerPending: false,
@@ -521,13 +502,12 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
         session = built;
     }
 
-    if (env.epoch > 0 && env.epoch < session.peerEpoch) {
+    if (admitEnvelope(session, env) === 'stale') {
         log.debug(
             `[sync] [${from}] ignoring stale description (epoch ${env.epoch} < peerEpoch ${session.peerEpoch})`,
         );
         return;
     }
-    if (env.epoch > session.peerEpoch) session.peerEpoch = env.epoch;
 
     const { pc } = session;
     const description = env.description;
@@ -562,7 +542,7 @@ async function handleIceCandidate(from: string, env: IceEnvelope): Promise<void>
         console.warn(`[sync] [${from}] ICE candidate with no session, dropping`);
         return;
     }
-    if (env.epoch > 0 && env.epoch < session.peerEpoch) return;
+    if (admitEnvelope(session, env) === 'stale') return;
     try {
         await session.pc.addIceCandidate(new RTCIceCandidate(env.candidate));
     } catch (e) {
@@ -855,8 +835,9 @@ async function setupEventListeners(): Promise<void> {
         const { from, sdp, room_id, display_name } = event.payload;
         log.debug(`[sync] event: mqtt-offer-received from=${from} room_id=${room_id}`);
         try {
-            const { epoch, description } = parseDescPayload(sdp);
+            const { boot, epoch, description } = parseDescPayload(sdp);
             await handleDescription(from, {
+                boot,
                 epoch,
                 description,
                 roomId: room_id,
@@ -873,8 +854,8 @@ async function setupEventListeners(): Promise<void> {
             const { from, sdp } = event.payload;
             log.debug(`[sync] event: mqtt-answer-received from=${from}`);
             try {
-                const { epoch, description } = parseDescPayload(sdp);
-                await handleDescription(from, { epoch, description });
+                const { boot, epoch, description } = parseDescPayload(sdp);
+                await handleDescription(from, { boot, epoch, description });
             } catch (e) {
                 console.error(`[sync] [${from}] bad answer payload:`, e);
             }
@@ -887,8 +868,8 @@ async function setupEventListeners(): Promise<void> {
             const { from, candidate } = event.payload;
             log.debug(`[sync] event: mqtt-ice-candidate-received from=${from}`);
             try {
-                const { epoch, candidate: cand } = parseIcePayload(candidate);
-                await handleIceCandidate(from, { epoch, candidate: cand });
+                const { boot, epoch, candidate: cand } = parseIcePayload(candidate);
+                await handleIceCandidate(from, { boot, epoch, candidate: cand });
             } catch (e) {
                 console.error(`[sync] [${from}] bad ICE payload:`, e);
             }
