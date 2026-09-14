@@ -68,6 +68,10 @@ pub async fn save_yjs_update(
     merged_state: String,
     content_hash: Option<String>,
     origin: UpdateOrigin,
+    // What the editor extracted from the document: text for search, link
+    // targets, todo counts. Absent on the sync path, which merges a peer's
+    // update without ever rendering it, so there is nothing to extract.
+    index: Option<indexer::DocumentIndexInput>,
 ) -> Result<(), String> {
     let update = decode("update", &update)?;
     let merged_state = decode("merged_state", &merged_state)?;
@@ -107,7 +111,13 @@ pub async fn save_yjs_update(
         .unwrap_or_default()
     };
 
-    indexer::update_document_index(&state.db.lock(), &doc_id, &title)?;
+    {
+        let db = state.db.lock();
+        match &index {
+            Some(index) => indexer::update_document_index(&db, &doc_id, &title, index)?,
+            None => indexer::update_document_title(&db, &doc_id, &title)?,
+        }
+    }
 
     let _ = db_snapshot.check_and_consolidate(&doc_id, &merged_state);
 

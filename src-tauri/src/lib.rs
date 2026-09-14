@@ -55,6 +55,25 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             completed_todo_count INTEGER DEFAULT 0
         );
 
+        -- Which documents link to which. Content lives in the CRDT, so link
+        -- structure is not derivable from SQL; the editor extracts it on save.
+        CREATE TABLE IF NOT EXISTS document_links (
+            source_id TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            PRIMARY KEY (source_id, target_id),
+            FOREIGN KEY (source_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_links_target ON document_links(target_id);
+
+        -- Full-text search over title and body. Standalone rather than an
+        -- external-content table: the body is not a column anywhere else, it is
+        -- extracted from the CRDT at save time.
+        CREATE VIRTUAL TABLE IF NOT EXISTS document_search USING fts5(
+            document_id UNINDEXED,
+            title,
+            body
+        );
+
         CREATE TABLE IF NOT EXISTS attachments (
             hash TEXT PRIMARY KEY,
             mime_type TEXT NOT NULL,
@@ -99,7 +118,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -192,6 +211,32 @@ pub fn run_migrations(db: &Connection) -> Result<(), String> {
         }
 
         db.execute_batch("PRAGMA user_version = 3;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
+    // v4: the link graph and the search index. Both are derived from document
+    // content, which only the editor can read, so they are populated as
+    // documents are saved rather than backfilled here. Until a document is next
+    // saved it simply has no links and no search rows, which is the same state
+    // it was in before this existed.
+    if version < 4 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS document_links (
+                 source_id TEXT NOT NULL,
+                 target_id TEXT NOT NULL,
+                 PRIMARY KEY (source_id, target_id),
+                 FOREIGN KEY (source_id) REFERENCES documents(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_document_links_target ON document_links(target_id);
+             CREATE VIRTUAL TABLE IF NOT EXISTS document_search USING fts5(
+                 document_id UNINDEXED,
+                 title,
+                 body
+             );",
+        )
+        .map_err(|e| format!("Migration v4 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 4;")
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 

@@ -1,4 +1,5 @@
 use crate::db::AppState;
+use crate::indexer;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use rusqlite::params;
@@ -268,11 +269,7 @@ pub fn ensure_document(
             ],
         )
         .map_err(|e| e.to_string())?;
-        db.execute(
-            "INSERT OR IGNORE INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
-            params![&doc_id, &title],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
 
     get_document(state, doc_id)
@@ -297,11 +294,7 @@ pub fn apply_remote_rename(
         )
         .map_err(|e| e.to_string())?;
     if changed > 0 {
-        db.execute(
-            "UPDATE document_index SET title = ? WHERE document_id = ?",
-            params![&title, &doc_id],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
     Ok(changed > 0)
 }
@@ -335,6 +328,10 @@ pub fn apply_remote_delete(
     // unconditionally would empty a document whose revival we had already
     // accepted, while leaving the row live.
     if applied > 0 {
+        {
+            let db = state.db.lock();
+            indexer::clear_document_index(&db, &doc_id)?;
+        }
         state.snapshot.delete_document_data(&doc_id)?;
     }
     Ok(applied > 0)
@@ -376,11 +373,7 @@ pub fn create_document(
 
     {
         let db = state.db.lock();
-        db.execute(
-            "INSERT INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
-            params![&doc_id, &title],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
 
     get_document(state, doc_id)
@@ -404,11 +397,7 @@ pub fn update_document(
 
     {
         let db = state.db.lock();
-        db.execute(
-            "UPDATE document_index SET title = ? WHERE document_id = ?",
-            params![&title, &doc_id],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
 
     get_document(state, doc_id)
@@ -424,37 +413,61 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
     )
     .map_err(|e| e.to_string())?;
 
+    indexer::clear_document_index(&db, &doc_id)?;
+
     drop(db);
     state.snapshot.delete_document_data(&doc_id)?;
 
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchHit {
+    pub id: String,
+    pub doc_type: String,
+    pub title: String,
+    /// A fragment of the body around the match, with the matched terms marked
+    /// by [ and ]. Empty when the match was in the title only.
+    pub snippet: String,
+}
+
+/// Full-text search over titles and bodies.
+///
+/// Previously a `LIKE '%q%'` over titles alone, which could not find anything
+/// the user had actually written. Bodies are indexed at save time (see
+/// `indexer`), because document content lives in the CRDT and is not otherwise
+/// queryable.
 #[tauri::command]
 pub fn search_documents(
     state: tauri::State<'_, AppState>,
     query: String,
-) -> Result<Vec<serde_json::Value>, String> {
-    let db = state.db.lock();
-    let search_pattern = format!("%{}%", query.to_lowercase());
+) -> Result<Vec<SearchHit>, String> {
+    let Some(match_query) = indexer::to_fts_query(&query) else {
+        return Ok(Vec::new());
+    };
 
+    let db = state.db.lock();
     let mut stmt = db
         .prepare(
-            "SELECT d.id, d.title FROM documents d
-         LEFT JOIN document_index i ON d.id = i.document_id
-         WHERE d.is_deleted = 0 AND (LOWER(d.title) LIKE ?)",
+            "SELECT d.id, d.type, d.title,
+                    snippet(document_search, 2, '[', ']', '…', 12) AS snippet
+               FROM document_search
+               JOIN documents d ON d.id = document_search.document_id
+              WHERE document_search MATCH ?1
+                AND d.is_deleted = 0
+              ORDER BY rank
+              LIMIT 50",
         )
         .map_err(|e| e.to_string())?;
 
-    let results: Vec<serde_json::Value> = stmt
-        .query_map(params![&search_pattern], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            Ok(serde_json::json!({
-                "id": id,
-                "title": title,
-                "line_content": ""
-            }))
+    let results: Vec<SearchHit> = stmt
+        .query_map(params![&match_query], |row| {
+            Ok(SearchHit {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                title: row.get(2)?,
+                snippet: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            })
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
@@ -463,25 +476,34 @@ pub fn search_documents(
     Ok(results)
 }
 
+/// Documents that link to `doc_id`.
+///
+/// This used to take a `_target_title` it ignored and return every non-deleted
+/// document, which made it look implemented while being a stub. It now reads
+/// the edge table the editor maintains on save.
 #[tauri::command]
 pub fn get_backlinks(
     state: tauri::State<'_, AppState>,
-    _target_title: String,
+    doc_id: String,
 ) -> Result<Vec<DocumentSummary>, String> {
     let db = state.db.lock();
-    let mut stmt = db.prepare(
-        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-                       OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
-                     THEN 1 ELSE 0 END as has_content
-         FROM documents d
-         LEFT JOIN document_index i ON d.id = i.document_id
-         WHERE d.is_deleted = 0"
-    )
-    .map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
+                    CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+                           OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
+                         THEN 1 ELSE 0 END as has_content
+               FROM document_links l
+               JOIN documents d ON d.id = l.source_id
+               LEFT JOIN document_index i ON d.id = i.document_id
+              WHERE l.target_id = ?1
+                AND d.is_deleted = 0
+              ORDER BY d.updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
 
     let backlinks: Vec<DocumentSummary> = stmt
-        .query_map([], row_to_document_summary)
+        .query_map(params![&doc_id], row_to_document_summary)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
@@ -519,11 +541,7 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
         )
         .map_err(|e| e.to_string())?;
 
-        db.execute(
-            "INSERT OR IGNORE INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
-            params![&doc_id, &today_title],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &today_title)?;
     }
 
     get_document(state, doc_id)

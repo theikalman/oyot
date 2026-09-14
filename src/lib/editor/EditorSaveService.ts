@@ -4,6 +4,7 @@ import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';
 import { documentRepository, broadcastLocalUpdate } from '$lib/sync';
 import { bytesToBase64, EMPTY_UPDATE_LEN } from '$lib/sync/protocol';
+import type { DocumentIndex } from './documentIndex';
 
 // Long enough to coalesce ordinary typing, short enough that an unexpected
 // process death (Android killing a backgrounded app) loses very little. The
@@ -33,10 +34,11 @@ export async function persistSnapshot(
     docId: string,
     snapshot: Uint8Array,
     delta: Uint8Array = snapshot,
+    index?: DocumentIndex,
 ): Promise<void> {
     if (snapshot.length <= EMPTY_UPDATE_LEN) return;
     try {
-        await documentRepository.saveLocalUpdate(docId, snapshot);
+        await documentRepository.saveLocalUpdate(docId, snapshot, index);
         if (delta.length > EMPTY_UPDATE_LEN) {
             broadcastLocalUpdate(docId, bytesToBase64(delta));
         }
@@ -59,6 +61,8 @@ export class EditorSaveService {
     private onSaving?: () => void;
     private onSaved?: (docId: string) => void;
     private isDestroyed = false;
+    // Supplied by the editor, because only it can read the rendered document.
+    private readIndex: (() => DocumentIndex | null) | null = null;
 
     constructor(options: SaveServiceOptions = {}) {
         this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
@@ -68,6 +72,10 @@ export class EditorSaveService {
 
     setYDoc(ydoc: Y.Doc): void {
         this.ydoc = ydoc;
+    }
+
+    setIndexReader(read: () => DocumentIndex | null): void {
+        this.readIndex = read;
     }
 
     setDocument(doc: Document | null): void {
@@ -128,9 +136,10 @@ export class EditorSaveService {
         // Read both synchronously, before the returned promise is awaited: the
         // caller may be tearing this editor down.
         const delta = this.takePendingDelta() ?? snapshot;
+        const index = this.readIndex?.() ?? undefined;
 
         this.onSaving?.();
-        return persistSnapshot(docId, snapshot, delta)
+        return persistSnapshot(docId, snapshot, delta, index)
             .then(() => {
                 this.onSaved?.(docId);
             })

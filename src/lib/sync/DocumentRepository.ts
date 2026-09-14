@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import * as Y from 'yjs';
 import type { Document, DocumentSummary } from '../types';
+import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
 import { contentHash } from './hash';
 import {
@@ -105,13 +106,23 @@ export class DocumentRepository {
             mergedState: bytesToBase64(merged),
             contentHash: bytesToBase64(hash),
             origin: 'remote',
+            index: null,
         });
         appStore.markDocumentHasContent(docId);
     }
 
     // Persist a locally-made update (editor save path). 'local' suppresses the
     // sync-received event: the editor that produced this already has it.
-    async saveLocalUpdate(docId: string, mergedState: Uint8Array): Promise<void> {
+    //
+    // `index` is what the editor extracted from the rendered document (text,
+    // links, todo counts). Only this path has it: the sync path merges a peer's
+    // update without ever rendering it, so it passes none and the derived rows
+    // are left for whenever that document is next opened and saved.
+    async saveLocalUpdate(
+        docId: string,
+        mergedState: Uint8Array,
+        index?: DocumentIndex,
+    ): Promise<void> {
         const hash = await contentHash(mergedState);
         await invoke('save_yjs_update', {
             docId,
@@ -119,6 +130,7 @@ export class DocumentRepository {
             mergedState: bytesToBase64(mergedState),
             contentHash: bytesToBase64(hash),
             origin: 'local',
+            index: index ?? null,
         });
     }
 
