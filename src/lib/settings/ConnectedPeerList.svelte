@@ -60,7 +60,7 @@
         <p class="empty-state">No paired devices yet. Scan a QR code or enter a Node ID to pair.</p>
     {:else}
         <ul class="peer-list">
-            {#each pairedDevices as pair}
+            {#each pairedDevices as pair (pair.peer_node_id)}
                 {@const pstatus = peerStatus(pair)}
                 <li class="peer-item">
                     <div class="peer-info">

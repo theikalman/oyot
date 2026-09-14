@@ -371,7 +371,6 @@ describe('DocSyncProtocol', () => {
     });
 
     it('a holder that lost the bytes answers attach-missing without crashing', async () => {
-        const a = new FakeRepo();
         const b = new FakeRepo();
         // A advertises a hash (via a hand-rolled manifest) it cannot actually serve.
         const sent: SyncMessage[] = [];

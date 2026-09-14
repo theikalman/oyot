@@ -5,7 +5,7 @@
     import { currentDocument, appStore } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
     import type { Document } from '$lib/types';
-    import { Toolbar, EditorHeader } from '$lib/editor';
+    import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
     import { createSaveService, type EditorSaveService } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
@@ -22,7 +22,6 @@
     let ydoc = $state<Y.Doc | null>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
-    let isSaving = $state(false);
     let unlistenSyncEvent: (() => void) | null = null;
     let previousDocId = $state<string | null>(null);
 
@@ -34,15 +33,7 @@
             saveService.destroy();
         }
 
-        saveService = createSaveService({
-            debounceMs,
-            onSaving: () => {
-                isSaving = true;
-            },
-            onSaved: () => {
-                isSaving = false;
-            },
-        });
+        saveService = createSaveService({ debounceMs });
 
         if (current) {
             saveService.setDocument(current);
@@ -138,7 +129,6 @@
         <EditorInstance
             document={current}
             {autoSave}
-            {debounceMs}
             onEditorReady={handleEditorReady}
             onContentChange={handleContentChange}
         />

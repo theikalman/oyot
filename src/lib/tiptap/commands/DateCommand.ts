@@ -1,7 +1,7 @@
-import type { Editor, Range } from '@tiptap/core';
+import type { Editor } from '@tiptap/core';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 
-export function registerDateCommand(editor: Editor): void {
+export function registerDateCommand(_editor: Editor): void {
     const command: SlashCommand = {
         id: 'date',
         label: 'Insert Date',

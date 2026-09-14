@@ -57,7 +57,7 @@ export const SlashCommand = Extension.create({
                 render: () => {
                     let popup: HTMLElement | null = null;
                     let state: PopupState = { items: [], selectedIndex: 0 };
-                    let selectedIndexStore: Writable<number> = writable(0);
+                    const selectedIndexStore: Writable<number> = writable(0);
                     let savedEditor: Editor | null = null;
                     let savedRange: Range | null = null;
 

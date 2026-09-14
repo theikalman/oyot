@@ -1,7 +1,7 @@
 import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 import SlashSuggestionPopup from '../../components/SlashSuggestionPopup.svelte';
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
 import { get, writable, type Writable } from 'svelte/store';
 import { documents as documentsStore, currentDocument } from '../../stores/app';
 import type { DocumentSummary } from '../../types';
@@ -15,8 +15,7 @@ interface DocumentSuggestionItem {
 }
 
 let currentEditor: Editor | null = null;
-let currentRange: Range | null = null;
-let documentPopupComponent: unknown | null = null;
+let documentPopupComponent: Record<string, unknown> | null = null;
 let documentPopup: HTMLElement | null = null;
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 let clickOutsideHandler: ((e: MouseEvent) => void) | null = null;
@@ -30,11 +29,9 @@ export function registerDocumentLinkCommand(_editor: Editor): void {
         icon: '<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M14 17H8m8-4H8m12-3.012V17.2c0 1.68 0 2.52-.327 3.162a3 3 0 0 1-1.311 1.311C17.72 22 16.88 22 15.2 22H8.8c-1.68 0-2.52 0-3.162-.327a3 3 0 0 1-1.311-1.311C4 19.72 4 18.88 4 17.2V6.8c0-1.68 0-2.52.327-3.162a3 3 0 0 1-1.311-1.311C6.28 2 7.12 2 8.8 2h3.212c.733 0 1.1 0 1.446.083.306.073.598.195.867.36.303.185.562.444 1.08.963l3.19 3.188c.518.519.777.778.963 1.081a3 3 0 0 1 .36.867c.082.346.082.712.082 1.446"/></svg>',
         onTrigger: (props) => {
             currentEditor = props.editor;
-            currentRange = props.range;
         },
         onSelect: (props: CommandSelectProps) => {
             currentEditor = props.editor as Editor;
-            currentRange = props.range;
 
             const rect = getAnchorClientRect(props.editor as Editor, props.range);
 
@@ -51,7 +48,7 @@ export function registerDocumentLinkCommand(_editor: Editor): void {
     commandRegistry.register(command);
 }
 
-function getAnchorClientRect(editor: Editor, range: Range): DOMRect | null {
+function getAnchorClientRect(editor: Editor, _range: Range): DOMRect | null {
     try {
         const pos = editor.state.selection.$anchor.pos;
         const coords = editor.view.coordsAtPos(pos);
@@ -164,13 +161,15 @@ function closeDocumentPopup(): void {
         document.removeEventListener('mousedown', clickOutsideHandler);
         clickOutsideHandler = null;
     }
+    if (documentPopupComponent) {
+        void unmount(documentPopupComponent);
+        documentPopupComponent = null;
+    }
     if (documentPopup && documentPopup.parentNode) {
         documentPopup.parentNode.removeChild(documentPopup);
     }
     documentPopup = null;
-    documentPopupComponent = null;
     currentEditor = null;
-    currentRange = null;
 }
 
 export function searchDocuments(query: string): DocumentSuggestionItem[] {

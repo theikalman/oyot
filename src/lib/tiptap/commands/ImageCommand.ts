@@ -32,7 +32,7 @@ function getMimeType(filePath: string): string {
     return mimeTypes[ext ?? ''] ?? 'image/png';
 }
 
-export function registerImageCommand(editor: Editor): void {
+export function registerImageCommand(_editor: Editor): void {
     const command: SlashCommand = {
         id: 'image',
         label: 'Insert Image',

@@ -1,5 +1,4 @@
 import type { Editor } from '@tiptap/core';
-import type { ComponentType } from 'svelte';
 
 export interface CommandSuggestion {
     id: string;

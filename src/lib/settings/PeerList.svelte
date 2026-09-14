@@ -16,7 +16,7 @@
         <p class="empty-state">No devices connected yet.</p>
     {:else}
         <ul class="peer-list">
-            {#each peers as peer}
+            {#each peers as peer (peer.node_id)}
                 <li class="peer-item">
                     <div class="peer-info">
                         <div class="peer-header">

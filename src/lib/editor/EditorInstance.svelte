@@ -24,7 +24,6 @@
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
     import {
-        createYjsDoc,
         loadYjsDocFromState,
         createInitialContent,
         createCollaborationExtension,
@@ -45,18 +44,11 @@
     interface Props {
         document: any | null;
         autoSave?: boolean;
-        debounceMs?: number;
         onEditorReady?: (editor: EditorType, ydoc: any) => void;
         onContentChange?: () => void;
     }
 
-    let {
-        document,
-        autoSave = true,
-        debounceMs = 1000,
-        onEditorReady,
-        onContentChange,
-    }: Props = $props();
+    let { document, autoSave = true, onEditorReady, onContentChange }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);

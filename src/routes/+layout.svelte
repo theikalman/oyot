@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import type { Snippet } from 'svelte';
     import { initSync, shutdownSync } from '$lib/sync';
 
@@ -24,7 +25,7 @@
     }
 
     function handleClose() {
-        goto('/');
+        goto(resolve('/'));
     }
 
     let pageTitle = $derived(() => {

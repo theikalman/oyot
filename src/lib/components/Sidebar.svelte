@@ -11,6 +11,7 @@
     import type { Document, DocumentSummary } from '../types';
     import { invoke } from '@tauri-apps/api/core';
     import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import {
         createNote,
         createJournalForDate as createJournalForDateAction,
@@ -163,11 +164,11 @@
     }
 
     function goToSettings() {
-        goto('/settings');
+        goto(resolve('/settings'));
     }
 
     function goToSync() {
-        goto('/settings/sync');
+        goto(resolve('/settings/sync'));
     }
 
     function prevMonth() {
@@ -321,10 +322,10 @@
                             </button>
                         </div>
                         <div class="calendar-grid">
-                            {#each dayNames as d}
+                            {#each dayNames as d (d)}
                                 <div class="cal-day-name">{d}</div>
                             {/each}
-                            {#each calendarDays as day}
+                            {#each calendarDays as day, i (i)}
                                 <button
                                     class="cal-day"
                                     class:empty={day === null}
@@ -382,7 +383,7 @@
                     <button class="add-doc-btn" onclick={() => (showModal = true)}>+</button>
                 </h3>
                 <ul class="doc-list">
-                    {#each filterNotes() as doc}
+                    {#each filterNotes() as doc (doc.id)}
                         <li class="doc-item">
                             <button
                                 class="doc-btn"
@@ -467,7 +468,7 @@
                     <p class="empty-hint">No paired devices yet</p>
                 {:else}
                     <ul class="device-list">
-                        {#each $pairedDevices as device}
+                        {#each $pairedDevices as device (device.peer_node_id)}
                             {@const online = $connectedPeerIds.has(device.peer_node_id)}
                             {@const reconnecting = $reconnectingPeerIds.has(device.peer_node_id)}
                             {@const rs = $roomSync[device.room_id]}

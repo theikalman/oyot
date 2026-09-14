@@ -1,5 +1,6 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import { signalingStatus, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
 
     let signaling = $derived($signalingStatus);
@@ -48,7 +49,7 @@
     }
 
     function openSettings() {
-        goto('/settings/sync');
+        goto(resolve('/settings/sync'));
     }
 </script>
 

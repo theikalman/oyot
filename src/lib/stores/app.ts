@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Document, DocumentSummary, SearchResult, Theme, ViewMode } from '../types';
+import type { Document, DocumentSummary, Theme } from '../types';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({

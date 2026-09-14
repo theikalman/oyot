@@ -8,7 +8,7 @@
         onClose: () => void;
     }
 
-    let { items, selectedIndexStore, command, onClose }: Props = $props();
+    let { items, selectedIndexStore, command }: Props = $props();
 
     let listElement: HTMLUListElement | undefined = $state();
 
@@ -27,7 +27,7 @@
         <div class="suggestion-empty">No results</div>
     {:else}
         <ul class="suggestion-list" bind:this={listElement}>
-            {#each items as item, index}
+            {#each items as item, index (item.id)}
                 <li
                     class="suggestion-item"
                     class:selected={index === $selectedIndexStore}
@@ -41,6 +41,13 @@
                         if (e.key === 'Enter') command(item);
                     }}
                 >
+                    <!--
+                        Icons are inline SVG constants declared in
+                        src/lib/tiptap/commands/; they never carry user or peer
+                        content. Keep it that way: anything data-derived here
+                        must be rendered as text, not html.
+                      -->
+                    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
                     <span class="item-icon">{@html item.icon || '📄'}</span>
                     <span class="item-content">
                         <span class="item-title">{item.title}</span>
