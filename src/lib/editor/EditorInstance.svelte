@@ -190,10 +190,13 @@
             if (!ed.isDestroyed) toasts.info('That item is not in this note any more');
         }, FOCUS_TIMEOUT_MS);
 
-        // Not in this turn of the loop. Getting here is a navigation, and
-        // SvelteKit moves focus to the page root once one settles: a
-        // selection set before that happens is silently undone, and the note
-        // opens at the top with no sign anything was attempted.
+        // Not in this turn of the loop. Getting here is a navigation, and a
+        // navigation scrolls the new page to the top on its way in, so
+        // scrolling the item into view before that happens is undone a moment
+        // later and the note sits at the top with the cursor somewhere off
+        // screen. Focus is handled at the other end, by navigating with
+        // `keepFocus`, which is deterministic where out-waiting it would not
+        // be.
         //
         // A timeout rather than `requestAnimationFrame`, which does not run at
         // all while the page is hidden. That is not a hypothetical: a window

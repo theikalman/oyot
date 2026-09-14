@@ -25,7 +25,13 @@ export function openHome(): Promise<void> {
 // reload, and the back button undoes it. `ordinal` is the item's place among
 // the document's task items, which is how the todo index addresses one.
 export function openDocumentAtTodo(docId: string, ordinal: number): Promise<void> {
-    return goto(resolve(`/doc/[id]?todo=${ordinal}`, { id: docId }));
+    // `keepFocus` because the editor is about to take focus itself, and a
+    // navigation otherwise resets it to the page root. This is the case the
+    // option exists for: focus is being managed deliberately, not left to
+    // land wherever the framework puts it. Relying on doing it afterwards
+    // instead is a race, and one that SvelteKit's own reset can win, because
+    // for a URL with a fragment it defers itself the same way.
+    return goto(resolve(`/doc/[id]?todo=${ordinal}`, { id: docId }), { keepFocus: true });
 }
 
 // The todo index: every task item in every note and journal.
