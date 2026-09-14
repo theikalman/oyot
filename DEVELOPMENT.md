@@ -304,7 +304,29 @@ You need a signing keystore. Create one with:
 keytool -genkey -v -keystore oyot.jks -alias oyot -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-Keep `oyot.jks` somewhere safe (do **not** commit it).
+Keep `oyot.jks` somewhere safe (do **not** commit it), and keep its password
+out of the repository too. The signing targets read it from the environment:
+
+```bash
+export ANDROID_KEYSTORE=/path/to/oyot.jks   # defaults to ./oyot.jks
+export ANDROID_KEYSTORE_PASSWORD=...
+```
+
+`make release-android`, `make release-android-aab` and `make install-android`
+refuse to run without them rather than failing inside `apksigner`.
+
+An earlier version of the Makefile had the password written into it in plain
+text, so it is in this repository's history. The keystore file itself was
+never committed, so the key is not compromised, but that password should be
+treated as public and rotated:
+
+```bash
+keytool -storepasswd -keystore oyot.jks
+keytool -keypasswd -alias oyot -keystore oyot.jks
+```
+
+Then update `KEY_STORE_PASSWORD` and `KEY_PASSWORD` in the GitHub secrets
+below.
 
 | Secret                | How to get the value                            |
 | --------------------- | ----------------------------------------------- |
