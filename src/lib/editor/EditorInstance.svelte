@@ -24,11 +24,7 @@
     } from '$lib/tiptap';
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import {
-        loadYjsDocFromState,
-        createInitialContent,
-        createCollaborationExtension,
-    } from '$lib/yjs/YjsEditorExtension';
+    import { loadYjsDocFromState, createInitialContent, createCollaborationExtension } from './yjs';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
