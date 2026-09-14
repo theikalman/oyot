@@ -343,6 +343,18 @@
         background-color: var(--accent-bg-hover);
     }
 
+    /* The target is gone. Still readable, because the text is part of the
+       sentence, but plainly not somewhere you can go. */
+    .editor-content :global(.document-link-missing) {
+        background-color: var(--bg-hover);
+        color: var(--text-muted);
+        text-decoration: line-through;
+    }
+
+    .editor-content :global(.document-link-missing:hover) {
+        background-color: var(--bg-hover);
+    }
+
     .editor-content :global(.document-link-icon) {
         font-size: 12px;
     }
