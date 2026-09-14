@@ -1,5 +1,4 @@
 use crate::db_snapshot::DbSnapshot;
-use crate::identity::IdentityInfo;
 use crate::network::signaling_manager::SignalingManager;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -54,23 +53,5 @@ impl AppState {
             app_handle,
             data_dir: app_data_dir,
         })
-    }
-
-    #[allow(dead_code)]
-    pub fn get_identity(&self) -> Result<IdentityInfo, String> {
-        let db_lock = self.db.lock();
-        db_lock
-            .query_row(
-                "SELECT user_id, node_id, display_name FROM identity LIMIT 1",
-                [],
-                |row| {
-                    Ok(IdentityInfo {
-                        user_id: row.get(0)?,
-                        node_id: row.get(1)?,
-                        display_name: row.get(2)?,
-                    })
-                },
-            )
-            .map_err(|e| e.to_string())
     }
 }

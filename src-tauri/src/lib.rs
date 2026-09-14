@@ -1,4 +1,5 @@
 mod commands;
+mod crypto;
 mod db;
 mod db_snapshot;
 mod identity;
@@ -62,7 +63,8 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS identity (
             user_id TEXT PRIMARY KEY,
             node_id TEXT NOT NULL UNIQUE,
-            display_name TEXT NOT NULL DEFAULT 'My Device'
+            display_name TEXT NOT NULL DEFAULT 'My Device',
+            secret_key BLOB
         );
 
         CREATE TABLE IF NOT EXISTS device_pairs (
@@ -83,9 +85,18 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn table_exists(db: &Connection, name: &str) -> bool {
+    db.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [name],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -147,6 +158,40 @@ pub fn run_migrations(db: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v3: device identity becomes an Ed25519 keypair, and `node_id` becomes the
+    // public key rather than a random UUID. Signaling messages are signed from
+    // here on, so an identity without a key cannot participate.
+    //
+    // This is a breaking change to identity, so the old identity row and every
+    // pairing built on it are cleared: a pair records a peer's node_id, and
+    // every node_id in the system has just changed meaning. Devices re-pair
+    // once. Documents are untouched.
+    // See docs/decisions/0009-authenticated-signaling.md.
+    if version < 3 {
+        // Guarded on the table existing, not just the column: a database old
+        // enough to predate `identity` should still migrate forward rather than
+        // fail. setup_database_tables runs first in production, so this is the
+        // belt to that braces.
+        if table_exists(db, "identity") {
+            let has_secret_key = db
+                .prepare("SELECT secret_key FROM identity LIMIT 0")
+                .is_ok();
+            if !has_secret_key {
+                db.execute_batch("ALTER TABLE identity ADD COLUMN secret_key BLOB;")
+                    .map_err(|e| format!("Migration v3 failed: {}", e))?;
+            }
+            db.execute("DELETE FROM identity WHERE secret_key IS NULL", [])
+                .map_err(|e| format!("Migration v3 identity reset failed: {}", e))?;
+        }
+        if table_exists(db, "device_pairs") {
+            db.execute("DELETE FROM device_pairs", [])
+                .map_err(|e| format!("Migration v3 pairing reset failed: {}", e))?;
+        }
+
+        db.execute_batch("PRAGMA user_version = 3;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -173,13 +218,7 @@ pub fn run() {
                 let db = state.db.lock();
                 let identity = crate::identity::get_or_create_identity(&db)
                     .map_err(|e| format!("Failed to create identity: {}", e))?;
-                state
-                    .signaling_manager
-                    .set_node_id(identity.node_id.clone());
-                state.signaling_manager.set_user_id(identity.user_id);
-                state
-                    .signaling_manager
-                    .set_display_name(identity.display_name);
+                state.signaling_manager.set_identity(identity);
             }
 
             app.manage(state);
@@ -421,6 +460,62 @@ mod migration_tests {
 
         let fresh = db.execute(sql, rusqlite::params![600_i64, "d1"]).unwrap();
         assert_eq!(fresh, 1, "a newer tombstone applies");
+    }
+
+    // v3 changes what a node_id means: it becomes a public key rather than a
+    // random UUID. Every stored pairing records a peer's node_id, so all of
+    // them are meaningless afterwards and are cleared. Documents are untouched.
+    #[test]
+    fn migrating_to_v3_clears_the_keyless_identity_and_its_pairings() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch(
+            "INSERT INTO identity (user_id, node_id, display_name)
+                 VALUES ('u1', 'a-random-uuid', 'Laptop');
+             INSERT INTO device_pairs (user_id, peer_node_id, peer_display_name, room_id)
+                 VALUES ('u1', 'another-uuid', 'Phone', 'room1');
+             INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('d1', 'note', 'Keep me', 1, 1);
+             UPDATE identity SET secret_key = NULL;
+             PRAGMA user_version = 2;",
+        )
+        .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let identities: i64 = db
+            .query_row("SELECT COUNT(*) FROM identity", [], |r| r.get(0))
+            .unwrap();
+        let pairs: i64 = db
+            .query_row("SELECT COUNT(*) FROM device_pairs", [], |r| r.get(0))
+            .unwrap();
+        let docs: i64 = db
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .unwrap();
+
+        assert_eq!(identities, 0, "the keyless identity is discarded");
+        assert_eq!(pairs, 0, "pairings keyed on the old node_id are discarded");
+        assert_eq!(docs, 1, "documents must survive the identity reset");
+
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    // A device that has already been provisioned with a key must keep it:
+    // regenerating would silently break every pairing on every launch.
+    #[test]
+    fn migrating_to_v3_keeps_an_identity_that_already_has_a_key() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        let me = crate::identity::get_or_create_identity(&db).unwrap();
+        db.execute_batch("PRAGMA user_version = 2;").unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let after = crate::identity::get_or_create_identity(&db).unwrap();
+        assert_eq!(after.public.node_id, me.public.node_id);
     }
 
     #[test]
