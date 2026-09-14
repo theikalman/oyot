@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { ConnectedPeer } from '$lib/stores/sync';
+    import { peerConnection, peerStatusLabel, type PeerConnection } from '$lib/sync/peerStatus';
     import { formatLastSync, reconnectingPeerIds, roomSync } from '$lib/stores/sync';
 
     interface Props {
@@ -24,33 +25,26 @@
     // The app reconnects paired devices automatically (on startup, when signaling
     // recovers, and with backoff after a drop). The "Reconnect" action lets the
     // user bypass the backoff wait and force an attempt right now.
-    function peerStatus(pair: {
-        peer_node_id: string;
-        room_id: string;
-    }): 'connected' | 'connecting' | 'offline' {
-        if (isConnected(pair.room_id)) return 'connected';
-        if ($reconnectingPeerIds.has(pair.peer_node_id)) return 'connecting';
-        return 'offline';
+    function peerStatus(pair: { peer_node_id: string; room_id: string }): PeerConnection {
+        return peerConnection(
+            isConnected(pair.room_id),
+            $reconnectingPeerIds.has(pair.peer_node_id),
+        );
     }
 
     // Fine-grained label for a connected peer, from the document-sync phase.
+    //
+    // The wording comes from the shared helper, so this page and the sidebar
+    // cannot describe the same peer in the same state differently, which they
+    // previously did. Only the "synced at" case is local, because only this
+    // page has room to show a time.
     function syncLabel(pair: { room_id: string; last_synchronized: number | null }): string {
         const rs = $roomSync[pair.room_id];
-        if (!rs) return 'Connected';
-        switch (rs.phase) {
-            case 'reconciling':
-                return 'Syncing…';
-            case 'transferring':
-                return rs.total > 0 ? `Syncing ${rs.total - rs.pending}/${rs.total}…` : 'Syncing…';
-            case 'synced': {
-                const at = rs.lastSyncedAt ?? pair.last_synchronized;
-                return at ? `Synced · ${formatLastSync(at)}` : 'Synced';
-            }
-            case 'error':
-                return 'Sync error · retrying';
-            default:
-                return 'Connected';
+        if (rs?.phase === 'synced') {
+            const at = rs.lastSyncedAt ?? pair.last_synchronized;
+            return at ? `Synced · ${formatLastSync(at)}` : 'Synced';
         }
+        return peerStatusLabel('connected', rs);
     }
 </script>
 
