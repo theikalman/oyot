@@ -61,6 +61,7 @@ interface PeerSession {
     reconnectTimer?: ReturnType<typeof setTimeout>;
     graceTimer?: ReturnType<typeof setTimeout>;
     promoteTimer?: ReturnType<typeof setTimeout>;
+    negotiationTimer?: ReturnType<typeof setTimeout>;
 }
 
 const repo = new DocumentRepository();
@@ -78,6 +79,16 @@ const DISCONNECT_GRACE_MS = 5_000;
 // (e.g. it is still reconnecting to the broker).
 const PROMOTE_TIMEOUT_MS = 6_000;
 const RECONNECT_MAX_MS = 30_000;
+// How long a connection may sit mid-negotiation before it is rebuilt.
+//
+// A handshake that never completes leaves nothing to react to. With our offer
+// sent and the answer lost, the connection stays in 'new' indefinitely: ICE
+// never fails because no remote description was ever set, no state change
+// fires, and the reconnect sweep skips it precisely because 'new' looks like a
+// connection still in progress. If we are the impolite peer we also reject the
+// peer's own offers as collisions. One lost answer therefore wedged that peer
+// until the user pressed Reconnect.
+const NEGOTIATION_TIMEOUT_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -95,6 +106,23 @@ function isPolite(peerNodeId: string): boolean {
 
 function markPeerReconnecting(peerNodeId: string, reconnecting: boolean): void {
     syncStore.setPeerReconnecting(peerNodeId, reconnecting);
+}
+
+// Rebuild the session if it has not finished connecting in time. Routed
+// through `scheduleReconnect` so it inherits the backoff and every guard that
+// already applies to a dropped connection: an explicit disconnect, signaling
+// being down, the pair having been removed, and a retry already pending.
+function armNegotiationWatchdog(session: PeerSession): void {
+    if (session.negotiationTimer) return;
+    session.negotiationTimer = setTimeout(() => {
+        session.negotiationTimer = undefined;
+        if (sessions.get(session.peerNodeId) !== session) return;
+        if (session.pc.connectionState === 'connected') return;
+        console.warn(
+            `[sync] [${session.peerNodeId}] negotiation stalled in '${session.pc.connectionState}', rebuilding`,
+        );
+        scheduleReconnect(session.peerNodeId);
+    }, NEGOTIATION_TIMEOUT_MS);
 }
 
 // --- exported repository handle (editor save path) --------------------------
@@ -227,6 +255,10 @@ function clearSessionTimers(session: PeerSession): void {
         clearTimeout(session.promoteTimer);
         session.promoteTimer = undefined;
     }
+    if (session.negotiationTimer) {
+        clearTimeout(session.negotiationTimer);
+        session.negotiationTimer = undefined;
+    }
 }
 
 function disposeChannel(session: PeerSession): void {
@@ -284,6 +316,11 @@ async function ensurePeerConnection(
     if (existing) {
         const st = existing.pc.connectionState;
         if (!opts.force && (st === 'new' || st === 'connecting' || st === 'connected')) {
+            // A sweep leaves a session that looks in-progress alone, so make
+            // sure something is still watching it. `pauseAllReconnects` clears
+            // the watchdog when signaling drops, and the recovery sweep comes
+            // back through here.
+            if (st !== 'connected') armNegotiationWatchdog(existing);
             return existing;
         }
         teardownSession(peerNodeId, { keepAttempts: true });
@@ -311,6 +348,7 @@ async function ensurePeerConnection(
     sessions.set(peerNodeId, session);
     syncStore.setRoomSyncPhase(roomId, 'connecting');
     markPeerReconnecting(peerNodeId, true);
+    armNegotiationWatchdog(session);
 
     log.debug(
         `[sync] ensurePeerConnection() -> ${displayName} (peer=${peerNodeId}, room=${roomId}, polite=${polite}, initiate=${opts.initiate}, epoch=${session.epoch})`,
