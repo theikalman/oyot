@@ -26,6 +26,7 @@ import {
     type DescEnvelope,
     type IceEnvelope,
 } from './signaling/envelope';
+import { isPolite as politeAgainst, reconnectDelay, shouldSweep } from './signaling/negotiation';
 
 // One negotiation session per paired peer, keyed by peer node_id. Implements the
 // WHATWG "perfect negotiation" pattern so two peers that offer at the same time
@@ -79,7 +80,6 @@ const DISCONNECT_GRACE_MS = 5_000;
 // Polite peer promotes itself to initiator if the impolite side never offers
 // (e.g. it is still reconnecting to the broker).
 const PROMOTE_TIMEOUT_MS = 6_000;
-const RECONNECT_MAX_MS = 30_000;
 // How long a connection may sit mid-negotiation before it is rebuilt.
 //
 // A handshake that never completes leaves nothing to react to. With our offer
@@ -99,10 +99,11 @@ function jitter(min: number, max: number): number {
     return min + Math.random() * (max - min);
 }
 
-// Deterministic, needs no exchange: node_ids are unique. The lexicographically
-// smaller node_id is the impolite peer and wins offer collisions.
+// Deterministic, needs no exchange: node_ids are unique and both devices
+// compute the same answer. The rule itself is in signaling/negotiation.ts,
+// where it is tested; this only supplies our own id.
 function isPolite(peerNodeId: string): boolean {
-    return !!identity && identity.node_id > peerNodeId;
+    return !!identity && politeAgainst(identity.node_id, peerNodeId);
 }
 
 function markPeerReconnecting(peerNodeId: string, reconnecting: boolean): void {
@@ -620,7 +621,9 @@ function scheduleReconnect(peerNodeId: string): void {
 
     const attempt = session.reconnectAttempts;
     session.reconnectAttempts = attempt + 1;
-    const delay = Math.min(1000 * 2 ** attempt, RECONNECT_MAX_MS) + jitter(0, 1000);
+    // Jittered, or two devices that dropped together retry in lockstep and
+    // every retry is a fresh collision.
+    const delay = reconnectDelay(attempt, jitter(0, 1000));
     log.debug(`[sync] [${peerNodeId}] reconnect attempt ${attempt + 1} in ${Math.round(delay)}ms`);
     markPeerReconnecting(peerNodeId, true);
 
@@ -705,14 +708,15 @@ export async function reconnectAllPairedDevices(reason: string): Promise<void> {
         await refreshPairedDevices();
         const connectedRooms = new Set(get(connectedPeers).map((p) => p.room_id));
         for (const pair of get(pairedDevices)) {
-            if (connectedRooms.has(pair.room_id)) continue;
-            if (suppressReconnect.has(pair.peer_node_id)) continue;
-            const s = sessions.get(pair.peer_node_id);
-            if (
-                s &&
-                (s.pc.connectionState === 'connecting' || s.pc.connectionState === 'connected')
-            )
-                continue;
+            const existing = sessions.get(pair.peer_node_id);
+            const take = shouldSweep({
+                peerNodeId: pair.peer_node_id,
+                roomId: pair.room_id,
+                connected: connectedRooms.has(pair.room_id),
+                connectionState: existing?.pc.connectionState,
+                suppressed: suppressReconnect.has(pair.peer_node_id),
+            });
+            if (!take) continue;
             await sleep(jitter(150, 450));
             void ensurePeerConnection(pair.peer_node_id, pair.room_id, pair.peer_display_name, {
                 initiate: !isPolite(pair.peer_node_id),
