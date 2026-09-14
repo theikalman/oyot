@@ -542,6 +542,54 @@ mod migration_tests {
         assert_eq!(fresh, 1, "a newer tombstone applies");
     }
 
+    // Mirrors pairing::save_pair. The transport calls it on every transition to
+    // connected, so it must not disturb the sync timestamp of an existing pair.
+    #[test]
+    fn saving_a_known_pair_keeps_its_last_sync_time() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+
+        let upsert = "INSERT INTO device_pairs (user_id, peer_node_id, peer_display_name, room_id)
+                      VALUES (?1, ?2, ?3, ?4)
+                      ON CONFLICT(user_id, peer_node_id) DO UPDATE SET
+                          peer_display_name = excluded.peer_display_name,
+                          room_id           = excluded.room_id";
+
+        db.execute(upsert, rusqlite::params!["u1", "peer1", "Laptop", "room1"])
+            .unwrap();
+        db.execute(
+            "UPDATE device_pairs SET last_synchronized = 12345 WHERE peer_node_id = 'peer1'",
+            [],
+        )
+        .unwrap();
+
+        // Reconnect: same pair saved again, with a renamed device.
+        db.execute(
+            upsert,
+            rusqlite::params!["u1", "peer1", "Laptop Pro", "room1"],
+        )
+        .unwrap();
+
+        let (name, last): (String, Option<i64>) = db
+            .query_row(
+                "SELECT peer_display_name, last_synchronized FROM device_pairs WHERE peer_node_id = 'peer1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Laptop Pro", "the display name is refreshed");
+        assert_eq!(
+            last,
+            Some(12345),
+            "the sync timestamp survives the reconnect"
+        );
+
+        let rows: i64 = db
+            .query_row("SELECT COUNT(*) FROM device_pairs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
     // Mirrors the apply_remote_rename SQL so the last-writer-wins tiebreak is
     // covered without a Tauri State harness.
     #[test]

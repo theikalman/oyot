@@ -39,9 +39,17 @@ pub fn save_pair(
     peer_display_name: &str,
     room_id: &str,
 ) -> Result<(), String> {
+    // Upsert rather than INSERT OR REPLACE: REPLACE deletes the row and inserts
+    // a fresh one, and `last_synchronized` is not in the column list, so it
+    // reset to NULL. The transport calls this on every transition to connected,
+    // so "last synced" flipped to never-synced on every reconnect until the
+    // sync completed and update_last_sync put it back.
     db.execute(
-        "INSERT OR REPLACE INTO device_pairs (user_id, peer_node_id, peer_display_name, room_id)
-         VALUES (?, ?, ?, ?)",
+        "INSERT INTO device_pairs (user_id, peer_node_id, peer_display_name, room_id)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(user_id, peer_node_id) DO UPDATE SET
+             peer_display_name = excluded.peer_display_name,
+             room_id           = excluded.room_id",
         params![user_id, peer_node_id, peer_display_name, room_id],
     )
     .map_err(|e| e.to_string())?;
