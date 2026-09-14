@@ -55,8 +55,14 @@ tauri-plugin-barcode-scanner = "2.4.5"
 # takes the whole note-taking app down with it. 1.6MB is not worth that, and the
 # panic surface is real: `db_snapshot::current_timestamp` unwraps
 # `duration_since(UNIX_EPOCH)`, which a misconfigured device clock can trip.
+#
+# `strip` is "debuginfo" rather than true for Android's sake. Stripping symbols
+# outright leaves no symbol table for AGP's `debugSymbolLevel = "SYMBOL_TABLE"`
+# to extract, so the AAB ships without native debug symbols and Play Console
+# reports them missing. "debuginfo" still drops DWARF, which is the bulk of the
+# size.
 [profile.release]
 opt-level = "s"
 lto = true
 codegen-units = 1
-strip = true
+strip = "debuginfo"
