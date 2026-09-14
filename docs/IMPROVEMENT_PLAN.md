@@ -709,6 +709,12 @@ test asserting both produce the same digest for a known input pair.
 
 ## Phase 5 - Authenticated signaling
 
+> **Status: done.** Landed as
+> [ADR 0009](decisions/0009-authenticated-signaling.md). Two additions the plan
+> did not anticipate: the MQTT `mqtts://` parse bug had to be fixed as part of
+> 5.4 (it had never worked), and the pairing input now validates the node-id
+> shape, since the id finally has one. The OS keychain remains deferred.
+
 The largest item, and the only one that changes the threat model.
 
 ### 5.1 The problem
