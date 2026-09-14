@@ -344,7 +344,7 @@ pub fn run() {
             get_mqtt_credentials,
             save_mqtt_credentials,
             save_image,
-            import_image_from_path,
+            pick_and_import_image,
             cleanup_orphaned_images,
             list_unindexed_documents,
             get_attachment_info,

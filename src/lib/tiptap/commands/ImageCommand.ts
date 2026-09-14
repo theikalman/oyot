@@ -1,4 +1,3 @@
-import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import type { Editor } from '@tiptap/core';
 import '@tiptap/extension-image';
@@ -23,11 +22,6 @@ function arrayBufferToBase64(buffer: Uint8Array): string {
     return btoa(binary);
 }
 
-// Raster only. SVG is a script-bearing document and attachments are rendered
-// in the webview, so the store refuses it; keeping it out of the picker means
-// the user gets a greyed-out file rather than an error after choosing one.
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
-
 export function registerImageCommand(_editor: Editor): void {
     const command: SlashCommand = {
         id: 'image',
@@ -48,21 +42,16 @@ export function registerImageCommand(_editor: Editor): void {
 }
 
 export async function insertImageFromFile(editor: Editor): Promise<void> {
-    const filePath = await open({
-        multiple: false,
-        filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
-    });
-
-    if (!filePath) return;
-
     try {
-        // Rust reads the file, so the webview needs no filesystem permission
-        // and a large image never crosses IPC as base64. It enforces the type
-        // allowlist and the size cap on the way in.
-        const stored = await invoke<{ hash: string; mime_type: string; size: number }>(
-            'import_image_from_path',
-            { path: filePath },
+        // Rust opens the dialog, reads the file and stores it. The picked path
+        // never crosses IPC, so a script in the webview cannot name a file for
+        // this to copy into the attachment store, and the frontend needs no
+        // filesystem permission at all. Rust also enforces the size cap and
+        // decides the image type from the bytes.
+        const stored = await invoke<{ hash: string; mime_type: string; size: number } | null>(
+            'pick_and_import_image',
         );
+        if (!stored) return; // cancelled
         insertImageNode(editor, stored.hash, stored.mime_type, stored.size);
     } catch (error) {
         console.error('Failed to insert image:', error);
