@@ -3,7 +3,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { listen } from '@tauri-apps/api/event';
     import { getCurrentWindow } from '@tauri-apps/api/window';
-    import { currentDocument, appStore } from '$lib/stores/app';
+    import { currentDocument } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
@@ -14,7 +14,6 @@
         DEFAULT_DEBOUNCE_MS,
         type EditorSaveService,
     } from './EditorSaveService';
-    import { loadDocument } from '$lib/services/documents';
     import { extractDocumentIndex } from './documentIndex';
     import * as Y from 'yjs';
 
@@ -85,17 +84,6 @@
         void persistSnapshot(docId, snapshot, delta, index).catch(() => {});
     }
 
-    async function handleOpenDocument(event: Event) {
-        const { id } = (event as CustomEvent<{ id: string }>).detail;
-        if (!id) return;
-        try {
-            const doc = await loadDocument(id);
-            appStore.setCurrentDocument(doc);
-        } catch {
-            // loadDocument already shows a toast on error
-        }
-    }
-
     // The debounce timer dies with the process, so flush on every predictable
     // exit. `hidden` is the one that matters on mobile: Android can kill a
     // backgrounded app without ever firing a close event.
@@ -106,7 +94,6 @@
     }
 
     onMount(async () => {
-        window.addEventListener('openDocument', handleOpenDocument);
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('pagehide', handleVisibilityChange);
 
@@ -134,7 +121,6 @@
     });
 
     onDestroy(() => {
-        window.removeEventListener('openDocument', handleOpenDocument);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('pagehide', handleVisibilityChange);
         unlistenSyncEvent?.();

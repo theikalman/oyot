@@ -5,6 +5,23 @@
         <link rel="icon" href="%sveltekit.assets%/favicon.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Oyot - Simple Note Taking App that Simply Works</title>
+        <script>
+            // Pick the theme before anything renders. The stored preference
+            // lives in Rust, which cannot be read synchronously, so the last
+            // applied value is mirrored here to avoid a flash of the wrong
+            // theme on every launch while that round trip happens.
+            try {
+                var t = localStorage.getItem('oyot:theme');
+                if (t !== 'light' && t !== 'dark') {
+                    t = window.matchMedia('(prefers-color-scheme: dark)').matches
+                        ? 'dark'
+                        : 'light';
+                }
+                document.documentElement.dataset.theme = t;
+            } catch (e) {
+                document.documentElement.dataset.theme = 'light';
+            }
+        </script>
         %sveltekit.head%
     </head>
     <body data-sveltekit-preload-data="hover">

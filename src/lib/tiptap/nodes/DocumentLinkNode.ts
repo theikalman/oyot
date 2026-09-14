@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { documents } from '$lib/stores/app';
+import { openDocument } from '$lib/services/navigation';
 import type { DocumentSummary } from '$lib/types';
 
 export interface DocumentLinkOptions {
@@ -142,11 +143,7 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
                 // toast; the styling and the tooltip already say why nothing
                 // happens.
                 if (!targetId || missing) return;
-                window.dispatchEvent(
-                    new CustomEvent('openDocument', {
-                        detail: { id: targetId },
-                    }),
-                );
+                void openDocument(targetId);
             });
 
             return {

@@ -28,10 +28,12 @@ function announceCreated(doc: Document): void {
     });
 }
 
+// Creating does not open. The caller navigates, and the document route sets
+// the open document from the URL, so there is exactly one thing that decides
+// what is on screen.
 export async function createNote(title: string): Promise<Document> {
     const doc = await invoke<Document>('create_document', { docType: 'note', title });
     appStore.addDocument(toDocumentSummary(doc));
-    appStore.setCurrentDocument(doc);
     announceCreated(doc);
     return doc;
 }
@@ -39,7 +41,6 @@ export async function createNote(title: string): Promise<Document> {
 export async function createJournalForDate(dateTitle: string): Promise<Document> {
     const doc = await invoke<Document>('create_document', { docType: 'journal', title: dateTitle });
     appStore.addDocument(toDocumentSummary(doc));
-    appStore.setCurrentDocument(doc);
     announceCreated(doc);
     return doc;
 }

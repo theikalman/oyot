@@ -8,7 +8,7 @@
         signalingStatus,
     } from '../stores/sync';
     import { reconnectPeer } from '../sync';
-    import type { Document, DocumentSummary } from '../types';
+    import type { DocumentSummary } from '../types';
     import { invoke } from '@tauri-apps/api/core';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
@@ -18,16 +18,16 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
+    import { openDocument, openHome } from '../services/navigation';
+    import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
     import AboutDialog from './AboutDialog.svelte';
     import { APP_VERSION } from '../version';
 
+    // Navigate; the document route loads it. Fetching and assigning the store
+    // here meant the URL never changed, so there was nothing to go back to.
     function handleDocClick(doc: DocumentSummary) {
-        invoke<Document>('get_document', { docId: doc.id })
-            .then((fullDoc) => {
-                appStore.setCurrentDocument(fullDoc);
-            })
-            .catch((err) => console.error('[Sidebar] Failed to load document:', err));
+        void openDocument(doc.id);
     }
 
     let searchInput = $state('');
@@ -145,25 +145,32 @@
     }
 
     function openSearchHit(hit: SearchHit) {
-        invoke<Document>('get_document', { docId: hit.id })
-            .then((doc) => appStore.setCurrentDocument(doc))
-            .catch((err) => console.error('[Sidebar] Failed to open search hit:', err));
+        void openDocument(hit.id);
     }
+
+    let createError = $state<string | null>(null);
 
     async function createDocument() {
         if (!newDocTitle.trim()) return;
 
+        createError = null;
+        let doc;
         try {
-            await createNote(newDocTitle.trim());
-            newDocTitle = '';
-            showModal = false;
+            doc = await createNote(newDocTitle.trim());
         } catch (error) {
+            // Keep the dialog open with what was typed still in it. Closing
+            // regardless discarded the title and said nothing went wrong.
             console.error('Failed to create document:', error);
+            createError = 'Could not create this note.';
+            return;
         }
+        closeModal();
+        await openDocument(doc.id);
     }
 
     function closeModal() {
         newDocTitle = '';
+        createError = null;
         showModal = false;
     }
 
@@ -207,20 +214,27 @@
     function closeRenameModal() {
         renameDoc = null;
         renameTitle = '';
+        renameError = null;
     }
+
+    let renameError = $state<string | null>(null);
 
     async function confirmRename() {
         if (!renameDoc || !renameTitle.trim()) return;
         const docId = renameDoc.id;
         const title = renameTitle.trim();
 
+        renameError = null;
         try {
             await renameDocument(docId, title);
         } catch (err) {
+            // Closing in a `finally` threw the edit away on failure and left
+            // the user believing the rename had worked.
             console.error('[Sidebar] Failed to rename document:', err);
-        } finally {
-            closeRenameModal();
+            renameError = 'Could not rename this note.';
+            return;
         }
+        closeRenameModal();
     }
 
     function startDelete(doc: DocumentSummary) {
@@ -230,30 +244,35 @@
 
     function closeDeleteModal() {
         deleteDoc = null;
+        deleteError = null;
     }
+
+    let deleteError = $state<string | null>(null);
 
     async function confirmDelete() {
         if (!deleteDoc) return;
         const docId = deleteDoc.id;
         const wasOpen = currentDocId === docId;
 
-        if (wasOpen) {
-            appStore.setCurrentDocument(null);
-        }
-
+        // Nothing is cleared until the delete has actually succeeded. Clearing
+        // the open document first left the editor on a permanent "Loading..."
+        // with no way back whenever the delete failed, and whenever the note
+        // deleted was the last one.
+        deleteError = null;
         try {
             await deleteDocumentAction(docId);
-
-            if (wasOpen) {
-                const nextNote = notes.find((d: DocumentSummary) => d.id !== docId);
-                if (nextNote) {
-                    handleDocClick(nextNote);
-                }
-            }
         } catch (err) {
             console.error('[Sidebar] Failed to delete document:', err);
-        } finally {
-            closeDeleteModal();
+            deleteError = 'Could not delete this note.';
+            return;
+        }
+
+        closeDeleteModal();
+        if (wasOpen) {
+            const nextNote = notes.find((d: DocumentSummary) => d.id !== docId);
+            // No note left to fall back to, so go to the entry point, which
+            // opens today's journal.
+            await (nextNote ? openDocument(nextNote.id) : openHome());
         }
     }
 
@@ -328,9 +347,11 @@
 
     async function createJournalForDate(dateTitle: string) {
         try {
-            await createJournalForDateAction(dateTitle);
+            const doc = await createJournalForDateAction(dateTitle);
+            await openDocument(doc.id);
         } catch (err) {
             console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
+            toasts.error('Could not open that day');
         }
     }
 
@@ -766,6 +787,9 @@
                 class="modal-input"
                 onkeydown={(e) => e.key === 'Enter' && createDocument()}
             />
+            {#if createError}
+                <p class="modal-error">{createError}</p>
+            {/if}
             <div class="modal-actions">
                 <button class="modal-btn" onclick={createDocument}>OK</button>
             </div>
@@ -790,6 +814,9 @@
                 class="modal-input"
                 onkeydown={(e) => e.key === 'Enter' && confirmRename()}
             />
+            {#if renameError}
+                <p class="modal-error">{renameError}</p>
+            {/if}
             <div class="modal-actions">
                 <button class="modal-btn secondary" onclick={closeRenameModal}>Cancel</button>
                 <button class="modal-btn" onclick={confirmRename}>Rename</button>
@@ -812,6 +839,9 @@
                 This can't be undone. If this note has been synchronized to other devices, it will
                 be deleted there too.
             </p>
+            {#if deleteError}
+                <p class="modal-error">{deleteError}</p>
+            {/if}
             <div class="modal-actions">
                 <button class="modal-btn secondary" onclick={closeDeleteModal}>Cancel</button>
                 <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
@@ -1353,6 +1383,12 @@
 
     .modal-input::placeholder {
         color: var(--text-muted);
+    }
+
+    .modal-error {
+        margin: 0 0 12px 0;
+        font-size: 13px;
+        color: var(--status-error);
     }
 
     .modal-warning {

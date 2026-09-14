@@ -1,5 +1,6 @@
 <script lang="ts">
     import { invoke } from '@tauri-apps/api/core';
+    import { openDocument } from '$lib/services/navigation';
     import type { DocumentSummary } from '$lib/types';
     import { log } from '$lib/log';
 
@@ -36,7 +37,7 @@
     });
 
     function open(id: string) {
-        window.dispatchEvent(new CustomEvent('openDocument', { detail: { id } }));
+        void openDocument(id);
     }
 </script>
 

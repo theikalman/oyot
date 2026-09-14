@@ -19,14 +19,18 @@ fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), S
     std::fs::write(config_path, json.to_string()).map_err(|e| e.to_string())
 }
 
+/// The stored theme, or `None` when the user has never chosen one.
+///
+/// Defaulting to "light" here made "never chosen" and "chose light"
+/// indistinguishable, so the device's own preference could never be honoured
+/// on a first run.
 #[tauri::command]
-pub fn get_theme(app: tauri::AppHandle) -> String {
+pub fn get_theme(app: tauri::AppHandle) -> Option<String> {
     let json = read_config(&app);
     json.get("theme")
         .and_then(|v| v.as_str())
         .filter(|s| *s == "light" || *s == "dark")
-        .unwrap_or("light")
-        .to_string()
+        .map(|s| s.to_string())
 }
 
 #[tauri::command]
