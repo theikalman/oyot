@@ -1,0 +1,21 @@
+# Per-device topic access.
+#
+# Signaling topics are signaling/<node_id>/<message type>. A device must be able
+# to publish to its peers' topics and subscribe to its own. Mosquitto has no way
+# to bind a topic to a device's node_id, so the practical split is: everyone may
+# publish, nobody may subscribe outside their own subtree.
+#
+# Add one block per device account, using the node_id shown on its
+# "My Device" card in Settings > Sync.
+
+# Publishing to a peer is how pairing works at all, so it cannot be restricted
+# to known peers up front. A forged message is useless: it will not carry a
+# valid signature.
+pattern write signaling/+/+
+
+# Reading is the part that matters. Replace the username and node_id per device.
+# user laptop
+# topic read signaling/<laptop-node-id>/+
+
+# user phone
+# topic read signaling/<phone-node-id>/+

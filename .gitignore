@@ -14,3 +14,5 @@ vite.config.ts.timestamp-*
 /mosquitto/data/
 *.jks
 .claude/
+# Broker credentials, generated locally per developer.
+mosquitto/config/passwd

@@ -131,9 +131,26 @@ cannot reach anything else.
 **The CSP allows only self and the IPC origin.** No remote script, style, or
 connection. The MQTT connection is made from Rust and is not subject to it.
 
-Peer identity is still an unauthenticated UUID, and MQTT signaling is
-unencrypted and unauthenticated. That is the largest open gap; see
-`docs/IMPROVEMENT_PLAN.md` Phase 5.
+**Signaling is authenticated end to end.** A device's `node_id` is its Ed25519
+public key, and every signaling message carries a timestamp, a nonce and a
+signature over all of its fields. `src-tauri/src/crypto.rs` holds the format and
+the verifier; messages are checked in the MQTT event loop before anything reads
+the payload. The broker is therefore untrusted infrastructure: it relays
+messages it cannot forge, alter or replay. See
+[ADR 0009](decisions/0009-authenticated-signaling.md).
+
+The signature answers "is this really that device". Whether we want to talk to
+that device is still the pairing check against `device_pairs`, and both must
+pass.
+
+`mqtts://` is supported and preferred for any broker beyond localhost; the
+reference `mosquitto.conf` also requires authentication and restricts each
+device to its own topic subtree. Neither is what makes a message trustworthy,
+but they keep pairing traffic and SDP off the wire in the clear.
+
+The secret key lives in the app database rather than the OS keychain. Anything
+that can read it can already read the notes, so this is coherent rather than
+ideal; moving it is tracked as follow-up work in the ADR.
 
 ## Project Structure
 
