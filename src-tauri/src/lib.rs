@@ -119,11 +119,49 @@ pub const SCHEMA_VERSION: i64 = 6;
 /// once and bumps the version. `setup_database_tables` still owns the base
 /// `CREATE TABLE IF NOT EXISTS` shape for fresh installs; this only carries
 /// existing databases forward.
+///
+/// The whole run is one transaction. It used to be a sequence of separate
+/// statements: a crash between the two `ADD COLUMN`s in v1 left a database
+/// that had `content_hash` but not `title_updated_at`, which the v1 guard then
+/// skipped on every later launch because it only checks the first column, so
+/// every `COALESCE(title_updated_at, ...)` query failed for good. All or
+/// nothing is the only sane answer, and SQLite can roll back DDL.
 pub fn run_migrations(db: &Connection) -> Result<(), String> {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
 
+    // A database written by a newer build of the app. Its schema may have
+    // columns and tables this build does not know, and worse, semantics it
+    // does not share: writing to it could corrupt what the newer build
+    // expects. Refuse rather than guess. This matters for a device that syncs
+    // between an updated and a not-yet-updated install of the same app.
+    if version > SCHEMA_VERSION {
+        return Err(format!(
+            "this database is at schema version {version}, newer than this build understands \
+             ({SCHEMA_VERSION}). Update the app."
+        ));
+    }
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    db.execute_batch("BEGIN")
+        .map_err(|e| format!("Failed to begin the migration: {e}"))?;
+    match apply_migrations(db, version) {
+        Ok(()) => db
+            .execute_batch("COMMIT")
+            .map_err(|e| format!("Failed to commit the migration: {e}")),
+        Err(e) => {
+            // Best effort: if the rollback itself fails there is nothing more
+            // to try, and the original error is the one worth reporting.
+            let _ = db.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
+fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
     // v1: columns that let the sync layer reconcile the whole document set
     // (content hash as a change detector, last-writer-wins title, delete
     // tombstone timestamp). See docs/decisions/0003-full-document-set-sync.md.
@@ -424,6 +462,57 @@ mod migration_tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    // A database from a newer build may have semantics this one does not
+    // share, so writing to it risks corrupting what that build expects.
+    #[test]
+    fn a_database_from_a_newer_build_is_refused() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch(&format!("PRAGMA user_version = {};", SCHEMA_VERSION + 1))
+            .unwrap();
+
+        let err = run_migrations(&db).expect_err("must refuse");
+        assert!(err.contains("newer than this build"), "got {err}");
+    }
+
+    #[test]
+    fn an_up_to_date_database_needs_no_work() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        run_migrations(&db).unwrap();
+        // Second run takes the early return rather than re-running anything.
+        run_migrations(&db).unwrap();
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    // The regression: a crash between the two ADD COLUMNs in v1 left a
+    // database with `content_hash` but not `title_updated_at`. The v1 guard
+    // only checks the first, so it skipped the block on every later launch
+    // and every COALESCE(title_updated_at, ...) query failed for good.
+    #[test]
+    fn a_failed_migration_leaves_the_schema_untouched() {
+        let db = legacy_db();
+        // Occupy the name the v4 migration needs, with an incompatible shape,
+        // so that migration fails partway through the run.
+        db.execute_batch("CREATE TABLE document_links (nope INTEGER);")
+            .unwrap();
+
+        assert!(run_migrations(&db).is_err(), "the run must fail");
+
+        // v1 would have added these had it committed.
+        assert!(
+            !column_exists(&db, "content_hash"),
+            "a failed run must roll back every earlier step"
+        );
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 0, "and must not claim to have progressed");
     }
 
     #[test]
