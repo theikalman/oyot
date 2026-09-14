@@ -302,6 +302,22 @@
                 class="search-input"
                 aria-label="Search documents"
             />
+            <button class="collapse-btn" onclick={() => (collapsed = true)} title="Collapse">
+                <svg
+                    width="20"
+                    height="20"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    ><path
+                        stroke="currentColor"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="1.5"
+                        d="M3 12h18M3 6h18M9 18h12"
+                    /></svg
+                >
+            </button>
         {/if}
     </div>
 
@@ -442,13 +458,10 @@
     <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
 {/if}
 
-<button
-    class="toggle-btn"
-    class:collapsed
-    onclick={() => (collapsed = !collapsed)}
-    title={collapsed ? 'Expand' : 'Collapse'}
->
-    {#if collapsed}
+<!-- The only control outside the sidebar, and only when there is no sidebar
+     to put it in. Collapsing happens from the header, beside the search box. -->
+{#if collapsed}
+    <button class="expand-btn" onclick={() => (collapsed = false)} title="Expand">
         <svg
             width="20"
             height="20"
@@ -456,30 +469,15 @@
             fill="none"
             viewBox="0 0 24 24"
             ><path
-                stroke="#A1A1A1"
+                stroke="currentColor"
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width="1.5"
                 d="M3 12h18M3 6h18M3 18h12"
             /></svg
         >
-    {:else}
-        <svg
-            width="20"
-            height="20"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            ><path
-                stroke="#A1A1A1"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M3 12h18M3 6h18M9 18h12"
-            /></svg
-        >
-    {/if}
-</button>
+    </button>
+{/if}
 
 {#if showModal}
     <Modal title="New Note" onClose={closeModal}>
@@ -578,48 +576,53 @@
         background: rgba(0, 0, 0, 0.35);
     }
 
-    .toggle-btn {
-        width: 40px;
-        height: 40px;
+    /* Beside the search box, sized to match it. */
+    .collapse-btn {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        padding: 0;
         background: none;
         border: none;
-        cursor: pointer;
-        padding: 4px;
-        color: var(--text-secondary);
         border-radius: 4px;
+        color: var(--text-secondary);
+        cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        flex-shrink: 0;
-        margin-left: auto;
     }
 
-    .toggle-btn:hover {
+    .collapse-btn:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
     }
 
-    .toggle-btn.collapsed {
+    /* Floating, because with the sidebar hidden there is nothing to sit in. */
+    .expand-btn {
         position: fixed;
         left: 20px;
         bottom: 48px;
         z-index: 100;
+        width: 40px;
+        height: 40px;
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-secondary);
         background: var(--bg-secondary);
         border: 1px solid var(--border-color);
         border-radius: 50%;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        cursor: pointer;
         transition:
             box-shadow 0.2s ease,
             transform 0.2s ease;
     }
 
-    .toggle-btn.collapsed:hover {
+    .expand-btn:hover {
+        color: var(--text-primary);
         box-shadow: 0 0 16px 4px rgba(59, 130, 246, 0.4);
-    }
-
-    .toggle-btn.collapsed svg {
-        width: 20px;
-        height: 20px;
     }
 
     .sidebar-header {
