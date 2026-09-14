@@ -536,6 +536,7 @@ mod tests {
             attachment_hashes: hashes.iter().map(|s| s.to_string()).collect(),
             todo_count: 0,
             completed_todo_count: 0,
+            todos: vec![],
         }
     }
 

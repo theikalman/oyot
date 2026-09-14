@@ -755,6 +755,7 @@ mod tests {
                 link_targets: vec![],
                 todo_count: 0,
                 completed_todo_count: 0,
+                todos: vec![],
             },
         )
         .unwrap();
@@ -884,6 +885,7 @@ mod tests {
                 link_targets: vec![],
                 todo_count: 0,
                 completed_todo_count: 0,
+                todos: vec![],
             },
         )
         .unwrap();
@@ -926,6 +928,7 @@ mod tests {
                 link_targets: vec![],
                 todo_count: 0,
                 completed_todo_count: 0,
+                todos: vec![],
             },
         )
         .unwrap();

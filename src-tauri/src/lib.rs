@@ -70,6 +70,23 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_document_attachments_hash ON document_attachments(hash);
 
+        -- One row per task item, in document order. The todo index page reads
+        -- every note's and every journal's tasks out of this; `document_index`
+        -- only ever held a count. Derived from content, so it is written
+        -- wherever content arrives, exactly as links and attachments are.
+        --
+        -- `ordinal` is the address: an item has no id of its own, and the
+        -- whole set is replaced (and so renumbered) on every index pass.
+        CREATE TABLE IF NOT EXISTS document_todos (
+            document_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            checked INTEGER NOT NULL DEFAULT 0,
+            depth INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (document_id, ordinal),
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS attachments (
             hash TEXT PRIMARY KEY,
             mime_type TEXT NOT NULL,
@@ -113,7 +130,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -325,6 +342,28 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
         }
 
         db.execute_batch("PRAGMA user_version = 6;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
+    // v7: the todos themselves, not just a count of them. Nothing is
+    // backfilled here, because the rows are read out of rendered content that
+    // only the indexer can see; bumping `indexer::INDEX_VERSION` in the same
+    // change is what makes the startup backfill revisit every document.
+    if version < 7 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS document_todos (
+                 document_id TEXT NOT NULL,
+                 ordinal INTEGER NOT NULL,
+                 text TEXT NOT NULL,
+                 checked INTEGER NOT NULL DEFAULT 0,
+                 depth INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (document_id, ordinal),
+                 FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+             );",
+        )
+        .map_err(|e| format!("Migration v7 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 7;")
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
@@ -900,5 +939,34 @@ mod migration_tests {
             })
             .unwrap();
         assert_eq!(title, "Fresh");
+    }
+
+    // A database that already has attachments but no todo table, which is
+    // every install shipped before the todo index.
+    #[test]
+    fn migrates_v6_to_v7_and_adds_the_todo_table() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("DROP TABLE document_todos; PRAGMA user_version = 6;")
+            .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        db.execute_batch(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('d1', 'note', 'One', 1, 1);
+             INSERT INTO document_todos (document_id, ordinal, text, checked, depth)
+                 VALUES ('d1', 0, 'buy milk', 0, 0);",
+        )
+        .unwrap();
+
+        // The cascade is what takes a deleted note's todos off the index page.
+        db.execute("DELETE FROM documents WHERE id = 'd1'", [])
+            .unwrap();
+        let left: i64 = db
+            .query_row("SELECT COUNT(*) FROM document_todos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 }
