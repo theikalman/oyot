@@ -28,7 +28,7 @@ pub fn get_yjs_state(
     state: tauri::State<'_, AppState>,
     doc_id: String,
 ) -> Result<YjsStateResult, String> {
-    eprintln!("[cmd] get_yjs_state doc_id={}", doc_id);
+    trace!("[cmd] get_yjs_state doc_id={}", doc_id);
     let state_vec: Vec<u8> = {
         let db = state.db.lock();
         db.query_row(
@@ -38,7 +38,7 @@ pub fn get_yjs_state(
         )
         .unwrap_or_default()
     };
-    eprintln!(
+    trace!(
         "[cmd] get_yjs_state doc_id={} -> {} bytes",
         doc_id,
         state_vec.len()
@@ -74,7 +74,7 @@ pub async fn save_yjs_update(
     let content_hash = content_hash
         .map(|h| decode("content_hash", &h))
         .transpose()?;
-    eprintln!(
+    trace!(
         "[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes",
         doc_id,
         update.len(),

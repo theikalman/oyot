@@ -1,3 +1,6 @@
+#[macro_use]
+mod logging;
+
 mod commands;
 mod crypto;
 mod db;

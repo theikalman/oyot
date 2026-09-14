@@ -119,15 +119,16 @@ impl SignalingManager {
     }
 
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
-        eprintln!(
+        trace!(
             "[Signaling] connect() broker_url={} node_id={}",
-            broker_url, node_id
+            broker_url,
+            node_id
         );
 
         // Tear down any previous client generation so its reconnect loop and publish
         // task stop instead of racing the new one.
         if let Some(old) = self.mqtt_client.lock().take() {
-            eprintln!("[Signaling] Shutting down previous MQTT client generation");
+            trace!("[Signaling] Shutting down previous MQTT client generation");
             old.shutdown();
         }
 
@@ -147,7 +148,7 @@ impl SignalingManager {
                 let client_opt = mqtt_client_clone.lock().clone();
                 if let Some(c) = client_opt {
                     if let Err(e) = c.publish(&topic, &payload).await {
-                        eprintln!("MQTT publish error: {}", e);
+                        warn_log!("MQTT publish error: {}", e);
                     }
                 }
             }
@@ -172,19 +173,20 @@ impl SignalingManager {
                 while let Ok(event) = event_rx.recv().await {
                     match event {
                         MqttEvent::Connected => {
-                            eprintln!("[Signaling] MQTT Connected");
+                            trace!("[Signaling] MQTT Connected");
                             let _ = app.emit("mqtt-status", "connected");
                         }
                         MqttEvent::Disconnected => {
                             let _ = app.emit("mqtt-status", "disconnected");
                         }
                         MqttEvent::Message { topic, msg } => {
-                            eprintln!(
+                            trace!(
                                 "[Signaling] Received MQTT message on topic '{}': {:?}",
-                                topic, msg.msg_type
+                                topic,
+                                msg.msg_type
                             );
                             if msg.to.as_deref() != Some(node_id_clone.as_str()) {
-                                eprintln!(
+                                trace!(
                                     "[Signaling] Ignoring message not addressed to us (to: {:?})",
                                     msg.to
                                 );
@@ -207,9 +209,11 @@ impl SignalingManager {
                                 &msg.sig,
                                 crypto::now_ms(),
                             ) {
-                                eprintln!(
+                                warn_log!(
                                     "[Signaling] Rejecting {} from {}: {}",
-                                    msg.msg_type, msg.from, e
+                                    msg.msg_type,
+                                    msg.from,
+                                    e
                                 );
                                 continue;
                             }
@@ -236,9 +240,11 @@ impl SignalingManager {
         our_user_id: String,
         authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
     ) {
-        eprintln!(
+        trace!(
             "[Signaling] handle_message() type={} from={} our_user_id={}",
-            msg.msg_type, msg.from, our_user_id
+            msg.msg_type,
+            msg.from,
+            our_user_id
         );
         match msg.msg_type.as_str() {
             "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
@@ -252,7 +258,7 @@ impl SignalingManager {
                         }),
                     );
                 }
-                Err(e) => eprintln!("[Signaling] Failed to parse pair-request payload: {}", e),
+                Err(e) => warn_log!("[Signaling] Failed to parse pair-request payload: {}", e),
             },
             "pair-response" => match serde_json::from_str::<PairPayload>(&msg.payload) {
                 Ok(resp) => {
@@ -266,13 +272,13 @@ impl SignalingManager {
                         }),
                     );
                 }
-                Err(e) => eprintln!("[Signaling] Failed to parse pair-response payload: {}", e),
+                Err(e) => warn_log!("[Signaling] Failed to parse pair-response payload: {}", e),
             },
             "offer" => {
                 Self::handle_offer(app, msg, our_user_id, authorized_peers).await;
             }
             "answer" => {
-                eprintln!(
+                trace!(
                     "[Signaling] Emitting mqtt-answer-received from={}",
                     msg.from
                 );
@@ -283,7 +289,7 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-answer-received", payload);
             }
             "ice-candidate" => {
-                eprintln!(
+                trace!(
                     "[Signaling] Emitting mqtt-ice-candidate-received from={}",
                     msg.from
                 );
@@ -294,7 +300,7 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-ice-candidate-received", payload);
             }
             _ => {
-                eprintln!(
+                warn_log!(
                     "[Signaling] Unknown message type '{}', ignoring",
                     msg.msg_type
                 );
@@ -323,13 +329,13 @@ impl SignalingManager {
         };
 
         let (room_id, display_name) = if let Some(pair) = persisted {
-            eprintln!(
+            trace!(
                 "[Signaling] Offer from already-paired node {} (trusted reconnect)",
                 msg.from
             );
             (pair.room_id, pair.peer_display_name)
         } else if let Some(ctx) = authorized_peers.lock().get(&msg.from).cloned() {
-            eprintln!(
+            trace!(
                 "[Signaling] Offer from session-authorized node {}",
                 msg.from
             );
@@ -338,16 +344,17 @@ impl SignalingManager {
                 ctx.display_name,
             )
         } else {
-            eprintln!(
+            warn_log!(
                 "[Signaling] Rejecting unsolicited offer from unauthorized node {}",
                 msg.from
             );
             return;
         };
 
-        eprintln!(
+        trace!(
             "[Signaling] Emitting mqtt-offer-received from={} room_id={}",
-            msg.from, room_id
+            msg.from,
+            room_id
         );
         let payload = serde_json::json!({
             "from": msg.from,
@@ -359,7 +366,7 @@ impl SignalingManager {
     }
 
     pub fn disconnect(&self) {
-        eprintln!("[Signaling] disconnect() called, tearing down MQTT client");
+        trace!("[Signaling] disconnect() called, tearing down MQTT client");
         if let Some(old) = self.mqtt_client.lock().take() {
             old.shutdown();
         }
@@ -380,7 +387,7 @@ impl SignalingManager {
     /// Every outgoing message goes through here, so there is no path that
     /// publishes an unsigned envelope.
     async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
-        eprintln!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
+        trace!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
         let msg = self.seal(peer_id, msg_type, payload)?;
         let topic = format!("signaling/{}/{}", peer_id, msg_type);
         let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;

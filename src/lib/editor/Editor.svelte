@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { log } from '$lib/log';
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event';
@@ -74,14 +75,14 @@
 
     async function reloadCurrentDocument() {
         if (!current?.id) return;
-        console.log(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
+        log.debug(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
         try {
             const stateResult = await invoke<{ doc_id: string; state: string }>('get_yjs_state', {
                 docId: current.id,
             });
             if (stateResult.state && ydoc) {
                 Y.applyUpdate(ydoc, base64ToBytes(stateResult.state), REMOTE_ORIGIN);
-                console.log(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
+                log.debug(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
             }
         } catch (error) {
             console.error(`[Editor] [${current.id}] Failed to reload document:`, error);
@@ -125,13 +126,13 @@
 
         unlistenSyncEvent = await listen('sync-received', async (event) => {
             const payload = event.payload as { doc_id?: string; from?: string };
-            console.log(
+            log.debug(
                 `[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`,
             );
             if (payload?.doc_id && payload.doc_id === current?.id) {
                 await reloadCurrentDocument();
             } else {
-                console.log(
+                log.debug(
                     `[Editor] Ignoring sync-received, doc_id does not match currently open document`,
                 );
             }

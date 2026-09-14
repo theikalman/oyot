@@ -152,9 +152,12 @@ impl MqttSignalingClient {
         let url = broker_url.trim();
         let BrokerUrl { host, port, tls } = parse_broker_url(url)?;
 
-        eprintln!(
+        trace!(
             "[MQTT] Connecting to broker host={} port={} tls={} client_id={}",
-            host, port, tls, node_id
+            host,
+            port,
+            tls,
+            node_id
         );
 
         let mut mqtt_options = rumqttc::MqttOptions::new(node_id, &host, port);
@@ -201,7 +204,7 @@ impl MqttSignalingClient {
                     // `changed()` resolves on send (we only ever send `true`) or when the
                     // sender is dropped - both mean this client generation is done.
                     _ = shutdown_rx.changed() => {
-                        eprintln!("[MQTT] shutdown signalled, event loop exiting");
+                        trace!("[MQTT] shutdown signalled, event loop exiting");
                         let _ = client_clone.disconnect().await;
                         break;
                     }
@@ -210,39 +213,39 @@ impl MqttSignalingClient {
                             backoff = RECONNECT_BACKOFF_START;
                             match notification {
                                 rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(ack)) => {
-                                    eprintln!("[MQTT] ConnAck received: {:?}", ack);
+                                    trace!("[MQTT] ConnAck received: {:?}", ack);
                                     for topic in topics.iter() {
                                         match client_clone.subscribe(topic, rumqttc::QoS::AtLeastOnce).await {
-                                            Ok(()) => eprintln!("[MQTT] (re)subscribed to '{}'", topic),
-                                            Err(e) => eprintln!("[MQTT] Failed to (re)subscribe to '{}': {}", topic, e),
+                                            Ok(()) => trace!("[MQTT] (re)subscribed to '{}'", topic),
+                                            Err(e) => warn_log!("[MQTT] Failed to (re)subscribe to '{}': {}", topic, e),
                                         }
                                     }
                                     connected_clone.store(true, Ordering::Relaxed);
                                     let _ = event_tx_clone.send(MqttEvent::Connected);
                                 }
                                 rumqttc::Event::Incoming(rumqttc::Packet::SubAck(ack)) => {
-                                    eprintln!("[MQTT] SubAck received: {:?}", ack);
+                                    trace!("[MQTT] SubAck received: {:?}", ack);
                                 }
                                 rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) => {
-                                    eprintln!("[MQTT] Raw publish received on topic '{}' ({} bytes)", publish.topic, publish.payload.len());
+                                    trace!("[MQTT] Raw publish received on topic '{}' ({} bytes)", publish.topic, publish.payload.len());
                                     if let Ok(msg) = serde_json::from_slice::<SignalingMessage>(&publish.payload) {
-                                        eprintln!("[MQTT] Parsed signaling message: type={} from={} to={:?}", msg.msg_type, msg.from, msg.to);
+                                        trace!("[MQTT] Parsed signaling message: type={} from={} to={:?}", msg.msg_type, msg.from, msg.to);
                                         let _ = event_tx_clone.send(MqttEvent::Message {
                                             topic: publish.topic,
                                             msg,
                                         });
                                     } else {
-                                        eprintln!("[MQTT] Failed to parse publish payload on topic '{}' as SignalingMessage", publish.topic);
+                                        warn_log!("[MQTT] Failed to parse publish payload on topic '{}' as SignalingMessage", publish.topic);
                                     }
                                 }
                                 rumqttc::Event::Outgoing(rumqttc::Outgoing::Publish(_)) => {
-                                    eprintln!("[MQTT] Outgoing publish acknowledged by client");
+                                    trace!("[MQTT] Outgoing publish acknowledged by client");
                                 }
                                 _ => {}
                             }
                         }
                         Err(e) => {
-                            eprintln!("[MQTT] Connection error: {}; retrying in {:?}", e, backoff);
+                            warn_log!("[MQTT] Connection error: {}; retrying in {:?}", e, backoff);
                             // Emit Disconnected only on a healthy -> broken transition so a
                             // long outage doesn't spam the frontend with status events.
                             if connected_clone.swap(false, Ordering::Relaxed) {
@@ -251,7 +254,7 @@ impl MqttSignalingClient {
                             tokio::select! {
                                 _ = tokio::time::sleep(backoff) => {}
                                 _ = shutdown_rx.changed() => {
-                                    eprintln!("[MQTT] shutdown signalled during backoff, event loop exiting");
+                                    trace!("[MQTT] shutdown signalled during backoff, event loop exiting");
                                     break;
                                 }
                             }
@@ -274,7 +277,7 @@ impl MqttSignalingClient {
     }
 
     pub async fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
-        eprintln!(
+        trace!(
             "[MQTT] Publishing {} bytes to topic '{}'",
             payload.len(),
             topic
@@ -285,7 +288,7 @@ impl MqttSignalingClient {
             .await
             .map_err(|e| e.to_string());
         if let Err(e) = &result {
-            eprintln!("[MQTT] Failed to publish to '{}': {}", topic, e);
+            warn_log!("[MQTT] Failed to publish to '{}': {}", topic, e);
         }
         result
     }

@@ -1,3 +1,4 @@
+import { log } from '$lib/log';
 import { invoke } from '@tauri-apps/api/core';
 import { toasts } from './toast';
 import type { Document, DocumentSummary, IndexData } from '../types';
@@ -30,7 +31,7 @@ export async function cleanupOrphanedImages(): Promise<number> {
     try {
         const count: number = await invoke('cleanup_orphaned_images');
         if (count > 0) {
-            console.log(`Cleaned up ${count} orphaned image(s)`);
+            log.debug(`Cleaned up ${count} orphaned image(s)`);
             toasts.info(`Cleaned up ${count} orphaned image(s)`);
         }
         return count;

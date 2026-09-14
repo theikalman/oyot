@@ -1,3 +1,4 @@
+import { log } from '$lib/log';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
@@ -200,7 +201,7 @@ async function sendDescription(
 ): Promise<void> {
     const payload = JSON.stringify({ epoch: session.epoch, description: desc.toJSON() });
     const cmd = desc.type === 'answer' ? 'mqtt_publish_answer' : 'mqtt_publish_offer';
-    console.log(`[sync] [${peerId}] -> ${desc.type} (epoch=${session.epoch})`);
+    log.debug(`[sync] [${peerId}] -> ${desc.type} (epoch=${session.epoch})`);
     await invoke(cmd, { peerId, sdp: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ${desc.type}:`, e),
     );
@@ -258,7 +259,7 @@ function disposeChannel(session: PeerSession): void {
 function teardownSession(peerNodeId: string, opts: { keepAttempts?: boolean } = {}): void {
     const session = sessions.get(peerNodeId);
     if (!session) return;
-    console.log(`[sync] teardownSession(${peerNodeId}) keepAttempts=${!!opts.keepAttempts}`);
+    log.debug(`[sync] teardownSession(${peerNodeId}) keepAttempts=${!!opts.keepAttempts}`);
     clearSessionTimers(session);
     disposeChannel(session);
     try {
@@ -330,7 +331,7 @@ async function ensurePeerConnection(
     syncStore.setRoomSyncPhase(roomId, 'connecting');
     markPeerReconnecting(peerNodeId, true);
 
-    console.log(
+    log.debug(
         `[sync] ensurePeerConnection() -> ${displayName} (peer=${peerNodeId}, room=${roomId}, polite=${polite}, initiate=${opts.initiate}, epoch=${session.epoch})`,
     );
 
@@ -352,7 +353,7 @@ async function ensurePeerConnection(
     };
 
     pc.oniceconnectionstatechange = () => {
-        console.log(`[sync] [${peerNodeId}] iceConnectionState -> ${pc.iceConnectionState}`);
+        log.debug(`[sync] [${peerNodeId}] iceConnectionState -> ${pc.iceConnectionState}`);
         if (pc.iceConnectionState === 'failed') {
             try {
                 pc.restartIce();
@@ -364,7 +365,7 @@ async function ensurePeerConnection(
 
     pc.onconnectionstatechange = () => {
         const st = pc.connectionState;
-        console.log(`[sync] [${peerNodeId}] connectionState -> ${st} (room=${roomId})`);
+        log.debug(`[sync] [${peerNodeId}] connectionState -> ${st} (room=${roomId})`);
         if (st === 'connected') {
             session.reconnectAttempts = 0;
             clearSessionTimers(session);
@@ -394,9 +395,7 @@ async function ensurePeerConnection(
     };
 
     pc.ondatachannel = ({ channel }) => {
-        console.log(
-            `[sync] [${peerNodeId}] Remote data channel '${channel.label}' (room=${roomId})`,
-        );
+        log.debug(`[sync] [${peerNodeId}] Remote data channel '${channel.label}' (room=${roomId})`);
         wireDataChannel(channel, session);
     };
 
@@ -411,7 +410,7 @@ async function ensurePeerConnection(
                 pc.connectionState !== 'connected' &&
                 !session.dataChannel
             ) {
-                console.log(`[sync] [${peerNodeId}] promotion timeout - initiating`);
+                log.debug(`[sync] [${peerNodeId}] promotion timeout - initiating`);
                 void ensurePeerConnection(peerNodeId, roomId, displayName, {
                     initiate: true,
                     force: true,
@@ -459,7 +458,7 @@ function wireDataChannel(channel: RTCDataChannel, session: PeerSession): void {
     session.framed = framed;
 
     channel.onopen = () => {
-        console.log(
+        log.debug(
             `[sync] DataChannel open for room ${session.roomId} (peer=${session.peerNodeId})`,
         );
         markPeerReconnecting(session.peerNodeId, false);
@@ -472,7 +471,7 @@ function wireDataChannel(channel: RTCDataChannel, session: PeerSession): void {
     };
 
     channel.onclose = () => {
-        console.log(
+        log.debug(
             `[sync] DataChannel closed for room ${session.roomId} (peer=${session.peerNodeId})`,
         );
         disposeChannel(session);
@@ -515,7 +514,7 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
     }
 
     if (env.epoch > 0 && env.epoch < session.peerEpoch) {
-        console.log(
+        log.debug(
             `[sync] [${from}] ignoring stale description (epoch ${env.epoch} < peerEpoch ${session.peerEpoch})`,
         );
         return;
@@ -580,9 +579,7 @@ function scheduleReconnect(peerNodeId: string): void {
     const attempt = session.reconnectAttempts;
     session.reconnectAttempts = attempt + 1;
     const delay = Math.min(1000 * 2 ** attempt, RECONNECT_MAX_MS) + jitter(0, 1000);
-    console.log(
-        `[sync] [${peerNodeId}] reconnect attempt ${attempt + 1} in ${Math.round(delay)}ms`,
-    );
+    log.debug(`[sync] [${peerNodeId}] reconnect attempt ${attempt + 1} in ${Math.round(delay)}ms`);
     markPeerReconnecting(peerNodeId, true);
 
     session.reconnectTimer = setTimeout(() => {
@@ -638,7 +635,7 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
             existing.pc.connectionState === 'connected' &&
             existing.dataChannel?.readyState === 'open'
         ) {
-            console.log(`[sync] reconnectPeer(${peerNodeId}) - already connected, ignoring`);
+            log.debug(`[sync] reconnectPeer(${peerNodeId}) - already connected, ignoring`);
             return;
         }
         clearSessionTimers(existing);
@@ -649,7 +646,7 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
     // for a connection *now*, so we should not sit on the promote timeout waiting
     // for the other side to offer. Perfect negotiation resolves the collision if
     // both peers do this at once. Matches initiateOffer() on the pairing path.
-    console.log(`[sync] reconnectPeer(${peerNodeId}) - forcing immediate reconnect`);
+    log.debug(`[sync] reconnectPeer(${peerNodeId}) - forcing immediate reconnect`);
     markPeerReconnecting(peerNodeId, true);
     await ensurePeerConnection(pair.peer_node_id, pair.room_id, pair.peer_display_name, {
         initiate: true,
@@ -661,7 +658,7 @@ export async function reconnectAllPairedDevices(reason: string): Promise<void> {
     if (!identity || sweepRunning) return;
     if (get(signalingStatus) !== 'connected') return;
     sweepRunning = true;
-    console.log(`[sync] reconnectAllPairedDevices(${reason})`);
+    log.debug(`[sync] reconnectAllPairedDevices(${reason})`);
     try {
         await refreshPairedDevices();
         const connectedRooms = new Set(get(connectedPeers).map((p) => p.room_id));
@@ -710,7 +707,7 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     }
     syncStore.setPairingState('requesting');
     try {
-        console.log(`[sync] sendPairRequest() -> ${peerNodeId}`);
+        log.debug(`[sync] sendPairRequest() -> ${peerNodeId}`);
         await invoke('mqtt_publish_pair_request', { peerNodeId });
     } catch (e) {
         console.error('[sync] Failed to send pair request:', e);
@@ -727,14 +724,14 @@ export async function respondToPairRequest(accept: boolean): Promise<void> {
     syncStore.setPendingPairRequest(null);
     try {
         if (accept) {
-            console.log(`[sync] Accepting pair request from ${req.from}`);
+            log.debug(`[sync] Accepting pair request from ${req.from}`);
             await invoke('mqtt_accept_pair_request', {
                 peerNodeId: req.from,
                 peerUserId: req.user_id,
                 peerDisplayName: req.display_name,
             });
         } else {
-            console.log(`[sync] Declining pair request from ${req.from}`);
+            log.debug(`[sync] Declining pair request from ${req.from}`);
             await invoke('mqtt_decline_pair_request', { peerNodeId: req.from });
         }
     } catch (e) {
@@ -768,10 +765,10 @@ export function disconnectAll(): void {
 // --- lifecycle -----------------------------------------------------
 
 export async function initSync(): Promise<void> {
-    console.log('[sync] initSync() starting...');
+    log.debug('[sync] initSync() starting...');
     try {
         identity = await invoke<UserIdentity>('get_identity');
-        console.log(
+        log.debug(
             `[sync] Local identity: node_id=${identity.node_id} user_id=${identity.user_id} display_name=${identity.display_name}`,
         );
         syncStore.setIdentity(identity);
@@ -782,12 +779,12 @@ export async function initSync(): Promise<void> {
         void repo.backfillHashes().catch((e) => console.warn('[sync] hash backfill failed:', e));
 
         const mqttBroker = await invoke<string | null>('get_mqtt_broker_url');
-        console.log(`[sync] MQTT broker URL from config: ${mqttBroker || '(none)'}`);
+        log.debug(`[sync] MQTT broker URL from config: ${mqttBroker || '(none)'}`);
         if (mqttBroker && mqttBroker.trim() !== '') {
             syncStore.setSignalingUrl(mqttBroker);
             syncStore.setSignalingStatus('connecting');
             try {
-                console.log(`[sync] Connecting to MQTT broker ${mqttBroker}...`);
+                log.debug(`[sync] Connecting to MQTT broker ${mqttBroker}...`);
                 await invoke('mqtt_connect', { brokerUrl: mqttBroker });
             } catch (e) {
                 console.error('[sync] Failed to connect to MQTT broker:', e);
@@ -804,7 +801,7 @@ export async function initSync(): Promise<void> {
             void reconnectAllPairedDevices('init');
         }
 
-        console.log('[sync] initSync() complete, event listeners active');
+        log.debug('[sync] initSync() complete, event listeners active');
     } catch (error) {
         console.error('[sync] Failed to init sync:', error);
         syncStore.setSignalingStatus('error');
@@ -812,14 +809,14 @@ export async function initSync(): Promise<void> {
 }
 
 async function setupEventListeners(): Promise<void> {
-    console.log('[sync] Registering Tauri event listeners');
+    log.debug('[sync] Registering Tauri event listeners');
 
     const unlistenPairRequest = await listen<{
         from: string;
         user_id: string;
         display_name: string;
     }>('mqtt-pair-request-received', (event) => {
-        console.log(
+        log.debug(
             `[sync] event: mqtt-pair-request-received from=${event.payload.from} display_name=${event.payload.display_name}`,
         );
         syncStore.setPendingPairRequest(event.payload);
@@ -832,7 +829,7 @@ async function setupEventListeners(): Promise<void> {
         accepted: boolean;
     }>('mqtt-pair-response-received', async (event) => {
         const { from, user_id, display_name, accepted } = event.payload;
-        console.log(`[sync] event: mqtt-pair-response-received from=${from} accepted=${accepted}`);
+        log.debug(`[sync] event: mqtt-pair-response-received from=${from} accepted=${accepted}`);
         if (accepted) {
             syncStore.setPairingState(null);
             await initiateOffer(from, user_id, display_name);
@@ -848,7 +845,7 @@ async function setupEventListeners(): Promise<void> {
         display_name: string;
     }>('mqtt-offer-received', async (event) => {
         const { from, sdp, room_id, display_name } = event.payload;
-        console.log(`[sync] event: mqtt-offer-received from=${from} room_id=${room_id}`);
+        log.debug(`[sync] event: mqtt-offer-received from=${from} room_id=${room_id}`);
         try {
             const { epoch, description } = parseDescPayload(sdp);
             await handleDescription(from, {
@@ -866,7 +863,7 @@ async function setupEventListeners(): Promise<void> {
         'mqtt-answer-received',
         async (event) => {
             const { from, sdp } = event.payload;
-            console.log(`[sync] event: mqtt-answer-received from=${from}`);
+            log.debug(`[sync] event: mqtt-answer-received from=${from}`);
             try {
                 const { epoch, description } = parseDescPayload(sdp);
                 await handleDescription(from, { epoch, description });
@@ -880,7 +877,7 @@ async function setupEventListeners(): Promise<void> {
         'mqtt-ice-candidate-received',
         async (event) => {
             const { from, candidate } = event.payload;
-            console.log(`[sync] event: mqtt-ice-candidate-received from=${from}`);
+            log.debug(`[sync] event: mqtt-ice-candidate-received from=${from}`);
             try {
                 const { epoch, candidate: cand } = parseIcePayload(candidate);
                 await handleIceCandidate(from, { epoch, candidate: cand });
@@ -893,7 +890,7 @@ async function setupEventListeners(): Promise<void> {
     const unlistenStatus = await listen<string>('mqtt-status', (event) => {
         const next = event.payload as SignalingStatus;
         const prev = get(signalingStatus);
-        console.log(`[sync] event: mqtt-status -> ${next} (was ${prev})`);
+        log.debug(`[sync] event: mqtt-status -> ${next} (was ${prev})`);
         syncStore.setSignalingStatus(next);
         if (next === 'connected' && prev !== 'connected') {
             void reconnectAllPairedDevices('mqtt-connected');
@@ -910,7 +907,7 @@ async function setupEventListeners(): Promise<void> {
         unlistenIce,
         unlistenStatus,
     ];
-    console.log('[sync] Event listeners registered');
+    log.debug('[sync] Event listeners registered');
 }
 
 export function shutdownSync(): void {

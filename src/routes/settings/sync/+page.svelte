@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { log } from '$lib/log';
     import { onMount } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import {
@@ -83,7 +84,7 @@
 
     async function handleSaveSignalingUrl(newUrl: string) {
         try {
-            console.log('handleSaveSignalingUrl', newUrl);
+            log.debug('handleSaveSignalingUrl', newUrl);
 
             await invoke('save_mqtt_broker_url', { url: newUrl });
             syncStore.setSignalingUrl(newUrl);
