@@ -118,6 +118,20 @@ impl SignalingManager {
         );
     }
 
+    /// Forget a session authorization.
+    ///
+    /// `authorize_peer` vouches for a node for the rest of the session, and
+    /// `handle_offer` accepts an offer on the strength of either that or a
+    /// persisted pairing. Removing a pair only deleted the row, so the
+    /// in-memory entry kept vouching: the removed device's next offer was
+    /// accepted, the frontend connected and then re-saved the very pair the
+    /// user had just removed.
+    pub fn revoke_peer(&self, node_id: &str) {
+        if self.authorized_peers.lock().remove(node_id).is_some() {
+            trace!("[Signaling] revoked session authorization for {}", node_id);
+        }
+    }
+
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
         trace!(
             "[Signaling] connect() broker_url={} node_id={}",

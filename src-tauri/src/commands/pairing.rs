@@ -26,9 +26,15 @@ pub fn list_paired_devices(state: tauri::State<'_, AppState>) -> Result<Vec<Devi
 
 #[tauri::command]
 pub fn remove_pair(state: tauri::State<'_, AppState>, peer_node_id: String) -> Result<(), String> {
-    let db = state.db.lock();
-    let identity = crate::identity::get_or_create_identity(&db)?;
-    pairing::remove_pair(&db, &identity.public.user_id, &peer_node_id)
+    {
+        let db = state.db.lock();
+        let identity = crate::identity::get_or_create_identity(&db)?;
+        pairing::remove_pair(&db, &identity.public.user_id, &peer_node_id)?;
+    }
+    // The persisted row is only half of what trusts this peer; the session
+    // authorization has to go too, or its next offer is accepted anyway.
+    state.signaling_manager.revoke_peer(&peer_node_id);
+    Ok(())
 }
 
 #[tauri::command]

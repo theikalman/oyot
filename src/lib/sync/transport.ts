@@ -506,6 +506,14 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
             console.warn(`[sync] [${from}] offer without room_id, dropping`);
             return;
         }
+        // "Disconnect" has to mean disconnected, not "disconnected until the
+        // peer's next reconnect sweep". Suppression only held back our own
+        // outbound attempts, so the peer reconnected us within seconds and the
+        // button looked broken. Reconnect clears the suppression.
+        if (suppressReconnect.has(from)) {
+            log.debug(`[sync] [${from}] offer ignored, peer was explicitly disconnected`);
+            return;
+        }
         const built = await ensurePeerConnection(from, env.roomId, env.displayName || from, {
             initiate: false,
         });
