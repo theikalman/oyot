@@ -22,6 +22,7 @@
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
     import AboutDialog from './AboutDialog.svelte';
+    import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
 
     // Navigate; the document route loads it. Fetching and assigning the store
@@ -66,8 +67,6 @@
     function dismissOnSmallScreen() {
         if (small) collapsed = true;
     }
-
-    let currentDate = $state(new Date());
 
     // Recomputed rather than read from `new Date()` at render time, so an app
     // left open overnight stops calling yesterday "today".
@@ -333,108 +332,23 @@
         goto(resolve('/settings/sync'));
     }
 
-    function prevMonth() {
-        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
-    }
-
-    function nextMonth() {
-        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
-    }
-
-    function getCalendarDays() {
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth();
-        const firstDay = new Date(year, month, 1).getDay();
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const days: (number | null)[] = [];
-
-        for (let i = 0; i < firstDay; i++) days.push(null);
-        for (let d = 1; d <= daysInMonth; d++) days.push(d);
-        while (days.length % 7 !== 0) days.push(null);
-
-        return days;
-    }
-
-    const monthNames = [
-        'January',
-        'February',
-        'March',
-        'April',
-        'May',
-        'June',
-        'July',
-        'August',
-        'September',
-        'October',
-        'November',
-        'December',
-    ];
-    const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-
-    let calendarDays = $derived(getCalendarDays());
-    let calendarMonthYear = $derived(
-        `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`,
-    );
-
-    function handleDateClick(day: number | null) {
-        if (day === null) return;
-        const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(date.getDate()).padStart(2, '0');
-        const dateTitle = `${year}-${month}-${dayStr}`;
-
-        const existing = journals.find((d: DocumentSummary) => d.title === dateTitle);
+    // One way in for "open the journal for this date", used by the calendar.
+    // The date arithmetic moved to $lib/calendar; what stays here is the part
+    // that needs the document list and the router.
+    async function openJournalFor(journalTitle: string) {
+        const existing = journals.find((d: DocumentSummary) => d.title === journalTitle);
         if (existing) {
             handleDocClick(existing);
-        } else {
-            createJournalForDate(dateTitle);
+            return;
         }
-    }
-
-    async function createJournalForDate(dateTitle: string) {
         try {
-            const doc = await createJournalForDateAction(dateTitle);
+            const doc = await createJournalForDateAction(journalTitle);
             await openDocument(doc.id);
             dismissOnSmallScreen();
         } catch (err) {
-            console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
+            console.error('[Sidebar] Failed to create journal for date:', journalTitle, err);
             toasts.error('Could not open that day');
         }
-    }
-
-    // Reads the tracked date, not a fresh one, so the highlight moves when
-    // the day does rather than whenever something else happens to re-render.
-    function isToday(day: number | null): boolean {
-        if (day === null) return false;
-        return (
-            day === today.getDate() &&
-            currentDate.getMonth() === today.getMonth() &&
-            currentDate.getFullYear() === today.getFullYear()
-        );
-    }
-
-    function isSelectedDate(day: number | null): boolean {
-        if (day === null || !currentJournalTitle) return false;
-        const year = currentDate.getFullYear();
-        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(day).padStart(2, '0');
-        return currentJournalTitle === `${year}-${month}-${dayStr}`;
-    }
-
-    function hasJournal(day: number | null): boolean {
-        if (day === null) return false;
-        const year = currentDate.getFullYear();
-        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(day).padStart(2, '0');
-        const dateTitle = `${year}-${month}-${dayStr}`;
-        return journals.some((d: DocumentSummary) => d.title === dateTitle && d.has_content);
-    }
-
-    function goToToday() {
-        const today = new Date();
-        currentDate = today;
-        handleDateClick(today.getDate());
     }
 </script>
 
@@ -562,62 +476,12 @@
             {:else}
                 <div class="sidebar-section">
                     {#if showCalendar}
-                        <div class="calendar">
-                            <div class="calendar-header">
-                                <button
-                                    class="cal-nav-btn"
-                                    onclick={prevMonth}
-                                    title="Previous month"
-                                >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg
-                                    >
-                                </button>
-                                <div class="cal-center">
-                                    <span class="calendar-title">{calendarMonthYear}</span>
-                                    <button class="today-btn" onclick={goToToday}>Today</button>
-                                </div>
-                                <button class="cal-nav-btn" onclick={nextMonth} title="Next month">
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg
-                                    >
-                                </button>
-                            </div>
-                            <div class="calendar-grid">
-                                {#each dayNames as d (d)}
-                                    <div class="cal-day-name">{d}</div>
-                                {/each}
-                                {#each calendarDays as day, i (i)}
-                                    <button
-                                        class="cal-day"
-                                        class:empty={day === null}
-                                        class:today={isToday(day)}
-                                        class:selected={isSelectedDate(day)}
-                                        onclick={() => handleDateClick(day)}
-                                        disabled={day === null}
-                                    >
-                                        {#if hasJournal(day)}
-                                            <span class="journal-dot"></span>
-                                        {/if}
-                                        {day ?? ''}
-                                    </button>
-                                {/each}
-                            </div>
-                        </div>
+                        <JournalCalendar
+                            {journals}
+                            {currentJournalTitle}
+                            {today}
+                            onPick={openJournalFor}
+                        />
                     {/if}
                 </div>
 
@@ -1514,132 +1378,4 @@
     }
 
     /* ── Calendar ── */
-    .calendar {
-        border: 1px solid var(--border-light);
-        border-radius: 8px;
-        padding: 8px;
-        background: var(--bg-primary);
-    }
-
-    .calendar-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 8px;
-    }
-
-    .calendar-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-
-    .cal-center {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-    }
-
-    .today-btn {
-        background: none;
-        border: 1px solid var(--border-light);
-        cursor: pointer;
-        padding: 2px 8px;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        font-size: 11px;
-        font-weight: 500;
-        transition:
-            background 0.1s,
-            color 0.1s;
-    }
-
-    .today-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .cal-nav-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 2px;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .cal-nav-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .calendar-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 2px;
-    }
-
-    .cal-day-name {
-        text-align: center;
-        font-size: 10px;
-        color: var(--text-muted);
-        padding: 2px 0;
-        font-weight: 600;
-    }
-
-    .cal-day {
-        aspect-ratio: 1;
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        color: var(--text-primary);
-        background: transparent;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background 0.1s;
-    }
-
-    .journal-dot {
-        position: absolute;
-        top: 3px;
-        left: 3px;
-        width: 4px;
-        height: 4px;
-        border-radius: 50%;
-        background: #666;
-        pointer-events: none;
-    }
-
-    .cal-day:hover:not(:disabled):not(.empty) {
-        background: var(--bg-hover);
-    }
-
-    .cal-day.today {
-        background: var(--accent-bg);
-        color: var(--accent-color);
-        font-weight: 700;
-    }
-
-    .cal-day.selected:not(.today) {
-        box-shadow: inset 0 0 0 1.5px var(--accent-color);
-    }
-
-    .cal-day.today.selected {
-        box-shadow: inset 0 0 0 2px var(--accent-color);
-    }
-
-    .cal-day.empty {
-        cursor: default;
-    }
-
-    .cal-day:disabled {
-        cursor: default;
-    }
 </style>
