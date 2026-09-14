@@ -53,6 +53,22 @@ impl SignalingManager {
         }
     }
 
+    /// The public half of the loaded identity, or `None` before startup has
+    /// set it. Deliberately not the whole `LocalIdentity`: callers outside
+    /// this module have no business holding the signing key, and not making
+    /// it cloneable is what keeps that true.
+    pub fn public_identity(&self) -> Option<crate::identity::UserIdentity> {
+        self.identity.lock().as_ref().map(|i| i.public.clone())
+    }
+
+    /// Keep the in-memory copy in step with a rename, so the next pair request
+    /// advertises the new name rather than the one loaded at startup.
+    pub fn set_display_name(&self, display_name: &str) {
+        if let Some(identity) = self.identity.lock().as_mut() {
+            identity.public.display_name = display_name.to_string();
+        }
+    }
+
     pub fn set_identity(&self, identity: LocalIdentity) {
         *self.identity.lock() = Some(identity);
     }
