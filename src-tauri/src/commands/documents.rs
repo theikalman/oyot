@@ -221,6 +221,63 @@ pub struct EnsureDocumentRequest {
     pub updated_at: i64,
     pub title_updated_at: Option<i64>,
     pub lifecycle_updated_at: Option<i64>,
+    /// Only meaningful for a tombstone. Defaulted because `ensure_document`
+    /// has no use for it and does not send it.
+    #[serde(default)]
+    pub deleted_at: Option<i64>,
+}
+
+/// Record a peer's tombstone for a document we have never seen. Returns
+/// whether a row was inserted.
+///
+/// `DO NOTHING` on conflict: a document we already know about is
+/// `apply_tombstone_if_newer`'s business, and that has the last-writer-wins
+/// check this deliberately does not need.
+///
+/// No search or index row is written. A tombstone is not a document the user
+/// can find; it exists only to be carried in the manifest.
+pub fn insert_tombstone(db: &Connection, entry: &EnsureDocumentRequest) -> Result<bool, String> {
+    let title_updated_at = entry.title_updated_at.unwrap_or(entry.updated_at);
+    let lifecycle_updated_at = entry.lifecycle_updated_at.unwrap_or(entry.created_at);
+    let deleted_at = entry.deleted_at.unwrap_or(lifecycle_updated_at);
+    let inserted = db
+        .execute(
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8)
+             ON CONFLICT(id) DO NOTHING",
+            params![
+                &entry.doc_id,
+                &entry.doc_type,
+                &entry.title,
+                entry.created_at,
+                entry.updated_at,
+                title_updated_at,
+                deleted_at,
+                lifecycle_updated_at
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(inserted > 0)
+}
+
+/// Materialise a peer's tombstone for a document this device has never held.
+///
+/// Dropping it, which is what used to happen, is what stopped a delete
+/// propagating past the first device that never had the document: nothing to
+/// mark, so nothing to advertise onward, and a third device that still holds
+/// the document hands it straight back on the next exchange. With three
+/// devices the deletion flaps until all of them have met since it happened,
+/// and if the deleting device is lost it never settles at all.
+#[tauri::command]
+pub fn ensure_tombstone(
+    state: tauri::State<'_, AppState>,
+    entry: EnsureDocumentRequest,
+) -> Result<(), String> {
+    let db = state.db.lock();
+    insert_tombstone(&db, &entry)?;
+    Ok(())
 }
 
 // Idempotently materializes a document row learned about from a peer (via
@@ -241,6 +298,8 @@ pub fn ensure_document(
         updated_at,
         title_updated_at,
         lifecycle_updated_at,
+        // A live document has no delete stamp; `ensure_tombstone` owns that.
+        deleted_at: _,
     } = entry;
     let title_updated_at = title_updated_at.unwrap_or(updated_at);
     let lifecycle_updated_at = lifecycle_updated_at.unwrap_or(created_at);
@@ -707,5 +766,74 @@ mod tests {
     fn a_tombstone_for_an_unknown_document_applies_to_nothing() {
         let db = db();
         assert!(!apply_tombstone_if_newer(&db, "never-heard-of-it", 600).unwrap());
+    }
+
+    fn tombstone_entry(id: &str) -> EnsureDocumentRequest {
+        EnsureDocumentRequest {
+            doc_id: id.to_string(),
+            doc_type: "note".to_string(),
+            title: "Gone".to_string(),
+            created_at: 10,
+            updated_at: 20,
+            title_updated_at: Some(20),
+            lifecycle_updated_at: Some(700),
+            deleted_at: Some(700),
+        }
+    }
+
+    // This is what lets a delete reach a device that never held the document,
+    // and through it to a third device that still does.
+    #[test]
+    fn a_peers_tombstone_is_recorded_for_an_unknown_document() {
+        let db = db();
+        assert!(insert_tombstone(&db, &tombstone_entry("d2")).unwrap());
+
+        let (deleted, stamp): (i64, i64) = db
+            .query_row(
+                "SELECT is_deleted, lifecycle_updated_at FROM documents WHERE id = 'd2'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(
+            stamp, 700,
+            "the stamp has to survive or LWW cannot order it"
+        );
+    }
+
+    #[test]
+    fn a_recorded_tombstone_is_not_searchable() {
+        let db = db();
+        insert_tombstone(&db, &tombstone_entry("d2")).unwrap();
+        let rows: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM document_search WHERE document_id = 'd2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    // A row we already have belongs to the last-writer-wins path, which this
+    // one has no stamp comparison to do correctly.
+    #[test]
+    fn recording_a_tombstone_never_touches_a_document_we_have() {
+        let db = db();
+        let mut entry = tombstone_entry("d1");
+        entry.title = "Should not appear".to_string();
+
+        assert!(!insert_tombstone(&db, &entry).unwrap());
+
+        let (title, deleted): (String, i64) = db
+            .query_row(
+                "SELECT title, is_deleted FROM documents WHERE id = 'd1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "One");
+        assert_eq!(deleted, 0);
     }
 }

@@ -281,6 +281,7 @@ pub fn run() {
             delete_document,
             list_document_sync_state,
             ensure_document,
+            ensure_tombstone,
             apply_remote_rename,
             apply_remote_delete,
             search_documents,

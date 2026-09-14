@@ -128,6 +128,23 @@ class FakeRepo {
         });
     }
 
+    // Mirrors ensure_tombstone: record a peer's tombstone for a document we
+    // have never held, and never touch one we have.
+    async ensureTombstone(entry: ManifestEntry): Promise<void> {
+        if (this.docs.has(entry.id)) return;
+        const stamp = entry.lifecycleUpdatedAt ?? entry.createdAt;
+        this.docs.set(entry.id, {
+            docType: entry.docType,
+            title: entry.title,
+            titleUpdatedAt: entry.titleUpdatedAt,
+            createdAt: entry.createdAt,
+            isDeleted: true,
+            deletedAt: entry.deletedAt ?? stamp,
+            lifecycleUpdatedAt: stamp,
+            ydoc: new Y.Doc(),
+        });
+    }
+
     async applyRename(id: string, title: string, titleUpdatedAt: number): Promise<void> {
         const d = this.docs.get(id);
         if (d && (d.titleUpdatedAt ?? 0) < titleUpdatedAt) {
@@ -368,6 +385,45 @@ describe('DocSyncProtocol', () => {
 
         await converge(a, b);
         expect(b.docs.get('gone')!.isDeleted).toBe(true);
+    });
+
+    // Three devices, meeting in pairs. C never held the document, so before
+    // this the tombstone died at C: it was dropped on arrival, never went into
+    // C's manifest, and B then handed the document back to C on the next
+    // exchange. The delete flapped until all three had met since it happened,
+    // and never settled at all once A was gone.
+    it('a delete reaches a third device through one that never held the document', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        const c = new FakeRepo();
+        a.seed('gone', 'bye');
+        b.seed('gone', 'bye');
+        await a.applyDelete('gone', 100);
+
+        // A meets C, which has never heard of this document.
+        await converge(a, c);
+        expect(c.docs.get('gone')?.isDeleted).toBe(true);
+
+        // B, still holding it, now meets only C. C must carry the delete
+        // rather than accept the document back.
+        await converge(b, c);
+        expect(b.docs.get('gone')!.isDeleted).toBe(true);
+        expect(c.docs.get('gone')!.isDeleted).toBe(true);
+    });
+
+    it('a recorded tombstone does not resurrect as an empty document', async () => {
+        // The failure mode if a tombstone were materialised as a live row:
+        // the peer sees a document it does not have and pulls it, leaving an
+        // untitled empty note on every device.
+        const a = new FakeRepo();
+        const c = new FakeRepo();
+        a.seed('gone', 'bye');
+        await a.applyDelete('gone', 100);
+
+        await converge(a, c);
+
+        expect(c.docs.get('gone')!.isDeleted).toBe(true);
+        expect(c.text('gone')).toBe('');
     });
 
     it('reconnect after an offline edit transfers only the delta', async () => {

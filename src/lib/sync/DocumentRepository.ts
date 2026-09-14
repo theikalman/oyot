@@ -205,6 +205,27 @@ export class DocumentRepository {
         appStore.addDocument(toSummary(doc));
     }
 
+    // Record a peer's tombstone for a document we have never held, so the
+    // delete keeps propagating instead of stopping here.
+    //
+    // Deliberately does not touch the sidebar store: there is nothing to show,
+    // and `ensureDoc` adding a row is what would make a deleted document
+    // appear in the list.
+    async ensureTombstone(entry: ManifestEntry): Promise<void> {
+        await invoke('ensure_tombstone', {
+            entry: {
+                docId: entry.id,
+                docType: entry.docType,
+                title: entry.title,
+                createdAt: entry.createdAt,
+                updatedAt: entry.titleUpdatedAt,
+                titleUpdatedAt: entry.titleUpdatedAt,
+                deletedAt: entry.deletedAt,
+                lifecycleUpdatedAt: lifecycleStamp(entry),
+            },
+        });
+    }
+
     async applyRename(docId: string, title: string, titleUpdatedAt: number): Promise<void> {
         const changed = await invoke<boolean>('apply_remote_rename', {
             docId,

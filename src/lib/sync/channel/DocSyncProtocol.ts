@@ -263,9 +263,16 @@ export class DocSyncProtocol {
         const localStamp = local ? lifecycleStamp(local) : -1;
 
         if (entry.isDeleted) {
-            // A tombstone for a document we have never seen is nothing to do:
-            // there is no row to mark, and we will not advertise it onward.
-            if (local && remoteStamp > localStamp) {
+            if (!local) {
+                // Record it rather than dropping it. Dropping is what stopped
+                // a delete propagating past the first device that never held
+                // the document: nothing to mark, so nothing to advertise
+                // onward, and a third device that still has the document
+                // hands it straight back on the next exchange.
+                await this.repo.ensureTombstone(entry);
+                return;
+            }
+            if (remoteStamp > localStamp) {
                 await this.repo.applyDelete(entry.id, entry.deletedAt ?? remoteStamp);
             }
             return;
