@@ -56,7 +56,11 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
     const doc = await invoke<Document>('update_document', { docId, title });
     const existing = appStoreDoc(docId);
     if (existing) {
-        appStore.updateDocumentInList({ ...existing, title: doc.title, updated_at: doc.updated_at });
+        appStore.updateDocumentInList({
+            ...existing,
+            title: doc.title,
+            updated_at: doc.updated_at,
+        });
     }
     if (appStoreCurrentId() === docId) {
         appStore.setCurrentDocument(doc);

@@ -12,16 +12,16 @@ measurable once the dead paths are gone.
 Effort estimates are rough working time for someone already familiar with the
 codebase.
 
-| Phase | Theme | Items | Effort |
-|-------|-------|-------|--------|
-| 0 | CI and tooling guardrails | 3 | ~2h |
-| 1 | Data loss and blocking bugs | 2 | ~5h |
-| 2 | Sync layer correctness | 4 | ~4h |
-| 3 | Quick security and durability wins | 4 | ~2h |
-| 4 | Dead code removal | 6 | ~4h |
-| 5 | Authenticated signaling | 5 | ~2d |
-| 6 | Performance | 4 | ~1d |
-| 7 | Feature gaps and docs | 5 | ~1d |
+| Phase | Theme                              | Items | Effort |
+| ----- | ---------------------------------- | ----- | ------ |
+| 0     | CI and tooling guardrails          | 3     | ~2h    |
+| 1     | Data loss and blocking bugs        | 2     | ~5h    |
+| 2     | Sync layer correctness             | 4     | ~4h    |
+| 3     | Quick security and durability wins | 4     | ~2h    |
+| 4     | Dead code removal                  | 6     | ~4h    |
+| 5     | Authenticated signaling            | 5     | ~2d    |
+| 6     | Performance                        | 4     | ~1d    |
+| 7     | Feature gaps and docs              | 5     | ~1d    |
 
 ---
 
@@ -149,10 +149,10 @@ that depends on nothing mutable:
 // Persist a snapshot and tell peers. Takes everything by value so it is safe to
 // call while the editor that produced `snapshot` is being torn down.
 export async function persistSnapshot(docId: string, snapshot: Uint8Array): Promise<void> {
-    if (snapshot.length === 0) return;
-    await documentRepository.saveLocalUpdate(docId, snapshot);
-    broadcastLocalUpdate(docId, bytesToBase64(snapshot));
-    appStore.markDocumentHasContent(docId);
+  if (snapshot.length === 0) return;
+  await documentRepository.saveLocalUpdate(docId, snapshot);
+  broadcastLocalUpdate(docId, bytesToBase64(snapshot));
+  appStore.markDocumentHasContent(docId);
 }
 ```
 
@@ -187,7 +187,7 @@ Step 3 - in `Editor.svelte`, wire it and delete `handleDocumentChange`,
 
 ```ts
 function handleBeforeTeardown(docId: string, doc: Y.Doc) {
-    void persistSnapshot(docId, Y.encodeStateAsUpdate(doc));
+  void persistSnapshot(docId, Y.encodeStateAsUpdate(doc));
 }
 ```
 
@@ -200,7 +200,7 @@ debounce timer is also lost when the window closes:
 ```ts
 // Editor.svelte, onMount
 const unlistenClose = await getCurrentWindow().onCloseRequested(() => {
-    saveService?.flushNow();
+  saveService?.flushNow();
 });
 ```
 
@@ -301,10 +301,10 @@ if version < 2 {
 }
 ```
 
-   Guard it the same way v1 is guarded, so a fresh install whose base schema
-   already has the column does not fail. Add the column to
-   `setup_database_tables` too, and extend the existing `migration_tests` module
-   with a v1-to-v2 case.
+Guard it the same way v1 is guarded, so a fresh install whose base schema
+already has the column does not fail. Add the column to
+`setup_database_tables` too, and extend the existing `migration_tests` module
+with a v1-to-v2 case.
 
 2. `delete_document` and `apply_remote_delete` set `lifecycle_updated_at`
    alongside the flag. `apply_remote_delete` becomes conditional:
@@ -323,13 +323,13 @@ if version < 2 {
 
 ```ts
 const remoteStamp = entry.lifecycleUpdatedAt ?? entry.deletedAt ?? entry.createdAt;
-const localStamp  = local?.lifecycleUpdatedAt ?? local?.deletedAt ?? local?.createdAt ?? 0;
+const localStamp = local?.lifecycleUpdatedAt ?? local?.deletedAt ?? local?.createdAt ?? 0;
 
 if (entry.isDeleted && remoteStamp > localStamp) {
-    await this.repo.applyDelete(entry.id, entry.deletedAt ?? remoteStamp);
-    return;
+  await this.repo.applyDelete(entry.id, entry.deletedAt ?? remoteStamp);
+  return;
 }
-if (local?.isDeleted && localStamp >= remoteStamp) return;   // our tombstone wins
+if (local?.isDeleted && localStamp >= remoteStamp) return; // our tombstone wins
 ```
 
 5. `ensureDoc` -> `ensure_document` currently uses `INSERT OR IGNORE`, so a
@@ -397,20 +397,20 @@ promise is orphaned:
 
 ```ts
 function waitForDrain(): Promise<void> {
-    if (channel.bufferedAmount <= BUFFER_HIGH) return Promise.resolve();
-    return new Promise((resolve) => {
-        const done = () => {
-            channel.removeEventListener('bufferedamountlow', done);
-            channel.removeEventListener('close', done);
-            channel.removeEventListener('error', done);
-            clearTimeout(timer);
-            resolve();
-        };
-        const timer = setTimeout(done, DRAIN_TIMEOUT_MS);   // backstop, 30s
-        channel.addEventListener('bufferedamountlow', done);
-        channel.addEventListener('close', done);
-        channel.addEventListener('error', done);
-    });
+  if (channel.bufferedAmount <= BUFFER_HIGH) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      channel.removeEventListener('bufferedamountlow', done);
+      channel.removeEventListener('close', done);
+      channel.removeEventListener('error', done);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, DRAIN_TIMEOUT_MS); // backstop, 30s
+    channel.addEventListener('bufferedamountlow', done);
+    channel.addEventListener('close', done);
+    channel.addEventListener('error', done);
+  });
 }
 ```
 
@@ -422,16 +422,16 @@ transfer live until reload, and `frame.n` / `frame.i` are unvalidated so a
 malformed peer frame drives `new Array(n)` directly. Add bounds and a sweep:
 
 ```ts
-const MAX_CHUNKS = 4096;                 // 4096 * 16KB = 64MB ceiling per message
+const MAX_CHUNKS = 4096; // 4096 * 16KB = 64MB ceiling per message
 const REASSEMBLY_TIMEOUT_MS = 60_000;
 
 if (frame.k === 1) {
-    if (!Number.isInteger(frame.n) || frame.n <= 0 || frame.n > MAX_CHUNKS) {
-        console.warn(`[sync/framing] rejecting begin frame with n=${frame.n}`);
-        return;
-    }
-    inbox.set(frame.id, { parts: new Array(frame.n), got: 0, n: frame.n, startedAt: Date.now() });
+  if (!Number.isInteger(frame.n) || frame.n <= 0 || frame.n > MAX_CHUNKS) {
+    console.warn(`[sync/framing] rejecting begin frame with n=${frame.n}`);
     return;
+  }
+  inbox.set(frame.id, { parts: new Array(frame.n), got: 0, n: frame.n, startedAt: Date.now() });
+  return;
 }
 // k === 2
 const entry = inbox.get(frame.id);
@@ -476,8 +476,8 @@ once and only resync when not editing:
 
 ```ts
 $effect(() => {
-    const incoming = signalingUrl;
-    if (!isEditing) inputUrl = incoming ?? '';
+  const incoming = signalingUrl;
+  if (!isEditing) inputUrl = incoming ?? '';
 });
 ```
 
@@ -837,8 +837,8 @@ Switch the live path to incremental updates:
 ```ts
 // EditorInstance, after creating the ydoc
 newYDoc.on('update', (update: Uint8Array, origin: unknown) => {
-    if (origin === REMOTE_ORIGIN) return;    // do not echo peer updates back
-    onLocalUpdate?.(update);
+  if (origin === REMOTE_ORIGIN) return; // do not echo peer updates back
+  onLocalUpdate?.(update);
 });
 ```
 

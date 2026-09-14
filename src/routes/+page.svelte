@@ -96,7 +96,7 @@
         --loading-overlay-bg: rgba(255, 255, 255, 0.9);
     }
 
-    :global([data-theme="dark"]) {
+    :global([data-theme='dark']) {
         --bg-primary: #1e1e1e;
         --bg-secondary: #252526;
         --bg-hover: #2d2d2d;
@@ -122,7 +122,8 @@
 
     :global(body) {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        font-family:
+            -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
         background-color: var(--bg-primary);
         color: var(--text-primary);
     }
@@ -194,8 +195,12 @@
     }
 
     @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
+        0% {
+            transform: rotate(0deg);
+        }
+        100% {
+            transform: rotate(360deg);
+        }
     }
 
     .loading-overlay p {

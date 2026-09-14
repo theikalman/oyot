@@ -16,15 +16,11 @@ export function registerDateCommand(editor: Editor): void {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'long',
-                day: 'numeric'
+                day: 'numeric',
             });
 
-            editor.chain()
-                .focus()
-                .deleteRange(range)
-                .insertContent(formattedDate)
-                .run();
-        }
+            editor.chain().focus().deleteRange(range).insertContent(formattedDate).run();
+        },
     };
 
     commandRegistry.register(command);

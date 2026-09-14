@@ -45,7 +45,7 @@ export function registerDocumentLinkCommand(_editor: Editor): void {
             }
 
             exitSuggestion((props.editor as Editor).view);
-        }
+        },
     };
 
     commandRegistry.register(command);
@@ -55,7 +55,12 @@ function getAnchorClientRect(editor: Editor, range: Range): DOMRect | null {
     try {
         const pos = editor.state.selection.$anchor.pos;
         const coords = editor.view.coordsAtPos(pos);
-        return new DOMRect(coords.left, coords.top, coords.right - coords.left, coords.bottom - coords.top);
+        return new DOMRect(
+            coords.left,
+            coords.top,
+            coords.right - coords.left,
+            coords.bottom - coords.top,
+        );
     } catch {
         return null;
     }
@@ -81,10 +86,10 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
             closeDocumentPopup();
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            popupSelectedIndexStore.update(i => (i - 1 + popupItems.length) % popupItems.length);
+            popupSelectedIndexStore.update((i) => (i - 1 + popupItems.length) % popupItems.length);
         } else if (e.key === 'ArrowDown') {
             e.preventDefault();
-            popupSelectedIndexStore.update(i => (i + 1) % popupItems.length);
+            popupSelectedIndexStore.update((i) => (i + 1) % popupItems.length);
         } else if (e.key === 'Enter') {
             e.preventDefault();
             const idx = get(popupSelectedIndexStore);
@@ -117,7 +122,7 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
         .map((doc: DocumentSummary) => ({
             id: doc.id,
             title: doc.title,
-            icon: '📄'
+            icon: '📄',
         }));
 
     popupSelectedIndexStore = writable(0);
@@ -128,21 +133,22 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
             items: popupItems,
             selectedIndexStore: popupSelectedIndexStore,
             command: handleDocumentSelect,
-            onClose: closeDocumentPopup
-        }
+            onClose: closeDocumentPopup,
+        },
     });
 }
 
 function handleDocumentSelect(item: DocumentSuggestionItem): void {
     if (currentEditor) {
-        currentEditor.chain()
+        currentEditor
+            .chain()
             .focus()
             .insertContent({
                 type: 'documentLink',
                 attrs: {
                     targetId: item.id,
-                    title: item.title
-                }
+                    title: item.title,
+                },
             })
             .run();
     }
@@ -173,10 +179,13 @@ export function searchDocuments(query: string): DocumentSuggestionItem[] {
     const normalizedQuery = query.toLowerCase();
 
     return docs
-        .filter((doc: DocumentSummary) => doc.id !== currentDocId && doc.title.toLowerCase().includes(normalizedQuery))
+        .filter(
+            (doc: DocumentSummary) =>
+                doc.id !== currentDocId && doc.title.toLowerCase().includes(normalizedQuery),
+        )
         .map((doc: DocumentSummary) => ({
             id: doc.id,
             title: doc.title,
-            icon: '📄'
+            icon: '📄',
         }));
 }

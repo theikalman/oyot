@@ -21,7 +21,7 @@ implementation of that design had no recovery story:
   single slot and no session tag. If both peers sent an offer at nearly the same
   time - which an automatic reconnect sweep on both devices would routinely cause
   - the two negotiations corrupted each other's state and typically no connection
-  formed, leaking `RTCPeerConnection` objects.
+    formed, leaking `RTCPeerConnection` objects.
 
 We wanted reconnection to be automatic and robust enough that the manual button
 could be removed, without introducing a race every time both devices try to
@@ -77,7 +77,7 @@ node_id to always be the caller; the other never offers. Simpler, and it handles
 the reconnect-sweep case. Rejected as the primary mechanism because it does not
 cover ICE restarts (either side may need to restart ICE on `failed`) or any
 future renegotiation, and it degrades to "no connection" if the designated
-caller is the one that is down. We kept the deterministic role *assignment* (it
+caller is the one that is down. We kept the deterministic role _assignment_ (it
 decides who is polite and who creates the data channel) but layered full perfect
 negotiation on top so simultaneous offers are always safe.
 

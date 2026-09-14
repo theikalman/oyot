@@ -42,9 +42,9 @@ export const ImageExtension = Extension.create({
                             }
                         }
                         return false;
-                    }
-                }
-            })
+                    },
+                },
+            }),
         ];
-    }
+    },
 });

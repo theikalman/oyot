@@ -26,7 +26,9 @@
                             </span>
                         </div>
                         <span class="peer-node-id">{peer.node_id}</span>
-                        <span class="peer-last-sync">Last synced: {formatLastSync(peer.last_synchronized)}</span>
+                        <span class="peer-last-sync"
+                            >Last synced: {formatLastSync(peer.last_synchronized)}</span
+                        >
                     </div>
                     <button class="btn-danger" onclick={() => onRemovePeer(peer.node_id)}>
                         Remove
@@ -134,7 +136,7 @@
         color: var(--text-muted);
     }
 
-    :global([data-theme="dark"]) .peer-status.online {
+    :global([data-theme='dark']) .peer-status.online {
         background: #14532d;
         color: #86efac;
     }

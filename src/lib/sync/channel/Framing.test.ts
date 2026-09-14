@@ -49,7 +49,9 @@ describe('Framing', () => {
     it('interleaved large messages on one channel reassemble independently', async () => {
         const [a, b] = pair();
         const received: Array<{ id: string; body: string }> = [];
-        attachFraming(b as unknown as RTCDataChannel, (m) => received.push(m as { id: string; body: string }));
+        attachFraming(b as unknown as RTCDataChannel, (m) =>
+            received.push(m as { id: string; body: string }),
+        );
         const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
 
         await Promise.all([

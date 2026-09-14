@@ -21,13 +21,14 @@
 
 <section class="section">
     <h2>Add Device</h2>
-    <form class="add-peer-form" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-        <input
-            type="text"
-            placeholder="Device Node ID"
-            bind:value={newPeerNodeId}
-            class="input"
-        />
+    <form
+        class="add-peer-form"
+        onsubmit={(e) => {
+            e.preventDefault();
+            handleSubmit();
+        }}
+    >
+        <input type="text" placeholder="Device Node ID" bind:value={newPeerNodeId} class="input" />
         <input
             type="text"
             placeholder="Device name (e.g., My iPad)"

@@ -8,14 +8,8 @@
         onTriggerSync: () => void;
     }
 
-    let {
-        isSyncEnabled,
-        isSyncing,
-        onlineCount,
-        totalPeers,
-        onToggleSync,
-        onTriggerSync
-    }: Props = $props();
+    let { isSyncEnabled, isSyncing, onlineCount, totalPeers, onToggleSync, onTriggerSync }: Props =
+        $props();
 </script>
 
 <section class="section">

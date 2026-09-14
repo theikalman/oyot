@@ -22,12 +22,12 @@ function arrayBufferToBase64(buffer: Uint8Array): string {
 function getMimeType(filePath: string): string {
     const ext = filePath.split('.').pop()?.toLowerCase();
     const mimeTypes: Record<string, string> = {
-        'png': 'image/png',
-        'jpg': 'image/jpeg',
-        'jpeg': 'image/jpeg',
-        'gif': 'image/gif',
-        'webp': 'image/webp',
-        'svg': 'image/svg+xml'
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        svg: 'image/svg+xml',
     };
     return mimeTypes[ext ?? ''] ?? 'image/png';
 }
@@ -46,7 +46,7 @@ export function registerImageCommand(editor: Editor): void {
             ed.chain().focus().deleteRange(range).run();
 
             insertImageFromFile(ed);
-        }
+        },
     };
     commandRegistry.register(command);
 }
@@ -54,7 +54,7 @@ export function registerImageCommand(editor: Editor): void {
 export async function insertImageFromFile(editor: Editor): Promise<void> {
     const filePath = await open({
         multiple: false,
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }]
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
     });
 
     if (!filePath) return;
@@ -70,7 +70,7 @@ export async function insertImageFromFile(editor: Editor): Promise<void> {
 
         const hash: string = await invoke('save_image', {
             imageData: base64,
-            mimeType
+            mimeType,
         });
 
         insertImageNode(editor, hash, mimeType, blob.size);
@@ -90,7 +90,7 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
 
         const hash: string = await invoke('save_image', {
             imageData: base64,
-            mimeType: blob.type
+            mimeType: blob.type,
         });
 
         insertImageNode(editor, hash, blob.type, blob.size);
@@ -103,10 +103,14 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
 // (ResizableImage) resolves it to a local URL at render time, and the sync
 // layer moves the bytes between devices.
 function insertImageNode(editor: Editor, hash: string, mimeType: string, size: number): void {
-    editor.chain().focus().setImage({
-        src: `${ATTACHMENT_SCHEME}${hash}`,
-        alt: `oyot:${hash}`
-    }).run();
+    editor
+        .chain()
+        .focus()
+        .setImage({
+            src: `${ATTACHMENT_SCHEME}${hash}`,
+            alt: `oyot:${hash}`,
+        })
+        .run();
 
     try {
         broadcastAttachmentAvailable(hash, mimeType, size);

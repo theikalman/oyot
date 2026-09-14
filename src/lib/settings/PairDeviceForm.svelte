@@ -19,7 +19,10 @@
             const p = platform();
             isMobile = p === 'android' || p === 'ios';
         } catch (e) {
-            console.warn('[PairDeviceForm] Platform detection unavailable, hiding QR scan button:', e);
+            console.warn(
+                '[PairDeviceForm] Platform detection unavailable, hiding QR scan button:',
+                e,
+            );
             isMobile = false;
         }
     });
@@ -49,7 +52,10 @@
                 scanError = 'Camera permission denied';
                 return;
             }
-            const result = await scanner.scan({ windowed: false, formats: [scanner.Format.QRCode] });
+            const result = await scanner.scan({
+                windowed: false,
+                formats: [scanner.Format.QRCode],
+            });
             if (result?.content) {
                 nodeIdInput = result.content;
             }
@@ -88,7 +94,10 @@
         {#if scanError}
             <p class="pair-status error">{scanError}</p>
         {/if}
-        <p class="hint">Get the Node ID from the other device's "My Device" card above (copy/paste, or scan its QR code).</p>
+        <p class="hint">
+            Get the Node ID from the other device's "My Device" card above (copy/paste, or scan its
+            QR code).
+        </p>
     </div>
 </section>
 

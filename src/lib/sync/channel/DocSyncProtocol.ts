@@ -102,9 +102,11 @@ export class DocSyncProtocol {
                 await this.repo.applyDelete(msg.id, msg.deletedAt);
                 return;
             case 'live-update':
-                await this.repo.mergeDelta(msg.id, msg.update).catch((e) =>
-                    console.error(`[sync] live-update merge failed for ${msg.id}:`, e),
-                );
+                await this.repo
+                    .mergeDelta(msg.id, msg.update)
+                    .catch((e) =>
+                        console.error(`[sync] live-update merge failed for ${msg.id}:`, e),
+                    );
                 return;
             case 'attach-manifest':
                 await this.onAttachManifest(msg.items.map((i) => i.hash));
@@ -178,7 +180,9 @@ export class DocSyncProtocol {
                     this.attachQueue.push(hash);
                     this.attachPump();
                 } else {
-                    console.warn(`[sync] gave up pulling attachment ${hash} after ${attempts} attempts`);
+                    console.warn(
+                        `[sync] gave up pulling attachment ${hash} after ${attempts} attempts`,
+                    );
                 }
             }, ATTACH_TIMEOUT_MS),
         );
@@ -237,7 +241,10 @@ export class DocSyncProtocol {
         this.maybeFinish();
     }
 
-    private async reconcileEntry(entry: ManifestEntry, local: ManifestEntry | undefined): Promise<void> {
+    private async reconcileEntry(
+        entry: ManifestEntry,
+        local: ManifestEntry | undefined,
+    ): Promise<void> {
         if (entry.isDeleted) {
             if (!local || !local.isDeleted) {
                 await this.repo.applyDelete(entry.id, entry.deletedAt ?? Date.now());
@@ -259,7 +266,8 @@ export class DocSyncProtocol {
             await this.repo.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
         }
 
-        const differ = !local.contentHash || !entry.contentHash || local.contentHash !== entry.contentHash;
+        const differ =
+            !local.contentHash || !entry.contentHash || local.contentHash !== entry.contentHash;
         if (differ) {
             const sv = await this.repo.localStateVector(entry.id);
             this.enqueue({ id: entry.id, sv, attempts: 0 });
@@ -295,7 +303,9 @@ export class DocSyncProtocol {
                     this.queue.push(item);
                     this.pump();
                 } else {
-                    console.warn(`[sync] gave up pulling ${item.id} after ${item.attempts} attempts`);
+                    console.warn(
+                        `[sync] gave up pulling ${item.id} after ${item.attempts} attempts`,
+                    );
                     this.settle();
                 }
             }, NEED_TIMEOUT_MS),

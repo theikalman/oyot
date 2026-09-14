@@ -33,9 +33,13 @@
                     class:selected={index === $selectedIndexStore}
                     role="option"
                     aria-selected={index === $selectedIndexStore}
-                    onmouseenter={() => { selectedIndexStore.set(index); }}
+                    onmouseenter={() => {
+                        selectedIndexStore.set(index);
+                    }}
                     onclick={() => command(item)}
-                    onkeydown={(e) => { if (e.key === 'Enter') command(item); }}
+                    onkeydown={(e) => {
+                        if (e.key === 'Enter') command(item);
+                    }}
                 >
                     <span class="item-icon">{@html item.icon || '📄'}</span>
                     <span class="item-content">
@@ -46,6 +50,7 @@
         </ul>
     {/if}
 </div>
+;
 
 <style>
     .suggestion-popup {
@@ -122,4 +127,4 @@
         color: var(--text-secondary);
         font-size: 14px;
     }
-</style>;
+</style>

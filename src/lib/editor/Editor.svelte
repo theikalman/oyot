@@ -16,10 +16,7 @@
         autoSave?: boolean;
     }
 
-    let {
-        debounceMs = 1000,
-        autoSave = true
-    }: Props = $props();
+    let { debounceMs = 1000, autoSave = true }: Props = $props();
 
     let current = $derived($currentDocument);
     let ydoc = $state<Y.Doc | null>(null);
@@ -39,8 +36,12 @@
 
         saveService = createSaveService({
             debounceMs,
-            onSaving: () => { isSaving = true; },
-            onSaved: () => { isSaving = false; }
+            onSaving: () => {
+                isSaving = true;
+            },
+            onSaved: () => {
+                isSaving = false;
+            },
         });
 
         if (current) {
@@ -71,7 +72,9 @@
             const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', {
                 docId: current.id,
             });
-            console.log(`[Editor] [${current.id}] Fetched state: ${stateResult.state?.length ?? 0} bytes, ydoc present=${!!ydoc}`);
+            console.log(
+                `[Editor] [${current.id}] Fetched state: ${stateResult.state?.length ?? 0} bytes, ydoc present=${!!ydoc}`,
+            );
             if (stateResult.state && stateResult.state.length > 0 && ydoc) {
                 Y.applyUpdate(ydoc, new Uint8Array(stateResult.state));
                 console.log(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
@@ -96,11 +99,15 @@
         window.addEventListener('openDocument', handleOpenDocument);
         unlistenSyncEvent = await listen('sync-received', async (event) => {
             const payload = event.payload as { doc_id?: string; from?: string };
-            console.log(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`);
+            console.log(
+                `[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`,
+            );
             if (payload?.doc_id && payload.doc_id === current?.id) {
                 await reloadCurrentDocument();
             } else {
-                console.log(`[Editor] Ignoring sync-received, doc_id does not match currently open document`);
+                console.log(
+                    `[Editor] Ignoring sync-received, doc_id does not match currently open document`,
+                );
             }
         });
     });
@@ -116,7 +123,10 @@
     $effect(() => {
         const newDoc = current;
         if (newDoc) {
-            handleDocumentChange(newDoc, previousDocId ? { id: previousDocId } as Document : null);
+            handleDocumentChange(
+                newDoc,
+                previousDocId ? ({ id: previousDocId } as Document) : null,
+            );
         }
     });
 </script>
@@ -124,7 +134,7 @@
 <div class="editor-container">
     {#if current}
         <Toolbar editor={editorInstance} />
-        
+
         <EditorInstance
             document={current}
             {autoSave}

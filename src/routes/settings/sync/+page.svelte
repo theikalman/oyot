@@ -37,16 +37,36 @@
     let copySuccess = $state(false);
 
     onMount(() => {
-        const un1 = identity.subscribe(v => { localIdentity = v; });
-        const un2 = signalingStatus.subscribe(v => { status = v; });
-        const un4 = pairedDevices.subscribe(v => { paired = v; });
-        const un5 = connectedPeers.subscribe(v => { connected = v; });
-        const un6 = pendingPairRequest.subscribe(v => { pending = v; });
-        const un7 = syncStore.subscribe(s => { signalingUrl = s.signalingUrl; });
-        const un8 = pairingState.subscribe(v => { pairState = v; });
+        const un1 = identity.subscribe((v) => {
+            localIdentity = v;
+        });
+        const un2 = signalingStatus.subscribe((v) => {
+            status = v;
+        });
+        const un4 = pairedDevices.subscribe((v) => {
+            paired = v;
+        });
+        const un5 = connectedPeers.subscribe((v) => {
+            connected = v;
+        });
+        const un6 = pendingPairRequest.subscribe((v) => {
+            pending = v;
+        });
+        const un7 = syncStore.subscribe((s) => {
+            signalingUrl = s.signalingUrl;
+        });
+        const un8 = pairingState.subscribe((v) => {
+            pairState = v;
+        });
 
         return () => {
-            un1(); un2(); un4(); un5(); un6(); un7(); un8();
+            un1();
+            un2();
+            un4();
+            un5();
+            un6();
+            un7();
+            un8();
         };
     });
 
@@ -55,7 +75,7 @@
         try {
             await navigator.clipboard.writeText(localIdentity.node_id);
             copySuccess = true;
-            setTimeout(() => copySuccess = false, 2000);
+            setTimeout(() => (copySuccess = false), 2000);
         } catch (e) {
             console.error('Failed to copy:', e);
         }
@@ -107,17 +127,9 @@
 </script>
 
 <div class="sync-page">
-    <IdentityCard
-        identity={localIdentity}
-        onCopy={copyNodeId}
-        {copySuccess}
-    />
+    <IdentityCard identity={localIdentity} onCopy={copyNodeId} {copySuccess} />
 
-    <SignalingConfig
-        {signalingUrl}
-        {isConnected}
-        onSave={handleSaveSignalingUrl}
-    />
+    <SignalingConfig {signalingUrl} {isConnected} onSave={handleSaveSignalingUrl} />
 
     {#if isConnected}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />

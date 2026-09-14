@@ -73,7 +73,9 @@ export class EditorSaveService {
                 return null;
             }
 
-            console.log(`[EditorSaveService] [${docId}] Saving Yjs state (${snapshot.length} bytes)`);
+            console.log(
+                `[EditorSaveService] [${docId}] Saving Yjs state (${snapshot.length} bytes)`,
+            );
             await documentRepository.saveLocalUpdate(docId, snapshot);
             console.log(`[EditorSaveService] [${docId}] save completed`);
 

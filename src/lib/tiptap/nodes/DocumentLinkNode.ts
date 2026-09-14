@@ -23,7 +23,7 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
 
     addOptions() {
         return {
-            HTMLAttributes: {}
+            HTMLAttributes: {},
         };
     },
 
@@ -31,28 +31,28 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
         return {
             targetId: {
                 default: null,
-                parseHTML: element => element.getAttribute('data-target-id'),
-                renderHTML: attributes => {
+                parseHTML: (element) => element.getAttribute('data-target-id'),
+                renderHTML: (attributes) => {
                     if (!attributes.targetId) return {};
                     return { 'data-target-id': attributes.targetId };
-                }
+                },
             },
             title: {
                 default: null,
-                parseHTML: element => element.getAttribute('data-title'),
-                renderHTML: attributes => {
+                parseHTML: (element) => element.getAttribute('data-title'),
+                renderHTML: (attributes) => {
                     if (!attributes.title) return {};
                     return { 'data-title': attributes.title };
-                }
-            }
+                },
+            },
         };
     },
 
     parseHTML() {
         return [
             {
-                tag: 'span[data-type="document-link"]'
-            }
+                tag: 'span[data-type="document-link"]',
+            },
         ];
     },
 
@@ -61,18 +61,33 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
             'span',
             mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
                 'data-type': 'document-link',
-                class: 'document-link'
+                class: 'document-link',
             }),
             [
                 'span',
                 { class: 'document-link-icon' },
-                ['svg', { xmlns: 'http://www.w3.org/2000/svg', fill: 'none', viewBox: '0 0 24 24', width: '100%', height: '100%' }, ['path', { stroke: '#664FC2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '1.5', d: 'M12.5 2h2.7c1.68 0 2.52 0 3.162.327a3 3 0 0 1 1.311 1.311C20 4.28 20 5.12 20 6.8v10.4c0 1.68 0 2.52-.327 3.162a3 3 0 0 1-1.311 1.311C17.72 22 16.88 22 15.2 22H8.8c-1.68 0-2.52 0-3.162-.327a3 3 0 0 1-1.311-1.311C4 19.72 4 18.88 4 17.2v-.7M16 13h-4.5M16 9h-3.5m3.5 8H8m-2-7V4.5a1.5 1.5 0 1 1 3 0V10a3 3 0 1 1-6 0V6' }]]
+                [
+                    'svg',
+                    {
+                        xmlns: 'http://www.w3.org/2000/svg',
+                        fill: 'none',
+                        viewBox: '0 0 24 24',
+                        width: '100%',
+                        height: '100%',
+                    },
+                    [
+                        'path',
+                        {
+                            stroke: '#664FC2',
+                            'stroke-linecap': 'round',
+                            'stroke-linejoin': 'round',
+                            'stroke-width': '1.5',
+                            d: 'M12.5 2h2.7c1.68 0 2.52 0 3.162.327a3 3 0 0 1 1.311 1.311C20 4.28 20 5.12 20 6.8v10.4c0 1.68 0 2.52-.327 3.162a3 3 0 0 1-1.311 1.311C17.72 22 16.88 22 15.2 22H8.8c-1.68 0-2.52 0-3.162-.327a3 3 0 0 1-1.311-1.311C4 19.72 4 18.88 4 17.2v-.7M16 13h-4.5M16 9h-3.5m3.5 8H8m-2-7V4.5a1.5 1.5 0 1 1 3 0V10a3 3 0 1 1-6 0V6',
+                        },
+                    ],
+                ],
             ],
-            [
-                'span',
-                { class: 'document-link-title' },
-                HTMLAttributes['data-title'] || ''
-            ]
+            ['span', { class: 'document-link-title' }, HTMLAttributes['data-title'] || ''],
         ];
     },
 
@@ -104,26 +119,30 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
                 event.stopPropagation();
                 const targetId = node.attrs.targetId;
                 if (targetId) {
-                    window.dispatchEvent(new CustomEvent('openDocument', {
-                        detail: { id: targetId }
-                    }));
+                    window.dispatchEvent(
+                        new CustomEvent('openDocument', {
+                            detail: { id: targetId },
+                        }),
+                    );
                 }
             });
 
             return {
-                dom
+                dom,
             };
         };
     },
 
     addCommands() {
         return {
-            setDocumentLink: attributes => ({ commands }) => {
-                return commands.insertContent({
-                    type: this.name,
-                    attrs: attributes
-                });
-            }
+            setDocumentLink:
+                (attributes) =>
+                ({ commands }) => {
+                    return commands.insertContent({
+                        type: this.name,
+                        attrs: attributes,
+                    });
+                },
         };
-    }
+    },
 });

@@ -118,7 +118,7 @@
         opacity: 1;
     }
 
-    :global([data-theme="dark"]) .toast {
+    :global([data-theme='dark']) .toast {
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
 </style>

@@ -59,12 +59,16 @@ class CommandRegistry {
     filterCommands(query: string): CommandSuggestion[] {
         const normalizedQuery = query.toLowerCase();
         return this.getAllCommands()
-            .filter(cmd => cmd.id.toLowerCase().includes(normalizedQuery) || cmd.label.toLowerCase().includes(normalizedQuery))
-            .map(cmd => ({
+            .filter(
+                (cmd) =>
+                    cmd.id.toLowerCase().includes(normalizedQuery) ||
+                    cmd.label.toLowerCase().includes(normalizedQuery),
+            )
+            .map((cmd) => ({
                 id: cmd.id,
                 title: cmd.label,
                 icon: cmd.icon,
-                command: cmd
+                command: cmd,
             }));
     }
 

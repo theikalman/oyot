@@ -42,7 +42,9 @@
                 <button
                     class="theme-toggle-btn"
                     onclick={handleThemeToggle}
-                    title={currentTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+                    title={currentTheme === 'light'
+                        ? 'Switch to dark mode'
+                        : 'Switch to light mode'}
                 >
                     {currentTheme === 'light' ? '☾' : '☀'}
                 </button>
@@ -60,8 +62,18 @@
                         {syncSummary} • Manage paired devices and sync options
                     </span>
                 </div>
-                <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M9 18l6-6-6-6"/>
+                <svg
+                    class="chevron"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M9 18l6-6-6-6" />
                 </svg>
             </div>
         </button>

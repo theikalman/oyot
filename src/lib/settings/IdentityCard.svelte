@@ -18,12 +18,14 @@
             QRCode.toDataURL(identity.node_id, {
                 width: 200,
                 margin: 2,
-                color: { dark: '#333333', light: '#ffffff' }
-            }).then(url => {
-                qrImageUrl = url;
-            }).catch(() => {
-                qrImageUrl = null;
-            });
+                color: { dark: '#333333', light: '#ffffff' },
+            })
+                .then((url) => {
+                    qrImageUrl = url;
+                })
+                .catch(() => {
+                    qrImageUrl = null;
+                });
         }
     });
 </script>
@@ -43,7 +45,7 @@
                     <button class="copy-btn" onclick={onCopy}>
                         {copySuccess ? 'Copied!' : 'Copy'}
                     </button>
-                    <button class="qr-toggle-btn" onclick={() => showQrCode = !showQrCode}>
+                    <button class="qr-toggle-btn" onclick={() => (showQrCode = !showQrCode)}>
                         {showQrCode ? 'Hide QR' : 'Show QR'}
                     </button>
                 </div>

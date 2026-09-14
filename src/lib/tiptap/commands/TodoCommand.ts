@@ -17,17 +17,17 @@ export function registerTodoCommand(editor: Editor): void {
                 .insertContent({
                     type: 'taskItem',
                     attrs: {
-                        checked: false
+                        checked: false,
                     },
                     content: [
                         {
                             type: 'paragraph',
-                            content: []
-                        }
-                    ]
+                            content: [],
+                        },
+                    ],
                 })
                 .run();
-        }
+        },
     };
 
     commandRegistry.register(command);

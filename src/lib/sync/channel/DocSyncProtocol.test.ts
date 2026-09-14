@@ -10,13 +10,29 @@ import { contentHashBase64 } from '../hash';
 class FakeRepo {
     docs = new Map<
         string,
-        { docType: string; title: string; titleUpdatedAt: number; createdAt: number; isDeleted: boolean; deletedAt: number | null; ydoc: Y.Doc }
+        {
+            docType: string;
+            title: string;
+            titleUpdatedAt: number;
+            createdAt: number;
+            isDeleted: boolean;
+            deletedAt: number | null;
+            ydoc: Y.Doc;
+        }
     >();
 
     seed(id: string, text: string, titleUpdatedAt = 1): void {
         const ydoc = new Y.Doc();
         ydoc.getText('content').insert(0, text);
-        this.docs.set(id, { docType: 'note', title: id, titleUpdatedAt, createdAt: 1, isDeleted: false, deletedAt: null, ydoc });
+        this.docs.set(id, {
+            docType: 'note',
+            title: id,
+            titleUpdatedAt,
+            createdAt: 1,
+            isDeleted: false,
+            deletedAt: null,
+            ydoc,
+        });
     }
 
     text(id: string): string {
@@ -95,7 +111,11 @@ class FakeRepo {
     attachments = new Map<string, { mime: string; data: string }>();
 
     async listAttachments(): Promise<{ hash: string; mime: string; size: number }[]> {
-        return [...this.attachments].map(([hash, a]) => ({ hash, mime: a.mime, size: a.data.length }));
+        return [...this.attachments].map(([hash, a]) => ({
+            hash,
+            mime: a.mime,
+            size: a.data.length,
+        }));
     }
 
     async hasAttachment(hash: string): Promise<boolean> {
@@ -124,8 +144,16 @@ async function converge(a: FakeRepo, b: FakeRepo): Promise<{ syncedA: boolean; s
     const sinkA: SyncProgressSink = { ...silentSink(), onSynced: () => (syncedA = true) };
     const sinkB: SyncProgressSink = { ...silentSink(), onSynced: () => (syncedB = true) };
 
-    const protoA = new DocSyncProtocol(a as never, (m) => void queue.push({ to: 'b', msg: m }), sinkA);
-    const protoB = new DocSyncProtocol(b as never, (m) => void queue.push({ to: 'a', msg: m }), sinkB);
+    const protoA = new DocSyncProtocol(
+        a as never,
+        (m) => void queue.push({ to: 'b', msg: m }),
+        sinkA,
+    );
+    const protoB = new DocSyncProtocol(
+        b as never,
+        (m) => void queue.push({ to: 'a', msg: m }),
+        sinkB,
+    );
 
     await protoA.start();
     await protoB.start();
@@ -270,8 +298,16 @@ describe('DocSyncProtocol', () => {
         b.docs.get('doc')!.ydoc.getText('content').insert(4, '!');
 
         const queue: Array<{ to: 'a' | 'b'; msg: SyncMessage }> = [];
-        const pa = new DocSyncProtocol(a as never, (m) => void queue.push({ to: 'b', msg: m }), silentSink());
-        const pb = new DocSyncProtocol(b as never, (m) => void queue.push({ to: 'a', msg: m }), silentSink());
+        const pa = new DocSyncProtocol(
+            a as never,
+            (m) => void queue.push({ to: 'b', msg: m }),
+            silentSink(),
+        );
+        const pb = new DocSyncProtocol(
+            b as never,
+            (m) => void queue.push({ to: 'a', msg: m }),
+            silentSink(),
+        );
 
         await pa.start();
         await pb.start();
@@ -300,7 +336,10 @@ describe('DocSyncProtocol', () => {
 
         let deltas = 0;
         const origA = a.computeDelta.bind(a);
-        a.computeDelta = async (id, sv) => { deltas++; return origA(id, sv); };
+        a.computeDelta = async (id, sv) => {
+            deltas++;
+            return origA(id, sv);
+        };
 
         await converge(a, b);
         expect(deltas).toBe(0);
@@ -338,7 +377,10 @@ describe('DocSyncProtocol', () => {
         const sent: SyncMessage[] = [];
         const proto = new DocSyncProtocol(b as never, (m) => void sent.push(m), silentSink());
         await proto.start();
-        await proto.handle({ t: 'attach-manifest', items: [{ hash: 'ghost', mime: 'image/png', size: 1 }] });
+        await proto.handle({
+            t: 'attach-manifest',
+            items: [{ hash: 'ghost', mime: 'image/png', size: 1 }],
+        });
         await proto.handle({ t: 'attach-missing', hash: 'ghost' });
 
         expect(b.attachments.has('ghost')).toBe(false);

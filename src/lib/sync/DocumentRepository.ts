@@ -132,7 +132,11 @@ export class DocumentRepository {
     }
 
     async applyRename(docId: string, title: string, titleUpdatedAt: number): Promise<void> {
-        const changed = await invoke<boolean>('apply_remote_rename', { docId, title, titleUpdatedAt });
+        const changed = await invoke<boolean>('apply_remote_rename', {
+            docId,
+            title,
+            titleUpdatedAt,
+        });
         if (!changed) return;
         const existing = get(appStore).documents.find((d) => d.id === docId);
         if (existing) {
@@ -165,9 +169,12 @@ export class DocumentRepository {
 
     // The bytes for a peer's `attach-need`, or null if we do not have them.
     async readAttachment(hash: string): Promise<{ mime: string; data: string } | null> {
-        const res = await invoke<{ mime_type: string; data: string } | null>('get_attachment_bytes', {
-            hash,
-        });
+        const res = await invoke<{ mime_type: string; data: string } | null>(
+            'get_attachment_bytes',
+            {
+                hash,
+            },
+        );
         return res ? { mime: res.mime_type, data: res.data } : null;
     }
 

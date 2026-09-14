@@ -45,10 +45,13 @@ npm install
 ## Development
 
 Run the development server:
+
 ```bash
 make dev
 ```
+
 Or manually:
+
 ```bash
 npm run tauri dev
 ```
@@ -58,7 +61,9 @@ npm run tauri dev
 ```bash
 make build
 ```
+
 Or manually:
+
 ```bash
 npm run tauri build
 ```
@@ -66,6 +71,7 @@ npm run tauri build
 ## Available Commands
 
 Run `make help` for a list of all available commands:
+
 - `make install` - Install npm dependencies
 - `make dev` - Run development server
 - `make build` - Build the application
@@ -131,6 +137,7 @@ This only needs to be done once per developer machine.
 #### macOS / iOS (Xcode)
 
 Install Xcode from the App Store, then accept the license:
+
 ```bash
 sudo xcodebuild -license accept
 ```
@@ -138,6 +145,7 @@ sudo xcodebuild -license accept
 #### Android SDK
 
 Set these environment variables (add to `~/.zshrc`):
+
 ```bash
 export ANDROID_HOME=$HOME/Android
 export ANDROID_SDK_ROOT=$HOME/Android
@@ -146,16 +154,19 @@ export PATH="$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
 Install the NDK (if not already installed):
+
 ```bash
 sdkmanager "ndk;27.0.12077973"
 ```
 
 Add Android Rust cross-compilation targets:
+
 ```bash
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 ```
 
 Add iOS Rust cross-compilation targets:
+
 ```bash
 rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
 ```
@@ -169,17 +180,19 @@ Go to **GitHub → Settings → Secrets and variables → Actions** and add the 
 #### Android signing
 
 You need a signing keystore. Create one with:
+
 ```bash
 keytool -genkey -v -keystore oyot.jks -alias oyot -keyalg RSA -keysize 2048 -validity 10000
 ```
+
 Keep `oyot.jks` somewhere safe (do **not** commit it).
 
-| Secret | How to get the value |
-|---|---|
-| `ANDROID_SIGNING_KEY` | `base64 -i oyot.jks \| pbcopy` |
-| `KEY_STORE_PASSWORD` | Password you set when creating the keystore |
-| `KEY_ALIAS` | Alias you set (e.g. `oyot`) |
-| `KEY_PASSWORD` | Key password (often the same as store password) |
+| Secret                | How to get the value                            |
+| --------------------- | ----------------------------------------------- |
+| `ANDROID_SIGNING_KEY` | `base64 -i oyot.jks \| pbcopy`                  |
+| `KEY_STORE_PASSWORD`  | Password you set when creating the keystore     |
+| `KEY_ALIAS`           | Alias you set (e.g. `oyot`)                     |
+| `KEY_PASSWORD`        | Key password (often the same as store password) |
 
 #### iOS signing
 
@@ -188,13 +201,13 @@ Keep `oyot.jks` somewhere safe (do **not** commit it).
 3. Download your `.mobileprovision` from [developer.apple.com/account/resources/profiles](https://developer.apple.com/account/resources/profiles).
 4. Find your 10-character **Team ID** at [developer.apple.com/account](https://developer.apple.com/account) (top right).
 
-| Secret | How to get the value |
-|---|---|
-| `APPLE_CERTIFICATE` | `base64 -i certificate.p12 \| pbcopy` |
-| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12` |
+| Secret                       | How to get the value                          |
+| ---------------------------- | --------------------------------------------- |
+| `APPLE_CERTIFICATE`          | `base64 -i certificate.p12 \| pbcopy`         |
+| `APPLE_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12`       |
 | `APPLE_PROVISIONING_PROFILE` | `base64 -i profile.mobileprovision \| pbcopy` |
-| `KEYCHAIN_PASSWORD` | Any strong random string (used only in CI) |
-| `APPLE_DEVELOPMENT_TEAM` | Your 10-character Team ID (e.g. `AB12CD34EF`) |
+| `KEYCHAIN_PASSWORD`          | Any strong random string (used only in CI)    |
+| `APPLE_DEVELOPMENT_TEAM`     | Your 10-character Team ID (e.g. `AB12CD34EF`) |
 
 ---
 
@@ -213,10 +226,10 @@ Output is placed in `dist/` (gitignored - release binaries are not committed).
 
 ### Artifact locations after build
 
-| Platform | Local path | CI artifact |
-|---|---|---|
-| macOS | `dist/mac/*.dmg` | GitHub Release |
-| Windows | `dist/windows/*.msi`, `*.exe` | GitHub Release |
-| Linux | `dist/linux/*.deb`, `*.AppImage` | GitHub Release |
-| Android | `dist/android/*.apk` | GitHub Release |
-| iOS | `dist/ios/*.ipa` | GitHub Release |
+| Platform | Local path                       | CI artifact    |
+| -------- | -------------------------------- | -------------- |
+| macOS    | `dist/mac/*.dmg`                 | GitHub Release |
+| Windows  | `dist/windows/*.msi`, `*.exe`    | GitHub Release |
+| Linux    | `dist/linux/*.deb`, `*.AppImage` | GitHub Release |
+| Android  | `dist/android/*.apk`             | GitHub Release |
+| iOS      | `dist/ios/*.ipa`                 | GitHub Release |

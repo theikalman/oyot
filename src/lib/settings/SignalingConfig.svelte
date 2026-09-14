@@ -25,7 +25,13 @@
 <section class="section">
     <h2>MQTT Broker</h2>
     {#if isEditing}
-        <form class="signaling-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+        <form
+            class="signaling-form"
+            onsubmit={(e) => {
+                e.preventDefault();
+                handleSave();
+            }}
+        >
             <input
                 type="text"
                 placeholder="mqtt://localhost:1883"
@@ -40,7 +46,7 @@
         <div class="signaling-display">
             <div class="url-row">
                 <span class="url">{signalingUrl}</span>
-                <button class="btn-link" onclick={() => isEditing = true}>Edit</button>
+                <button class="btn-link" onclick={() => (isEditing = true)}>Edit</button>
             </div>
             <div class="status-row">
                 <span class="status-dot {isConnected ? 'connected' : 'disconnected'}"></span>
