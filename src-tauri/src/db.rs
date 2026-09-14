@@ -9,6 +9,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
+/// Connection settings applied once at open. None of these were set before, so
+/// the database ran with SQLite's defaults: rollback journalling, and foreign
+/// keys OFF, which meant the `ON DELETE CASCADE` declared on `yjs_updates` and
+/// `yjs_snapshots` had never actually fired.
+pub fn configure_connection(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA foreign_keys = ON;
+         PRAGMA busy_timeout = 5000;",
+    )
+    .map_err(|e| format!("Failed to configure the database connection: {e}"))
+}
+
 pub struct AppState {
     pub db: Arc<parking_lot::Mutex<Connection>>,
     pub snapshot: Arc<DbSnapshot>,
@@ -35,6 +49,7 @@ impl AppState {
 
         let db_path = app_data_dir.join("oyot.db");
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+        configure_connection(&conn)?;
         let db = Arc::new(parking_lot::Mutex::new(conn));
 
         let signaling_manager = Arc::new(SignalingManager::new(Some(app_handle.clone())));
