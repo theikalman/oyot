@@ -365,15 +365,6 @@ impl SignalingManager {
         let _ = app.emit("mqtt-offer-received", payload);
     }
 
-    pub fn disconnect(&self) {
-        trace!("[Signaling] disconnect() called, tearing down MQTT client");
-        if let Some(old) = self.mqtt_client.lock().take() {
-            old.shutdown();
-        }
-        *self.publish_tx.lock() = None;
-        self.authorized_peers.lock().clear();
-    }
-
     async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
         let tx_opt = self.publish_tx.lock().clone();
         match tx_opt {

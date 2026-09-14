@@ -308,7 +308,6 @@ pub fn run() {
             save_pair,
             update_pair_sync_time,
             mqtt_connect,
-            mqtt_disconnect,
             mqtt_publish_pair_request,
             mqtt_accept_pair_request,
             mqtt_decline_pair_request,

@@ -17,13 +17,6 @@ pub async fn mqtt_connect(state: State<'_, AppState>, broker_url: String) -> Res
 }
 
 #[tauri::command]
-pub fn mqtt_disconnect(state: State<'_, AppState>) -> Result<(), String> {
-    trace!("[cmd] mqtt_disconnect");
-    state.signaling_manager.disconnect();
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn mqtt_publish_pair_request(
     state: State<'_, AppState>,
     peer_node_id: String,
