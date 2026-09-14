@@ -106,9 +106,6 @@
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
-    let journalsNewestFirst = $derived(
-        [...journals].sort((a, b) => b.title.localeCompare(a.title)),
-    );
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
@@ -352,41 +349,6 @@
                     {/if}
                 </div>
             {:else}
-                <nav class="sidebar-nav">
-                    <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path d="m7.5 12 3 3 6-6" />
-                            <path
-                                d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
-                            />
-                        </svg>
-                        <span class="nav-label">Todos</span>
-                        {#if openTodoCount > 0}
-                            <span class="nav-count">{openTodoCount}</span>
-                        {/if}
-                    </button>
-                </nav>
-
-                <div class="sidebar-section">
-                    {#if showCalendar}
-                        <JournalCalendar
-                            {journals}
-                            {currentJournalTitle}
-                            {today}
-                            onPick={openJournalFor}
-                        />
-                    {/if}
-                </div>
-
                 <div class="sidebar-section">
                     <h3>
                         Journals ({journals.length})
@@ -417,19 +379,18 @@
                             >
                         </button>
                     </h3>
-                    <!-- Journals were reachable only through the calendar,
-                         which is hidden by default, and could not be renamed
-                         or deleted at all. Newest first: the one you want is
-                         almost always a recent one. -->
-                    <DocumentList
-                        documents={journalsNewestFirst}
-                        {currentDocId}
-                        {openMenuId}
-                        onOpen={handleDocClick}
-                        onToggleMenu={toggleMenu}
-                        onRename={startRename}
-                        onDelete={startDelete}
-                    />
+                    <!-- The calendar, and no list. A journal is named for
+                         its day, so a column of dates is a worse way to
+                         find one than a month grid that marks the days
+                         with something written in them. -->
+                    {#if showCalendar}
+                        <JournalCalendar
+                            {journals}
+                            {currentJournalTitle}
+                            {today}
+                            onPick={openJournalFor}
+                        />
+                    {/if}
                 </div>
 
                 <div class="sidebar-section">
@@ -446,6 +407,31 @@
                         onRename={startRename}
                         onDelete={startDelete}
                     />
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>Index</h3>
+                    <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="m7.5 12 3 3 6-6" />
+                            <path
+                                d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
+                            />
+                        </svg>
+                        <span class="nav-label">Todos</span>
+                        {#if openTodoCount > 0}
+                            <span class="nav-count">{openTodoCount}</span>
+                        {/if}
+                    </button>
                 </div>
             {/if}
 
@@ -778,11 +764,7 @@
         -webkit-box-orient: vertical;
     }
 
-    /* ── Sidebar nav ── */
-    .sidebar-nav {
-        padding: 12px 12px 0;
-    }
-
+    /* ── Index section ── */
     .nav-item {
         display: flex;
         align-items: center;
