@@ -6,12 +6,55 @@
         identity: UserIdentity | null;
         onCopy: () => void;
         copySuccess: boolean;
+        onRename: (displayName: string) => Promise<void>;
     }
 
-    let { identity, onCopy, copySuccess }: Props = $props();
+    let { identity, onCopy, copySuccess, onRename }: Props = $props();
 
     let showQrCode = $state(false);
     let qrImageUrl = $state<string | null>(null);
+
+    // The name a paired device shows for this one. On Android the default is
+    // "Device-a1b2c3d4", because gethostname() there returns "localhost", so
+    // without this the user is stuck with an opaque string forever.
+    let isRenaming = $state(false);
+    let nameInput = $state('');
+    let renameError = $state<string | null>(null);
+
+    function startRename() {
+        nameInput = identity?.display_name ?? '';
+        renameError = null;
+        isRenaming = true;
+    }
+
+    function cancelRename() {
+        isRenaming = false;
+        renameError = null;
+    }
+
+    async function commitRename() {
+        const name = nameInput.trim();
+        if (!name) {
+            renameError = 'Enter a name';
+            return;
+        }
+        if (name === identity?.display_name) {
+            isRenaming = false;
+            return;
+        }
+        try {
+            await onRename(name);
+            isRenaming = false;
+        } catch (e) {
+            renameError = 'Could not save the name';
+            console.error('[IdentityCard] rename failed:', e);
+        }
+    }
+
+    function handleNameKeydown(event: KeyboardEvent) {
+        if (event.key === 'Enter') commitRename();
+        if (event.key === 'Escape') cancelRename();
+    }
 
     $effect(() => {
         if (identity?.node_id && showQrCode) {
@@ -36,8 +79,24 @@
         <div class="identity-card">
             <div class="identity-header">
                 <span class="device-icon">📱</span>
-                <span class="device-name">{identity.display_name}</span>
+                {#if isRenaming}
+                    <input
+                        class="name-input"
+                        bind:value={nameInput}
+                        onkeydown={handleNameKeydown}
+                        placeholder="Device name"
+                        aria-label="Device name"
+                    />
+                    <button class="name-btn" onclick={commitRename}>Save</button>
+                    <button class="name-btn" onclick={cancelRename}>Cancel</button>
+                {:else}
+                    <span class="device-name">{identity.display_name}</span>
+                    <button class="name-btn" onclick={startRename}>Rename</button>
+                {/if}
             </div>
+            {#if renameError}
+                <p class="rename-error">{renameError}</p>
+            {/if}
             <div class="identity-row">
                 <span class="identity-label">Node ID</span>
                 <div class="identity-value-row">
@@ -97,6 +156,34 @@
         font-size: 16px;
         font-weight: 600;
         color: var(--text-primary);
+        flex: 1;
+    }
+    .name-input {
+        flex: 1;
+        padding: 4px 8px;
+        font-size: 15px;
+        color: var(--text-primary);
+        background: var(--bg-primary);
+        border: 1px solid var(--accent-color);
+        border-radius: 4px;
+    }
+    .name-btn {
+        padding: 4px 8px;
+        background: transparent;
+        color: var(--accent-color);
+        border: 1px solid var(--accent-color);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+        flex-shrink: 0;
+    }
+    .name-btn:hover {
+        background: var(--accent-bg);
+    }
+    .rename-error {
+        margin: 8px 0 0 0;
+        font-size: 12px;
+        color: #d9534f;
     }
     .identity-row {
         margin-bottom: 8px;

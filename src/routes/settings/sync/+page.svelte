@@ -94,6 +94,14 @@
         }
     }
 
+    async function handleRename(displayName: string) {
+        await invoke('set_display_name', { displayName });
+        // Re-read rather than patching the store: Rust owns the identity, and
+        // the name is what peers will be told on the next exchange.
+        const updated = await invoke<UserIdentity>('get_identity');
+        syncStore.setIdentity(updated);
+    }
+
     async function handlePair(nodeId: string) {
         await sendPairRequest(nodeId);
     }
@@ -170,7 +178,12 @@
         </div>
     {/if}
 
-    <IdentityCard identity={localIdentity} onCopy={copyNodeId} {copySuccess} />
+    <IdentityCard
+        identity={localIdentity}
+        onCopy={copyNodeId}
+        {copySuccess}
+        onRename={handleRename}
+    />
 
     <SignalingConfig {signalingUrl} {isConnected} onSave={handleSaveSignalingUrl} />
 
