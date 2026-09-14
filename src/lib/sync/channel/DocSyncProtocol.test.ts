@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as Y from 'yjs';
-import { DocSyncProtocol, type SyncProgressSink } from './DocSyncProtocol';
+import { DocSyncProtocol, ATTACH_TIMEOUT_MS, type SyncProgressSink } from './DocSyncProtocol';
 import { bytesToBase64, base64ToBytes, type ManifestEntry, type SyncMessage } from '../protocol';
 import { contentHashBase64 } from '../hash';
 
@@ -495,5 +495,68 @@ describe('DocSyncProtocol', () => {
 
         expect(b.attachments.has('ghost')).toBe(false);
         proto.dispose();
+    });
+
+    // The retry counter used to live in the in-flight map, which the timeout
+    // handler cleared before requeueing. Every read therefore missed and the
+    // count reset to 1, so MAX_ATTACH_ATTEMPTS was unreachable and a silent
+    // peer was polled every 30s for the life of the connection.
+    it('gives up on an attachment after the attempt limit', async () => {
+        vi.useFakeTimers();
+        try {
+            const b = new FakeRepo();
+            const sent: SyncMessage[] = [];
+            const proto = new DocSyncProtocol(b as never, (m) => void sent.push(m), silentSink());
+            await proto.start();
+
+            // A peer that advertises a hash and then never answers attach-need.
+            await proto.handle({
+                t: 'attach-manifest',
+                items: [{ hash: 'ghost', mime: 'image/png', size: 1 }],
+            });
+
+            const needs = () => sent.filter((m) => m.t === 'attach-need').length;
+            expect(needs()).toBe(1);
+
+            // Two timeout windows past the limit: the count must not restart.
+            await vi.advanceTimersByTimeAsync(ATTACH_TIMEOUT_MS + 1);
+            expect(needs()).toBe(2);
+
+            await vi.advanceTimersByTimeAsync(ATTACH_TIMEOUT_MS + 1);
+            await vi.advanceTimersByTimeAsync(ATTACH_TIMEOUT_MS + 1);
+            expect(needs()).toBe(2);
+
+            proto.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('a retried attachment still lands if the peer answers late', async () => {
+        vi.useFakeTimers();
+        try {
+            const b = new FakeRepo();
+            const sent: SyncMessage[] = [];
+            const proto = new DocSyncProtocol(b as never, (m) => void sent.push(m), silentSink());
+            await proto.start();
+
+            await proto.handle({
+                t: 'attach-manifest',
+                items: [{ hash: 'slow', mime: 'image/png', size: 1 }],
+            });
+            await vi.advanceTimersByTimeAsync(ATTACH_TIMEOUT_MS + 1);
+
+            await proto.handle({
+                t: 'attach-data',
+                hash: 'slow',
+                mime: 'image/png',
+                data: 'ZZZZ',
+            });
+
+            expect(b.attachments.get('slow')).toEqual({ mime: 'image/png', data: 'ZZZZ' });
+            proto.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

@@ -24,8 +24,16 @@ interface NeedItem {
 // Attachment transfer runs on its own queue, off the document finish gate: an
 // image can be large and slow, and text sync should not wait on it.
 const MAX_ATTACH_IN_FLIGHT = 2;
-const ATTACH_TIMEOUT_MS = 30_000;
+export const ATTACH_TIMEOUT_MS = 30_000;
 const MAX_ATTACH_ATTEMPTS = 2;
+
+// Carries its own attempt count, the way NeedItem does. Tracking attempts in
+// the in-flight map instead did not work: the timeout handler deletes the entry
+// before requeueing, so the next read always missed and the count reset to 1.
+interface AttachItem {
+    hash: string;
+    attempts: number;
+}
 
 // Runs the two-phase reconciliation (manifest, then delta) for ONE data channel,
 // plus the steady-state live-message fast path. Pure logic: it talks to a
@@ -43,8 +51,8 @@ export class DocSyncProtocol {
     private total = 0;
     private settled = 0;
 
-    private attachQueue: string[] = [];
-    private attachInFlight = new Map<string, number>(); // hash -> attempts
+    private attachQueue: AttachItem[] = [];
+    private attachInFlight = new Map<string, AttachItem>();
     private attachTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     constructor(
@@ -137,51 +145,53 @@ export class DocSyncProtocol {
 
     private async onAttachManifest(hashes: string[]): Promise<void> {
         for (const hash of hashes) {
-            if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) continue;
+            if (this.isAttachTracked(hash)) continue;
             try {
                 if (await this.repo.hasAttachment(hash)) continue;
             } catch (e) {
                 console.error(`[sync] hasAttachment(${hash}) failed:`, e);
                 continue;
             }
-            this.attachQueue.push(hash);
+            this.attachQueue.push({ hash, attempts: 0 });
         }
         this.attachPump();
     }
 
+    private isAttachTracked(hash: string): boolean {
+        return this.attachInFlight.has(hash) || this.attachQueue.some((q) => q.hash === hash);
+    }
+
     // Pull one attachment now (steady-state: a freshly inserted image).
     requestAttachment(hash: string): void {
-        if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) return;
-        this.attachQueue.push(hash);
+        if (this.isAttachTracked(hash)) return;
+        this.attachQueue.push({ hash, attempts: 0 });
         this.attachPump();
     }
 
     private attachPump(): void {
         while (this.attachInFlight.size < MAX_ATTACH_IN_FLIGHT && this.attachQueue.length > 0) {
-            const hash = this.attachQueue.shift()!;
-            const attempts = (this.attachInFlight.get(hash) ?? 0) + 1;
-            this.attachInFlight.set(hash, attempts);
-            this.send({ t: 'attach-need', hash });
-            this.armAttachTimeout(hash);
+            const item = this.attachQueue.shift()!;
+            item.attempts++;
+            this.attachInFlight.set(item.hash, item);
+            this.send({ t: 'attach-need', hash: item.hash });
+            this.armAttachTimeout(item);
         }
     }
 
-    private armAttachTimeout(hash: string): void {
-        const existing = this.attachTimers.get(hash);
+    private armAttachTimeout(item: AttachItem): void {
+        const existing = this.attachTimers.get(item.hash);
         if (existing) clearTimeout(existing);
         this.attachTimers.set(
-            hash,
+            item.hash,
             setTimeout(() => {
-                this.attachTimers.delete(hash);
-                const attempts = this.attachInFlight.get(hash);
-                if (attempts === undefined) return;
-                this.attachInFlight.delete(hash);
-                if (attempts < MAX_ATTACH_ATTEMPTS) {
-                    this.attachQueue.push(hash);
+                this.attachTimers.delete(item.hash);
+                if (!this.attachInFlight.delete(item.hash)) return;
+                if (item.attempts < MAX_ATTACH_ATTEMPTS) {
+                    this.attachQueue.push(item);
                     this.attachPump();
                 } else {
                     console.warn(
-                        `[sync] gave up pulling attachment ${hash} after ${attempts} attempts`,
+                        `[sync] gave up pulling attachment ${item.hash} after ${item.attempts} attempts`,
                     );
                 }
             }, ATTACH_TIMEOUT_MS),
