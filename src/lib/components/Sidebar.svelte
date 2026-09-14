@@ -472,8 +472,8 @@
                 stroke="currentColor"
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M3 12h18M3 6h18M3 18h12"
+                stroke-width="2"
+                d="m13 17 5-5-5-5M6 17l5-5-5-5"
             /></svg
         >
     </button>
