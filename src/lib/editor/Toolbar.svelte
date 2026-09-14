@@ -91,11 +91,30 @@
 <style>
     .toolbar {
         display: flex;
+        align-items: center;
         padding: 8px 16px;
         background: var(--bg-secondary);
         border-bottom: 1px solid var(--border-color);
         gap: 4px;
-        flex-wrap: wrap;
+        /* Keep every control on a single row and scroll sideways when the
+           screen is too narrow (mobile / tablet) instead of wrapping. */
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+        /* A swipe that starts on a button pans the row rather than starting a
+           text selection on the button's label. */
+        -webkit-user-select: none;
+        user-select: none;
+        /* Hide the scrollbar so it never adds height to the toolbar row. */
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
+    .toolbar::-webkit-scrollbar {
+        display: none;
     }
 
     .toolbar button {
@@ -107,6 +126,8 @@
         font-size: 14px;
         min-width: 32px;
         color: var(--text-primary);
+        flex: 0 0 auto;
+        white-space: nowrap;
     }
 
     .toolbar button:hover {
@@ -114,7 +135,9 @@
     }
 
     .separator {
-        width: 1px;
+        flex: 0 0 1px;
+        align-self: stretch;
+        min-height: 20px;
         background: var(--border-light);
         margin: 0 4px;
     }
