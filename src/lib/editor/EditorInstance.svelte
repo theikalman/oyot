@@ -4,25 +4,16 @@
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
-    import StarterKit from '@tiptap/starter-kit';
     import Placeholder from '@tiptap/extension-placeholder';
-    import TaskList from '@tiptap/extension-task-list';
-    import TaskItem from '@tiptap/extension-task-item';
-    import { Table } from '@tiptap/extension-table';
-    import TableRow from '@tiptap/extension-table-row';
-    import TableCell from '@tiptap/extension-table-cell';
-    import TableHeader from '@tiptap/extension-table-header';
-    import Typography from '@tiptap/extension-typography';
     import { Extension } from '@tiptap/core';
     import { SlashCommand } from '$lib/tiptap/SlashCommand';
-    import { DocumentLinkNode } from '$lib/tiptap/nodes/DocumentLinkNode';
+    import { createContentExtensions } from './extensions';
     import {
         registerDocumentLinkCommand,
         registerDateCommand,
         registerTodoCommand,
         registerImageCommand,
     } from '$lib/tiptap';
-    import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
     import { createInitialContent, createCollaborationExtension } from './yjs';
     import { REMOTE_ORIGIN } from './origin';
@@ -109,30 +100,17 @@
         const ed = new Editor({
             element,
             extensions: [
-                StarterKit.configure({
-                    undoRedo: false,
-                }),
+                // The schema, shared with the sync layer so a document merged
+                // from a peer is read the same way this editor renders it.
+                ...createContentExtensions(),
+                // Interaction, which only a live editor has any use for.
+                // Collaboration declares priority 1000, so it leads the plugin
+                // order wherever it sits in this list.
                 collabExt,
-                ResizableImage.configure({
-                    inline: false,
-                    allowBase64: true,
-                }),
                 ImageExtension,
                 Placeholder.configure({
                     placeholder: 'Start writing...',
                 }),
-                TaskList,
-                TaskItem.configure({
-                    nested: true,
-                }),
-                Table.configure({
-                    resizable: true,
-                }),
-                TableRow,
-                TableHeader,
-                TableCell,
-                Typography,
-                DocumentLinkNode,
                 SlashCommand,
                 ScrollOnFocus,
             ],

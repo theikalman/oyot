@@ -17,6 +17,36 @@ import {
     type ManifestEntry,
 } from './protocol';
 
+// Reading an index out of a merged document needs the editor's schema, and
+// that module imports back through to this one. A static import would make the
+// two circular at load time; a deferred one resolves after both are built.
+// Cached, including the failure, so a broken load is not retried per document.
+type RemoteIndexer = (ydoc: Y.Doc) => DocumentIndex;
+let indexerLoad: Promise<RemoteIndexer | null> | null = null;
+
+function loadRemoteIndexer(): Promise<RemoteIndexer | null> {
+    indexerLoad ??= import('../editor/headlessIndex')
+        .then((m) => m.indexFromYDoc)
+        .catch((e) => {
+            console.warn('[sync] no remote indexer available, documents will index on open:', e);
+            return null;
+        });
+    return indexerLoad;
+}
+
+// Never let indexing cost us the merge. A document whose schema this build
+// does not recognise still has to be stored; it just goes unindexed until
+// someone opens it.
+function readIndex(indexer: RemoteIndexer | null, ydoc: Y.Doc): DocumentIndex | null {
+    if (!indexer) return null;
+    try {
+        return indexer(ydoc);
+    } catch (e) {
+        console.warn('[sync] could not index a merged document:', e);
+        return null;
+    }
+}
+
 // Rust `DocSyncEntry` shape (snake_case, hash as a byte array).
 interface RawSyncEntry {
     id: string;
@@ -127,18 +157,25 @@ export class DocumentRepository {
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
         const updateBytes = base64ToBytes(updateB64);
         return this.write(docId, async () => {
+            // Resolved before the document is touched, so the merge below
+            // stays synchronous from lookup to encode.
+            const indexer = await loadRemoteIndexer();
+
             const live = getOpenDoc(docId);
             let merged: Uint8Array;
+            let index: DocumentIndex | null;
             if (live) {
                 // No await between the lookup and the encode: both calls are
                 // synchronous, so the editor cannot swap the document out from
                 // under this merge.
                 Y.applyUpdate(live, updateBytes, REMOTE_ORIGIN);
                 merged = Y.encodeStateAsUpdate(live);
+                index = readIndex(indexer, live);
             } else {
                 const current = await this.loadDoc(docId);
                 Y.applyUpdate(current, updateBytes);
                 merged = Y.encodeStateAsUpdate(current);
+                index = readIndex(indexer, current);
                 current.destroy();
             }
             const hash = await contentHash(merged);
@@ -148,7 +185,7 @@ export class DocumentRepository {
                 mergedState: bytesToBase64(merged),
                 contentHash: bytesToBase64(hash),
                 origin: 'remote',
-                index: null,
+                index,
             });
             appStore.markDocumentHasContent(docId);
         });
@@ -158,9 +195,9 @@ export class DocumentRepository {
     // sync-received event: the editor that produced this already has it.
     //
     // `index` is what the editor extracted from the rendered document (text,
-    // links, todo counts). Only this path has it: the sync path merges a peer's
-    // update without ever rendering it, so it passes none and the derived rows
-    // are left for whenever that document is next opened and saved.
+    // links, todo counts). The sync path derives the same thing for itself by
+    // rendering the merged document headlessly, so both paths keep the derived
+    // rows current.
     async saveLocalUpdate(
         docId: string,
         mergedState: Uint8Array,

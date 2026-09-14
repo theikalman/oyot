@@ -23,6 +23,19 @@ vi.mock('@tauri-apps/api/core', () => ({
 const { DocumentRepository } = await import('./DocumentRepository');
 const { getOpenDoc, registerOpenDoc, unregisterOpenDoc } = await import('../editor/openDocs');
 const { bytesToBase64, base64ToBytes } = await import('./protocol');
+const { getSchema } = await import('@tiptap/core');
+const { prosemirrorJSONToYDoc } = await import('@tiptap/y-tiptap');
+const { createContentExtensions } = await import('../editor/extensions');
+
+// A Y.Doc holding a real ProseMirror document, the way one authored in the
+// editor on another device arrives here.
+function authored(text: string): Y.Doc {
+    return prosemirrorJSONToYDoc(
+        getSchema(createContentExtensions()),
+        { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] },
+        'content',
+    );
+}
 
 function docWith(text: string): Y.Doc {
     const doc = new Y.Doc();
@@ -160,6 +173,31 @@ describe('DocumentRepository', () => {
         await Promise.all([merge, save]);
 
         expect(textOfB64(storedState)).toBe('typed and synced');
+        unregisterOpenDoc('doc', live);
+    });
+
+    // Before this, a document that arrived from a peer was written with no
+    // index: invisible to search, contributing no backlinks and counted as
+    // having no tasks, until someone happened to open and edit it here.
+    it('indexes a document it merged but never displayed', async () => {
+        const repo = new DocumentRepository();
+        const delta = bytesToBase64(Y.encodeStateAsUpdate(authored('shopping list')));
+
+        await repo.mergeDelta('doc', delta);
+
+        const saved = calls.find((c) => c.cmd === 'save_yjs_update');
+        expect((saved?.args.index as { text: string } | null)?.text).toBe('shopping list');
+    });
+
+    it('indexes a merge into the open document too', async () => {
+        const repo = new DocumentRepository();
+        const live = new Y.Doc();
+        registerOpenDoc('doc', live);
+
+        await repo.mergeDelta('doc', bytesToBase64(Y.encodeStateAsUpdate(authored('from a peer'))));
+
+        const saved = calls.find((c) => c.cmd === 'save_yjs_update');
+        expect((saved?.args.index as { text: string } | null)?.text).toBe('from a peer');
         unregisterOpenDoc('doc', live);
     });
 
