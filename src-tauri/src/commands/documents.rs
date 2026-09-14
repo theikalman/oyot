@@ -516,8 +516,9 @@ pub struct SearchHit {
     pub id: String,
     pub doc_type: String,
     pub title: String,
-    /// A fragment of the body around the match, with the matched terms marked
-    /// by [ and ]. Empty when the match was in the title only.
+    /// A fragment of the body around the match, with the matched terms
+    /// wrapped in the control characters the frontend splits on. Empty when
+    /// the match was in the title only.
     pub snippet: String,
 }
 
@@ -527,20 +528,21 @@ pub struct SearchHit {
 /// the user had actually written. Bodies are indexed at save time (see
 /// `indexer`), because document content lives in the CRDT and is not otherwise
 /// queryable.
-#[tauri::command]
-pub fn search_documents(
-    state: tauri::State<'_, AppState>,
-    query: String,
-) -> Result<Vec<SearchHit>, String> {
-    let Some(match_query) = indexer::to_fts_query(&query) else {
+pub fn run_search(db: &Connection, query: &str) -> Result<Vec<SearchHit>, String> {
+    let Some(match_query) = indexer::to_fts_query(query) else {
         return Ok(Vec::new());
     };
 
-    let db = state.db.lock();
+    // The match markers are ASCII start-of-text and end-of-text. A note cannot
+    // contain them by any ordinary means, so they cannot be confused with the
+    // text itself, and the frontend splits on them to render the highlight as
+    // an element. The previous `[` and `]` were rendered verbatim, so every
+    // result showed literal brackets and no highlight.
+    // Kept in step with src/lib/search/snippet.ts.
     let mut stmt = db
         .prepare(
             "SELECT d.id, d.type, d.title,
-                    snippet(document_search, 2, '[', ']', '…', 12) AS snippet
+                    snippet(document_search, 2, char(2), char(3), '…', 12) AS snippet
                FROM document_search
                JOIN documents d ON d.id = document_search.document_id
               WHERE document_search MATCH ?1
@@ -564,6 +566,15 @@ pub fn search_documents(
         .collect();
 
     Ok(results)
+}
+
+#[tauri::command]
+pub fn search_documents(
+    state: tauri::State<'_, AppState>,
+    query: String,
+) -> Result<Vec<SearchHit>, String> {
+    let db = state.db.lock();
+    run_search(&db, &query)
 }
 
 /// Documents that link to `doc_id`.
@@ -854,6 +865,71 @@ mod tests {
         let db = db();
         tombstone_document(&db, "d1", 900).unwrap();
         assert!(query_all_documents(&db).unwrap().documents.is_empty());
+    }
+
+    // `char(2)` and `char(3)` have to be something SQLite's snippet() accepts
+    // as markers, and the result has to come back with them in place, or the
+    // frontend has nothing to split on and shows an unhighlighted fragment.
+    #[test]
+    fn a_search_hit_marks_the_matched_text() {
+        let db = db();
+        crate::indexer::update_document_index(
+            &db,
+            "d1",
+            "One",
+            &crate::indexer::DocumentIndexInput {
+                text: "the quarterly meeting notes".into(),
+                link_targets: vec![],
+                todo_count: 0,
+                completed_todo_count: 0,
+            },
+        )
+        .unwrap();
+
+        let hits = run_search(&db, "meeting").unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert!(
+            hits[0].snippet.contains('\u{2}') && hits[0].snippet.contains('\u{3}'),
+            "expected marked text, got {:?}",
+            hits[0].snippet
+        );
+        // The markers wrap the matched word and nothing else.
+        let marked: String = hits[0]
+            .snippet
+            .split('\u{2}')
+            .nth(1)
+            .and_then(|rest| rest.split('\u{3}').next())
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(marked, "meeting");
+    }
+
+    #[test]
+    fn a_search_for_nothing_returns_nothing() {
+        let db = db();
+        assert!(run_search(&db, "   ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_document_is_not_a_search_hit() {
+        let db = db();
+        crate::indexer::update_document_index(
+            &db,
+            "d1",
+            "One",
+            &crate::indexer::DocumentIndexInput {
+                text: "findable".into(),
+                link_targets: vec![],
+                todo_count: 0,
+                completed_todo_count: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(run_search(&db, "findable").unwrap().len(), 1);
+
+        tombstone_document(&db, "d1", 900).unwrap();
+        assert!(run_search(&db, "findable").unwrap().is_empty());
     }
 
     fn tombstone_entry(id: &str) -> EnsureDocumentRequest {

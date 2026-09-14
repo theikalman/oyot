@@ -18,6 +18,7 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
+    import { snippetParts } from '../search/snippet';
     import AboutDialog from './AboutDialog.svelte';
     import { APP_VERSION } from '../version';
 
@@ -69,6 +70,9 @@
     let searchFailed = $state(false);
     let searchTimer: ReturnType<typeof setTimeout> | null = null;
     let searchSeq = 0;
+    // Which hit the arrow keys have moved to. Reset whenever the results
+    // change, so Enter never opens a document the user cannot see highlighted.
+    let selectedHit = $state(0);
 
     let isSearchActive = $derived(searchInput.trim().length > 0);
 
@@ -80,6 +84,7 @@
             if (seq !== searchSeq) return;
             searchResults = hits;
             searchFailed = false;
+            selectedHit = 0;
         } catch (err) {
             if (seq !== searchSeq) return;
             console.error('[Sidebar] Search failed:', err);
@@ -104,7 +109,40 @@
 
         isSearching = true;
         searchTimer = setTimeout(() => void runSearch(query), 150);
+
+        // Without this the pending timer outlives the component: navigating
+        // to settings mid-keystroke fired a search that then wrote its result
+        // into state nothing is rendering any more.
+        return () => {
+            if (searchTimer) {
+                clearTimeout(searchTimer);
+                searchTimer = null;
+            }
+        };
     });
+
+    // Arrow keys move through the results and Enter opens one, so a search
+    // can be completed without leaving the keyboard. Escape clears the box,
+    // which is also how you get back to the document list.
+    function handleSearchKeydown(event: KeyboardEvent) {
+        if (event.key === 'Escape') {
+            searchInput = '';
+            return;
+        }
+        if (searchResults.length === 0) return;
+
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            selectedHit = (selectedHit + 1) % searchResults.length;
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            selectedHit = (selectedHit - 1 + searchResults.length) % searchResults.length;
+        } else if (event.key === 'Enter') {
+            event.preventDefault();
+            const hit = searchResults[selectedHit];
+            if (hit) openSearchHit(hit);
+        }
+    }
 
     function openSearchHit(hit: SearchHit) {
         invoke<Document>('get_document', { docId: hit.id })
@@ -339,7 +377,9 @@
                 type="text"
                 placeholder="Search documents..."
                 bind:value={searchInput}
+                onkeydown={handleSearchKeydown}
                 class="search-input"
+                aria-label="Search documents"
             />
         {/if}
     </div>
@@ -359,11 +399,12 @@
                         <p class="search-note">Nothing matches "{searchInput.trim()}"</p>
                     {:else}
                         <ul class="doc-list">
-                            {#each searchResults as hit (hit.id)}
+                            {#each searchResults as hit, i (hit.id)}
                                 <li class="doc-item">
                                     <button
                                         class="search-hit"
                                         class:current={currentDocId === hit.id}
+                                        class:selected={i === selectedHit}
                                         onclick={() => openSearchHit(hit)}
                                     >
                                         <span class="search-hit-title">
@@ -373,7 +414,11 @@
                                             {/if}
                                         </span>
                                         {#if hit.snippet}
-                                            <span class="search-hit-snippet">{hit.snippet}</span>
+                                            <span class="search-hit-snippet">
+                                                {#each snippetParts(hit.snippet) as part, pi (pi)}{#if part.match}<mark
+                                                            >{part.text}</mark
+                                                        >{:else}{part.text}{/if}{/each}
+                                            </span>
                                         {/if}
                                     </button>
                                 </li>
@@ -948,6 +993,17 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: var(--text-muted);
+    }
+    .search-hit.selected {
+        background: var(--bg-hover);
+        outline: 2px solid var(--accent-color);
+        outline-offset: -2px;
+    }
+    .search-hit-snippet :global(mark) {
+        background: var(--accent-bg-hover);
+        color: var(--text-primary);
+        border-radius: 2px;
+        padding: 0 1px;
     }
     .search-hit-snippet {
         font-size: 11px;
