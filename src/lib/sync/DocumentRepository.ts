@@ -91,8 +91,8 @@ export class DocumentRepository {
     // --- writes ----------------------------------------------------------
 
     // Merge an inbound update (delta or live edit) into local storage,
-    // regardless of whether the doc is open. Reuses save_yjs_update so it emits
-    // the 'sync-received' event the editor listens for.
+    // regardless of whether the doc is open. The 'remote' origin is what makes
+    // Rust emit 'sync-received', so an open editor picks the change up.
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
         const updateBytes = base64ToBytes(updateB64);
         const current = await this.loadDoc(docId);
@@ -104,11 +104,13 @@ export class DocumentRepository {
             update: Array.from(updateBytes),
             mergedState: Array.from(merged),
             contentHash: Array.from(hash),
+            origin: 'remote',
         });
         appStore.markDocumentHasContent(docId);
     }
 
-    // Persist a locally-made update (editor save path).
+    // Persist a locally-made update (editor save path). 'local' suppresses the
+    // sync-received event: the editor that produced this already has it.
     async saveLocalUpdate(docId: string, mergedState: Uint8Array): Promise<void> {
         const hash = await contentHash(mergedState);
         await invoke('save_yjs_update', {
@@ -116,6 +118,7 @@ export class DocumentRepository {
             update: Array.from(mergedState),
             mergedState: Array.from(mergedState),
             contentHash: Array.from(hash),
+            origin: 'local',
         });
     }
 

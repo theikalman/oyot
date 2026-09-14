@@ -36,6 +36,17 @@ pub fn get_yjs_state(
     })
 }
 
+/// Where a Yjs update came from, which decides whether the editor is told to
+/// reload the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateOrigin {
+    /// The editor's own save. It already has this content in its ydoc.
+    Local,
+    /// Merged from a peer. An open editor has to be told.
+    Remote,
+}
+
 #[tauri::command]
 pub async fn save_yjs_update(
     state: tauri::State<'_, AppState>,
@@ -43,6 +54,7 @@ pub async fn save_yjs_update(
     update: Vec<u8>,
     merged_state: Vec<u8>,
     content_hash: Option<Vec<u8>>,
+    origin: UpdateOrigin,
 ) -> Result<(), String> {
     eprintln!(
         "[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes",
@@ -81,13 +93,16 @@ pub async fn save_yjs_update(
 
     let _ = db_snapshot.check_and_consolidate(&doc_id, &merged_state);
 
-    eprintln!(
-        "[cmd] save_yjs_update doc_id={} emitting sync-received (local echo)",
-        doc_id
-    );
-    let _ = state
-        .app_handle
-        .emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
+    // Only a peer's update needs to reach an open editor. This used to fire on
+    // every save, including the editor's own: the editor listened, saw its own
+    // document id, and pulled the entire document back over IPC to apply state
+    // it had just produced. Idempotent in Yjs terms, and pure waste that grew
+    // with document size.
+    if origin == UpdateOrigin::Remote {
+        let _ = state
+            .app_handle
+            .emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
+    }
 
     Ok(())
 }
