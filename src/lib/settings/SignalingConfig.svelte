@@ -7,12 +7,24 @@
 
     let { signalingUrl, isConnected, onSave }: Props = $props();
 
-    let inputUrl = $state(signalingUrl ?? '');
-    let isEditing = $state(!signalingUrl);
+    // Seeded from the prop, then owned by the field. The effect used to assign
+    // both of these on every run, so any store update -- a reconnect, a status
+    // change -- wiped whatever was half-typed in the box.
+    let inputUrl = $state('');
+    let isEditing = $state(false);
+
+    // Deliberately not $state: the effect must not re-run when this is written,
+    // and it must not treat `isEditing` as a dependency either.
+    let lastSeenUrl: string | null | undefined;
 
     $effect(() => {
-        inputUrl = signalingUrl ?? '';
-        isEditing = !signalingUrl;
+        const incoming = signalingUrl;
+        if (incoming === lastSeenUrl) return;
+        lastSeenUrl = incoming;
+        inputUrl = incoming ?? '';
+        // With no broker configured there is nothing to display, so open
+        // straight into the form.
+        isEditing = !incoming;
     });
 
     function handleSave() {
