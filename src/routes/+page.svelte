@@ -6,7 +6,7 @@
     import { get } from 'svelte/store';
     import { ensureTodayJournal } from '$lib/services/documentActions';
     import { toasts } from '$lib/services/toast';
-    import { loadAllDocuments } from '$lib/services/documents';
+    import { startApp } from '$lib/services/startup';
 
     // The entry point, not a page. It works out which document to open and
     // hands over to /doc/[id], replacing itself in history so the back button
@@ -14,6 +14,11 @@
     let failed = $state(false);
 
     onMount(async () => {
+        // The document list has to be loaded before this. Creating today's
+        // journal adds it to that list, and a load finishing afterwards would
+        // replace the list and drop it again.
+        await startApp();
+
         try {
             const doc = await ensureTodayJournal();
             await goto(resolve('/doc/[id]', { id: doc.id }), { replaceState: true });
@@ -24,16 +29,10 @@
             toasts.error("Could not open today's journal");
         }
 
-        try {
-            const listed =
-                get(documents).length > 0 ? get(documents) : (await loadAllDocuments()).documents;
-            const fallback = listed[0];
-            if (fallback) {
-                await goto(resolve('/doc/[id]', { id: fallback.id }), { replaceState: true });
-                return;
-            }
-        } catch (error) {
-            console.error('Failed to find a document to open:', error);
+        const fallback = get(documents)[0];
+        if (fallback) {
+            await goto(resolve('/doc/[id]', { id: fallback.id }), { replaceState: true });
+            return;
         }
         failed = true;
     });

@@ -6,44 +6,22 @@
     import type { Snippet } from 'svelte';
     import { initSync, shutdownSync } from '$lib/sync';
     import { appStore } from '$lib/stores/app';
-    import { initializeTheme, applyTheme } from '$lib/services/theme';
-    import { loadAllDocuments, reindexAndCollect } from '$lib/services/documents';
+    import { applyTheme } from '$lib/services/theme';
+    import { startApp } from '$lib/services/startup';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import '../app.css';
 
     let { children }: { children: Snippet } = $props();
 
-    // Owned here, not by a page. The layout is the only thing that stays
-    // mounted for the app's lifetime, so this runs once: when it lived on the
-    // workspace page, every trip to settings and back tore the page down and
-    // re-ran the whole of it, which reloaded the document list, re-announced
-    // today's journal to every peer, flashed the loading overlay, and put the
-    // user back on the journal instead of the note they were reading.
-    async function initialise() {
-        appStore.setLoading(true);
-        try {
-            const indexData = await loadAllDocuments();
-            appStore.setDocuments(indexData.documents);
-        } catch (error) {
-            // loadAllDocuments already reports its own failure to the user.
-            console.error('Failed to load documents:', error);
-        } finally {
-            appStore.setLoading(false);
-        }
-
-        // Off the critical path: builds any missing search index, then
-        // collects the images nothing references any more.
-        await reindexAndCollect();
-    }
-
-    onMount(async () => {
+    // Started here, not on a page. The layout is the only thing mounted for
+    // the app's lifetime: when startup lived on the workspace page, every trip
+    // to settings and back tore that page down and re-ran all of it, which
+    // reloaded the document list, re-announced today's journal to every peer,
+    // flashed the loading overlay, and put the user back on the journal
+    // instead of the note they had been reading.
+    onMount(() => {
         initSync();
-        try {
-            appStore.setTheme(await initializeTheme());
-        } catch (error) {
-            console.error('Failed to load theme:', error);
-        }
-        await initialise();
+        void startApp();
     });
 
     onDestroy(() => {
