@@ -21,7 +21,15 @@
     let searchInput = $state('');
     let showModal = $state(false);
     let newDocTitle = $state('');
-    let collapsed = $state(false);
+    // Tablets and phones start with the sidebar hidden so the editor gets the full
+    // width; the floating toggle button is still there to bring it back.
+    const SMALL_SCREEN_QUERY = '(max-width: 768px)';
+
+    function isSmallScreen(): boolean {
+        return typeof window !== 'undefined' && window.matchMedia(SMALL_SCREEN_QUERY).matches;
+    }
+
+    let collapsed = $state(isSmallScreen());
     let showCalendar = $state(false);
 
     let currentDate = $state(new Date());
