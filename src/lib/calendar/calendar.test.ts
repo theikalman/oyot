@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     addMonths,
     formatJournalTitle,
+    journalDateOf,
     isSameDay,
     journalTitleFor,
     journalTitleForDay,
@@ -119,5 +120,32 @@ describe('formatJournalTitle', () => {
     // render this as "3 Mar 2026" and claim a day the title never named.
     it('leaves an impossible date alone', () => {
         expect(formatJournalTitle('2026-02-31', today)).toBe('2026-02-31');
+    });
+});
+
+describe('journalDateOf', () => {
+    it('reads the day a title names', () => {
+        const date = journalDateOf('2026-09-14')!;
+        expect([date.getFullYear(), date.getMonth(), date.getDate()]).toEqual([2026, 8, 14]);
+    });
+
+    // The calendar moves to the month of whatever journal is open, so a title
+    // it cannot read has to be nothing rather than a guess.
+    it('has no day for a title that is not a date', () => {
+        expect(journalDateOf('Groceries')).toBeNull();
+        expect(journalDateOf('2026-9-1')).toBeNull();
+        expect(journalDateOf('')).toBeNull();
+    });
+
+    // `new Date(2026, 1, 31)` is the 3rd of March, which would send the
+    // calendar to a month the title never named.
+    it('has no day for a date that does not exist', () => {
+        expect(journalDateOf('2026-02-31')).toBeNull();
+    });
+
+    it('round-trips with journalTitleFor', () => {
+        for (const title of ['2026-01-01', '2026-02-28', '2024-02-29', '2026-12-31']) {
+            expect(journalTitleFor(journalDateOf(title)!)).toBe(title);
+        }
     });
 });

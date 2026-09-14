@@ -77,6 +77,25 @@ export function isSameDay(monthOf: Date, day: number | null, today: Date): boole
 }
 
 /**
+ * The day a journal's title names, or null if it does not name one.
+ *
+ * The inverse of `journalTitleFor`, and the only thing that can turn the
+ * stored `YYYY-MM-DD` back into a date: a journal's day is in its title and
+ * nowhere else.
+ */
+export function journalDateOf(title: string): Date | null {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(title);
+    if (!match) return null;
+
+    const [, year, month, day] = match;
+    const date = new Date(Number(year), Number(month) - 1, Number(day));
+    // Round-tripped rather than range-checked: `new Date(2026, 1, 31)` is
+    // happy to mean the 3rd of March, and reading that back as "31 Feb" would
+    // name a day the title never did.
+    return journalTitleFor(date) === title ? date : null;
+}
+
+/**
  * A journal's title as a person reads it: "Today", "Yesterday", or
  * "14 Sep 2026".
  *
@@ -93,14 +112,8 @@ export function isSameDay(monthOf: Date, day: number | null, today: Date): boole
  * row that slipped through should still be readable.
  */
 export function formatJournalTitle(title: string, today: Date): string {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(title);
-    if (!match) return title;
-
-    const [, year, month, day] = match;
-    const date = new Date(Number(year), Number(month) - 1, Number(day));
-    // Round-tripped rather than range-checked: `new Date(2026, 1, 31)` is
-    // happy to mean the 3rd of March, and calling that "31 Feb" would be a lie.
-    if (journalTitleFor(date) !== title) return title;
+    const date = journalDateOf(title);
+    if (!date) return title;
 
     if (title === journalTitleFor(today)) return 'Today';
     const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
