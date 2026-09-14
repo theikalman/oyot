@@ -495,6 +495,11 @@ This also clears the two outstanding `svelte-check` warnings at lines 10 and 11.
 
 ## Phase 3 - Quick security and durability wins
 
+> **Status: done,** with two deviations. 3.1 could not simply scope `fs`,
+> because image insert read an arbitrary picked path; the read moved into Rust
+> instead and the fs plugin was removed outright. 3.4 omits `panic = "abort"`
+> after measuring it: see the note in `src-tauri/Cargo.toml`.
+
 Small, independent, high value. Batch them into one change.
 
 ### 3.1 Scope the filesystem capabilities
