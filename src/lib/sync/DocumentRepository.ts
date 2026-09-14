@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import type { Document, DocumentSummary } from '../types';
 import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
+import { bumpIndexRevision } from '../stores/derivedIndex';
 import { getOpenDoc, registerOpenDoc } from '../editor/openDocs';
 import { REMOTE_ORIGIN } from '../editor/origin';
 import { contentHash } from './hash';
@@ -190,6 +191,9 @@ export class DocumentRepository {
             appStore.markDocumentHasContent(docId);
             if (index) {
                 appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
+                // A peer's edit is the one change nothing on this device asked
+                // for, so anything reading derived rows has to be told.
+                bumpIndexRevision();
             }
         });
     }
@@ -226,6 +230,7 @@ export class DocumentRepository {
                 origin: 'local',
                 index: index ?? null,
             });
+            if (index) bumpIndexRevision();
         });
     }
 
@@ -273,6 +278,9 @@ export class DocumentRepository {
             titleUpdatedAt,
         });
         if (!changed) return;
+        // The todo index groups by title, so a rename moves every one of this
+        // document's items under a new heading.
+        bumpIndexRevision();
         const existing = get(appStore).documents.find((d) => d.id === docId);
         if (existing) {
             appStore.updateDocumentInList({ ...existing, title, updated_at: titleUpdatedAt });
@@ -283,7 +291,10 @@ export class DocumentRepository {
     // document after the peer deleted it) must not remove it from the sidebar.
     async applyDelete(docId: string, deletedAt: number): Promise<boolean> {
         const applied = await invoke<boolean>('apply_remote_delete', { docId, deletedAt });
-        if (applied) appStore.removeDocument(docId);
+        if (applied) {
+            appStore.removeDocument(docId);
+            bumpIndexRevision();
+        }
         return applied;
     }
 
