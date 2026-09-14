@@ -4,6 +4,8 @@ import * as Y from 'yjs';
 import type { Document, DocumentSummary } from '../types';
 import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
+import { getOpenDoc, registerOpenDoc } from '../editor/openDocs';
+import { REMOTE_ORIGIN } from '../editor/origin';
 import { contentHash } from './hash';
 import { createWriteQueue } from './writeQueue';
 import {
@@ -99,15 +101,46 @@ export class DocumentRepository {
 
     // --- writes ----------------------------------------------------------
 
-    // Merge an inbound update (delta or live edit) into local storage,
-    // regardless of whether the doc is open. The 'remote' origin is what makes
-    // Rust emit 'sync-received', so an open editor picks the change up.
+    // Hand the editor the document's state as a Y.Doc, registered as the open
+    // copy so inbound merges can be applied straight into it.
+    //
+    // Reading the state and registering happen as one queued operation on
+    // purpose. If a merge could land in the gap between the two, the editor
+    // would open on content that is already stale and then save over the newer
+    // copy. Queueing closes that window without a second lock.
+    //
+    // The caller must `unregisterOpenDoc` before it stops using the Y.Doc.
+    async openDocument(docId: string): Promise<Y.Doc> {
+        return this.write(docId, async () => {
+            const ydoc = await this.loadDoc(docId);
+            registerOpenDoc(docId, ydoc);
+            return ydoc;
+        });
+    }
+
+    // Merge an inbound update (delta or live edit) into local storage.
+    //
+    // When the document is open, the editor's Y.Doc is the copy to merge into:
+    // it is at least as advanced as the stored state, and applying there is
+    // what puts a peer's edit on screen. The editor is not told to reload
+    // afterwards, because it is already holding the merged document.
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
         const updateBytes = base64ToBytes(updateB64);
         return this.write(docId, async () => {
-            const current = await this.loadDoc(docId);
-            Y.applyUpdate(current, updateBytes);
-            const merged = Y.encodeStateAsUpdate(current);
+            const live = getOpenDoc(docId);
+            let merged: Uint8Array;
+            if (live) {
+                // No await between the lookup and the encode: both calls are
+                // synchronous, so the editor cannot swap the document out from
+                // under this merge.
+                Y.applyUpdate(live, updateBytes, REMOTE_ORIGIN);
+                merged = Y.encodeStateAsUpdate(live);
+            } else {
+                const current = await this.loadDoc(docId);
+                Y.applyUpdate(current, updateBytes);
+                merged = Y.encodeStateAsUpdate(current);
+                current.destroy();
+            }
             const hash = await contentHash(merged);
             await invoke('save_yjs_update', {
                 docId,
@@ -134,11 +167,21 @@ export class DocumentRepository {
         index?: DocumentIndex,
     ): Promise<void> {
         return this.write(docId, async () => {
-            const hash = await contentHash(mergedState);
+            // `mergedState` was encoded by the caller before it queued, so a
+            // merge that ran while it waited is missing from it. Fold it back
+            // into the live document and re-encode, and the write is the union
+            // of both rather than whichever copy was encoded last.
+            const live = getOpenDoc(docId);
+            let state = mergedState;
+            if (live) {
+                Y.applyUpdate(live, mergedState, REMOTE_ORIGIN);
+                state = Y.encodeStateAsUpdate(live);
+            }
+            const hash = await contentHash(state);
             await invoke('save_yjs_update', {
                 docId,
-                update: bytesToBase64(mergedState),
-                mergedState: bytesToBase64(mergedState),
+                update: bytesToBase64(state),
+                mergedState: bytesToBase64(state),
                 contentHash: bytesToBase64(hash),
                 origin: 'local',
                 index: index ?? null,

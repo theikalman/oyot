@@ -24,12 +24,10 @@
     } from '$lib/tiptap';
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import {
-        loadYjsDocFromState,
-        createInitialContent,
-        createCollaborationExtension,
-        REMOTE_ORIGIN,
-    } from './yjs';
+    import { createInitialContent, createCollaborationExtension } from './yjs';
+    import { REMOTE_ORIGIN } from './origin';
+    import { unregisterOpenDoc } from './openDocs';
+    import { documentRepository } from '$lib/sync';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -79,7 +77,8 @@
     let keyboardHeight = $state(0);
 
     async function initializeEditor() {
-        if (!element) {
+        const docId: string | null = document?.id ?? null;
+        if (!element || !docId) {
             return false;
         }
 
@@ -90,6 +89,13 @@
             onBeforeTeardown?.(currentDocId, ydoc);
         }
 
+        // Stop the sync layer handing a peer's edit to a document we are about
+        // to discard. Before the teardown below, so there is no window where a
+        // merge could land on a Y.Doc nothing is reading any more.
+        if (ydoc && currentDocId) {
+            unregisterOpenDoc(currentDocId, ydoc);
+        }
+
         if (editor) {
             editor.destroy();
             editor = null;
@@ -98,9 +104,11 @@
             ydoc = null;
         }
 
-        const newYDoc = loadYjsDocFromState(
-            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array(),
-        );
+        // Reads the stored state and registers this Y.Doc as the open copy in
+        // one queued step. Loading from `document.crdt_state` instead would
+        // reopen whatever was fetched when the user clicked, which a merge
+        // since then has already made stale.
+        const newYDoc = await documentRepository.openDocument(docId);
 
         const title = document?.title ?? 'Untitled';
         let initialContent: object = createInitialContent(title) as object;
@@ -161,7 +169,7 @@
         ydoc = newYDoc;
         editor = ed;
         isInitialized = true;
-        currentDocId = document?.id ?? null;
+        currentDocId = docId;
 
         onEditorReady?.(ed, newYDoc);
         return true;
@@ -224,6 +232,7 @@
 
         if (ydoc && currentDocId) {
             onBeforeTeardown?.(currentDocId, ydoc);
+            unregisterOpenDoc(currentDocId, ydoc);
         }
 
         if (editor) {

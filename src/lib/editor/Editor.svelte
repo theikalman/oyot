@@ -1,7 +1,6 @@
 <script lang="ts">
     import { log } from '$lib/log';
     import { onMount, onDestroy } from 'svelte';
-    import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event';
     import { getCurrentWindow } from '@tauri-apps/api/window';
     import { currentDocument, appStore } from '$lib/stores/app';
@@ -16,9 +15,7 @@
         type EditorSaveService,
     } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
-    import { REMOTE_ORIGIN } from './yjs';
     import { extractDocumentIndex } from './documentIndex';
-    import { base64ToBytes } from '$lib/sync/protocol';
     import * as Y from 'yjs';
 
     interface Props {
@@ -29,7 +26,6 @@
     let { debounceMs = DEFAULT_DEBOUNCE_MS, autoSave = true }: Props = $props();
 
     let current = $derived($currentDocument);
-    let ydoc = $state<Y.Doc | null>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
     let unlistenSyncEvent: (() => void) | null = null;
@@ -41,7 +37,6 @@
 
     function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
-        ydoc = doc;
 
         if (saveService) {
             saveService.destroy();
@@ -93,22 +88,6 @@
         void persistSnapshot(docId, snapshot, delta ?? snapshot, index);
     }
 
-    async function reloadCurrentDocument() {
-        if (!current?.id) return;
-        log.debug(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
-        try {
-            const stateResult = await invoke<{ doc_id: string; state: string }>('get_yjs_state', {
-                docId: current.id,
-            });
-            if (stateResult.state && ydoc) {
-                Y.applyUpdate(ydoc, base64ToBytes(stateResult.state), REMOTE_ORIGIN);
-                log.debug(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
-            }
-        } catch (error) {
-            console.error(`[Editor] [${current.id}] Failed to reload document:`, error);
-        }
-    }
-
     async function handleOpenDocument(event: Event) {
         const { id } = (event as CustomEvent<{ id: string }>).detail;
         if (!id) return;
@@ -144,17 +123,15 @@
             console.warn('[Editor] window close listener unavailable:', e);
         }
 
-        unlistenSyncEvent = await listen('sync-received', async (event) => {
-            const payload = event.payload as { doc_id?: string; from?: string };
-            log.debug(
-                `[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`,
-            );
+        // A peer's edit is applied straight into the open document by the
+        // sync layer, so there is nothing to fetch here and nothing to apply.
+        // What still needs telling is the panel below the editor, which reads
+        // derived rows out of SQL rather than out of the document.
+        unlistenSyncEvent = await listen('sync-received', (event) => {
+            const payload = event.payload as { doc_id?: string };
+            log.debug(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'}`);
             if (payload?.doc_id && payload.doc_id === current?.id) {
-                await reloadCurrentDocument();
-            } else {
-                log.debug(
-                    `[Editor] Ignoring sync-received, doc_id does not match currently open document`,
-                );
+                indexRevision++;
             }
         });
     });
