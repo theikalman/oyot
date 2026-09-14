@@ -36,6 +36,12 @@ jobs:
       - name: Test
         run: npm test
 
+      # Nothing else here compiles the app. Typecheck and lint both pass on a
+      # tree whose production build fails, so without this a broken build can
+      # reach main and is not noticed until someone cuts a release.
+      - name: Build
+        run: npm run build
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

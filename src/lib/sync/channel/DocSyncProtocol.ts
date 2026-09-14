@@ -24,8 +24,23 @@ interface NeedItem {
 // Attachment transfer runs on its own queue, off the document finish gate: an
 // image can be large and slow, and text sync should not wait on it.
 const MAX_ATTACH_IN_FLIGHT = 2;
+// How long to wait for an attachment, before its size is taken into account.
 export const ATTACH_TIMEOUT_MS = 30_000;
+// The slowest transfer rate worth waiting through, in bytes per millisecond
+// (50 KB/s). Below this a phone on a bad link would give up on a photo it was
+// in the middle of receiving, ask again, and start a second full transfer
+// alongside the first.
+const SLOWEST_USEFUL_RATE = 50;
 const MAX_ATTACH_ATTEMPTS = 2;
+
+// A flat 30s gave a 10MB photo the same budget as a thumbnail, so the large
+// transfers, which are the ones that need the time, were the ones that timed
+// out. Scale with the size the peer announced and keep the flat value as a
+// floor for the rest.
+function attachTimeoutFor(size: number | undefined): number {
+    if (!size || size <= 0) return ATTACH_TIMEOUT_MS;
+    return Math.max(ATTACH_TIMEOUT_MS, Math.ceil(size / SLOWEST_USEFUL_RATE));
+}
 
 // Carries its own attempt count, the way NeedItem does. Tracking attempts in
 // the in-flight map instead did not work: the timeout handler deletes the entry
@@ -33,6 +48,8 @@ const MAX_ATTACH_ATTEMPTS = 2;
 interface AttachItem {
     hash: string;
     attempts: number;
+    /** Bytes, as the peer's manifest announced them. Sets the deadline. */
+    size?: number;
 }
 
 // Runs the two-phase reconciliation (manifest, then delta) for ONE data channel,
@@ -117,7 +134,7 @@ export class DocSyncProtocol {
                     );
                 return;
             case 'attach-manifest':
-                await this.onAttachManifest(msg.items.map((i) => i.hash));
+                await this.onAttachManifest(msg.items);
                 return;
             case 'attach-need':
                 await this.onAttachNeed(msg.hash);
@@ -143,8 +160,8 @@ export class DocSyncProtocol {
         }
     }
 
-    private async onAttachManifest(hashes: string[]): Promise<void> {
-        for (const hash of hashes) {
+    private async onAttachManifest(items: Array<{ hash: string; size?: number }>): Promise<void> {
+        for (const { hash, size } of items) {
             if (this.isAttachTracked(hash)) continue;
             try {
                 if (await this.repo.hasAttachment(hash)) continue;
@@ -152,7 +169,7 @@ export class DocSyncProtocol {
                 console.error(`[sync] hasAttachment(${hash}) failed:`, e);
                 continue;
             }
-            this.attachQueue.push({ hash, attempts: 0 });
+            this.attachQueue.push({ hash, attempts: 0, size });
         }
         this.attachPump();
     }
@@ -194,7 +211,7 @@ export class DocSyncProtocol {
                         `[sync] gave up pulling attachment ${item.hash} after ${item.attempts} attempts`,
                     );
                 }
-            }, ATTACH_TIMEOUT_MS),
+            }, attachTimeoutFor(item.size)),
         );
     }
 
@@ -263,9 +280,16 @@ export class DocSyncProtocol {
         const localStamp = local ? lifecycleStamp(local) : -1;
 
         if (entry.isDeleted) {
-            // A tombstone for a document we have never seen is nothing to do:
-            // there is no row to mark, and we will not advertise it onward.
-            if (local && remoteStamp > localStamp) {
+            if (!local) {
+                // Record it rather than dropping it. Dropping is what stopped
+                // a delete propagating past the first device that never held
+                // the document: nothing to mark, so nothing to advertise
+                // onward, and a third device that still has the document
+                // hands it straight back on the next exchange.
+                await this.repo.ensureTombstone(entry);
+                return;
+            }
+            if (remoteStamp > localStamp) {
                 await this.repo.applyDelete(entry.id, entry.deletedAt ?? remoteStamp);
             }
             return;

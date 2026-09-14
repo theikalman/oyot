@@ -1,224 +1,57 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { appStore, isLoading, currentDocument } from '$lib/stores/app';
-    import { initializeTheme, applyTheme } from '$lib/services/theme';
-    import { loadAllDocuments, loadDocument, cleanupOrphanedImages } from '$lib/services/documents';
+    import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
+    import { documents } from '$lib/stores/app';
+    import { get } from 'svelte/store';
     import { ensureTodayJournal } from '$lib/services/documentActions';
     import { toasts } from '$lib/services/toast';
-    import Sidebar from '$lib/components/Sidebar.svelte';
-    import Editor from '$lib/editor/Editor.svelte';
-    import SyncStatus from '$lib/components/SyncStatus.svelte';
-    import ToastContainer from '$lib/components/ToastContainer.svelte';
+    import { startApp } from '$lib/services/startup';
 
-    let activeDocument = $derived($currentDocument);
-
-    async function init() {
-        appStore.setLoading(true);
-        try {
-            const indexData = await loadAllDocuments();
-            appStore.setDocuments(indexData.documents);
-
-            // Opening today's journal is a convenience, not a precondition. It
-            // used to share a try block with everything below, so one failure
-            // here left currentDocument null and the editor pane stuck on
-            // "Loading..." with no way back short of picking a note by hand.
-            try {
-                appStore.setCurrentDocument(await ensureTodayJournal());
-            } catch (error) {
-                console.error("Failed to open today's journal:", error);
-                toasts.error("Could not open today's journal");
-                const fallback = indexData.documents[0];
-                if (fallback) {
-                    appStore.setCurrentDocument(await loadDocument(fallback.id));
-                }
-            }
-
-            await cleanupOrphanedImages();
-        } catch (error) {
-            // loadAllDocuments already reports its own failure to the user.
-            console.error('Failed to initialize:', error);
-        } finally {
-            appStore.setLoading(false);
-        }
-    }
+    // The entry point, not a page. It works out which document to open and
+    // hands over to /doc/[id], replacing itself in history so the back button
+    // never lands the user back on a redirect.
+    let failed = $state(false);
 
     onMount(async () => {
+        // The document list has to be loaded before this. Creating today's
+        // journal adds it to that list, and a load finishing afterwards would
+        // replace the list and drop it again.
+        await startApp();
+
         try {
-            const savedTheme = await initializeTheme();
-            appStore.setTheme(savedTheme);
+            const doc = await ensureTodayJournal();
+            await goto(resolve('/doc/[id]', { id: doc.id }), { replaceState: true });
+            return;
         } catch (error) {
-            console.error('Failed to load theme:', error);
+            // Opening today's journal is a convenience, not a precondition.
+            console.error("Failed to open today's journal:", error);
+            toasts.error("Could not open today's journal");
         }
 
-        await init();
-    });
-
-    $effect(() => {
-        const theme = $appStore.theme;
-        applyTheme(theme);
+        const fallback = get(documents)[0];
+        if (fallback) {
+            await goto(resolve('/doc/[id]', { id: fallback.id }), { replaceState: true });
+            return;
+        }
+        failed = true;
     });
 </script>
 
-<main class="app">
-    <div class="workspace">
-        <Sidebar />
-        <div class="main-content">
-            <div class="sync-status-container">
-                {#if activeDocument}
-                    <h1 class="page-title">{activeDocument.title}</h1>
-                {/if}
-                <SyncStatus />
-            </div>
-            {#if activeDocument}
-                <Editor />
-            {:else}
-                <div class="empty-state">
-                    <p>Loading...</p>
-                </div>
-            {/if}
-        </div>
-    </div>
-
-    {#if $isLoading}
-        <div class="loading-overlay">
-            <div class="loading-spinner"></div>
-            <p>Loading...</p>
-        </div>
+<div class="entry">
+    {#if failed}
+        <p>Could not open a document.</p>
+    {:else}
+        <p>Loading...</p>
     {/if}
-
-    <ToastContainer />
-</main>
+</div>
 
 <style>
-    :global(:root) {
-        --bg-primary: #ffffff;
-        --bg-secondary: #f8f9fa;
-        --bg-hover: #e9ecef;
-        --bg-accent: #eef4ff;
-        --text-primary: #333333;
-        --text-secondary: #666666;
-        --text-muted: #999999;
-        --border-color: #e0e0e0;
-        --border-light: #dddddd;
-        --accent-color: #0066cc;
-        --accent-hover: #0055aa;
-        --accent-bg: #e8f0fe;
-        --accent-bg-hover: #d2e3fc;
-        --btn-primary-bg: #007bff;
-        --btn-primary-hover: #0056b3;
-        --code-bg: #f4f4f4;
-        --loading-overlay-bg: rgba(255, 255, 255, 0.9);
-    }
-
-    :global([data-theme='dark']) {
-        --bg-primary: #1e1e1e;
-        --bg-secondary: #252526;
-        --bg-hover: #2d2d2d;
-        --bg-accent: #1c3358;
-        --text-primary: #e0e0e0;
-        --text-secondary: #aaaaaa;
-        --text-muted: #666666;
-        --border-color: #3d3d3d;
-        --border-light: #444444;
-        --accent-color: #4da3ff;
-        --accent-hover: #73b6ff;
-        --accent-bg: #1c3358;
-        --accent-bg-hover: #26456e;
-        --btn-primary-bg: #0078d4;
-        --btn-primary-hover: #006cbf;
-        --code-bg: #2d2d2d;
-        --loading-overlay-bg: rgba(30, 30, 30, 0.9);
-    }
-
-    :global(*) {
-        box-sizing: border-box;
-    }
-
-    :global(body) {
-        margin: 0;
-        font-family:
-            -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-        background-color: var(--bg-primary);
-        color: var(--text-primary);
-    }
-
-    .app {
+    .entry {
         height: 100vh;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .workspace {
-        flex: 1;
-        display: flex;
-        overflow: hidden;
-    }
-
-    .main-content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        background: var(--bg-primary);
-    }
-
-    .sync-status-container {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 16px;
-        border-bottom: 1px solid var(--border-color);
-        min-height: 57px;
-    }
-
-    .page-title {
-        margin: 0;
-        font-size: 24px;
-        color: var(--text-primary);
-    }
-
-    .empty-state {
-        flex: 1;
         display: flex;
         align-items: center;
         justify-content: center;
         color: var(--text-muted);
-    }
-
-    .loading-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: var(--loading-overlay-bg);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-    }
-
-    .loading-spinner {
-        width: 40px;
-        height: 40px;
-        border: 4px solid var(--border-color);
-        border-top: 4px solid var(--accent-color);
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-    }
-
-    @keyframes spin {
-        0% {
-            transform: rotate(0deg);
-        }
-        100% {
-            transform: rotate(360deg);
-        }
-    }
-
-    .loading-overlay p {
-        margin-top: 16px;
-        color: var(--text-secondary);
     }
 </style>

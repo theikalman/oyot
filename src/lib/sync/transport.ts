@@ -5,6 +5,7 @@ import { get } from 'svelte/store';
 import {
     syncStore,
     pendingPairRequest,
+    pairingState,
     signalingStatus,
     pairedDevices,
     connectedPeers,
@@ -16,6 +17,16 @@ import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
 import { DocSyncProtocol, type SyncProgressSink } from './channel/DocSyncProtocol';
 import { isSyncMessage, type SyncMessage } from './protocol';
+import {
+    admitEnvelope,
+    parseDescPayload,
+    parseIcePayload,
+    serializeDesc,
+    serializeIce,
+    type DescEnvelope,
+    type IceEnvelope,
+} from './signaling/envelope';
+import { isPolite as politeAgainst, reconnectDelay, shouldSweep } from './signaling/negotiation';
 
 // One negotiation session per paired peer, keyed by peer node_id. Implements the
 // WHATWG "perfect negotiation" pattern so two peers that offer at the same time
@@ -33,13 +44,15 @@ interface PeerSession {
     polite: boolean;
     // `epoch` is our own negotiation generation, bumped on every local rebuild so
     // the peer can drop messages from a superseded negotiation of ours.
-    // `peerEpoch` is the highest epoch we have seen *from* the peer. Incoming
-    // messages are stale only if they go backwards relative to peerEpoch - the
-    // two counters advance independently (a manual reconnect rebuilds one side
-    // many more times than the other), so comparing env.epoch against our own
-    // `epoch` would wrongly reject the peer's current offers and answers.
+    // `peerEpoch` is the highest epoch we have seen *from* the peer, and
+    // `peerBoot` says which run of the peer produced it. Incoming messages are
+    // stale only if they go backwards within one run: the two counters advance
+    // independently (a manual reconnect rebuilds one side many more times than
+    // the other), and they restart when the peer's process does. See
+    // signaling/envelope.ts.
     epoch: number;
     peerEpoch: number;
+    peerBoot: string | null;
     makingOffer: boolean;
     ignoreOffer: boolean;
     isSettingRemoteAnswerPending: boolean;
@@ -50,18 +63,7 @@ interface PeerSession {
     reconnectTimer?: ReturnType<typeof setTimeout>;
     graceTimer?: ReturnType<typeof setTimeout>;
     promoteTimer?: ReturnType<typeof setTimeout>;
-}
-
-interface DescEnvelope {
-    epoch: number;
-    description: RTCSessionDescriptionInit;
-    roomId?: string;
-    displayName?: string;
-}
-
-interface IceEnvelope {
-    epoch: number;
-    candidate: RTCIceCandidateInit;
+    negotiationTimer?: ReturnType<typeof setTimeout>;
 }
 
 const repo = new DocumentRepository();
@@ -78,7 +80,16 @@ const DISCONNECT_GRACE_MS = 5_000;
 // Polite peer promotes itself to initiator if the impolite side never offers
 // (e.g. it is still reconnecting to the broker).
 const PROMOTE_TIMEOUT_MS = 6_000;
-const RECONNECT_MAX_MS = 30_000;
+// How long a connection may sit mid-negotiation before it is rebuilt.
+//
+// A handshake that never completes leaves nothing to react to. With our offer
+// sent and the answer lost, the connection stays in 'new' indefinitely: ICE
+// never fails because no remote description was ever set, no state change
+// fires, and the reconnect sweep skips it precisely because 'new' looks like a
+// connection still in progress. If we are the impolite peer we also reject the
+// peer's own offers as collisions. One lost answer therefore wedged that peer
+// until the user pressed Reconnect.
+const NEGOTIATION_TIMEOUT_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,14 +99,32 @@ function jitter(min: number, max: number): number {
     return min + Math.random() * (max - min);
 }
 
-// Deterministic, needs no exchange: node_ids are unique. The lexicographically
-// smaller node_id is the impolite peer and wins offer collisions.
+// Deterministic, needs no exchange: node_ids are unique and both devices
+// compute the same answer. The rule itself is in signaling/negotiation.ts,
+// where it is tested; this only supplies our own id.
 function isPolite(peerNodeId: string): boolean {
-    return !!identity && identity.node_id > peerNodeId;
+    return !!identity && politeAgainst(identity.node_id, peerNodeId);
 }
 
 function markPeerReconnecting(peerNodeId: string, reconnecting: boolean): void {
     syncStore.setPeerReconnecting(peerNodeId, reconnecting);
+}
+
+// Rebuild the session if it has not finished connecting in time. Routed
+// through `scheduleReconnect` so it inherits the backoff and every guard that
+// already applies to a dropped connection: an explicit disconnect, signaling
+// being down, the pair having been removed, and a retry already pending.
+function armNegotiationWatchdog(session: PeerSession): void {
+    if (session.negotiationTimer) return;
+    session.negotiationTimer = setTimeout(() => {
+        session.negotiationTimer = undefined;
+        if (sessions.get(session.peerNodeId) !== session) return;
+        if (session.pc.connectionState === 'connected') return;
+        console.warn(
+            `[sync] [${session.peerNodeId}] negotiation stalled in '${session.pc.connectionState}', rebuilding`,
+        );
+        scheduleReconnect(session.peerNodeId);
+    }, NEGOTIATION_TIMEOUT_MS);
 }
 
 // --- exported repository handle (editor save path) --------------------------
@@ -175,31 +204,12 @@ export function pullAttachmentFromPeers(hash: string): void {
 
 // --- transport helpers ---------------------------------------------------
 
-function parseDescPayload(raw: string): { epoch: number; description: RTCSessionDescriptionInit } {
-    const o = JSON.parse(raw);
-    if (o && typeof o === 'object' && o.description && typeof o.description === 'object') {
-        return { epoch: typeof o.epoch === 'number' ? o.epoch : 0, description: o.description };
-    }
-    if (o && typeof o === 'object' && typeof o.type === 'string') {
-        return { epoch: 0, description: o as RTCSessionDescriptionInit }; // legacy
-    }
-    throw new Error('unrecognised description payload');
-}
-
-function parseIcePayload(raw: string): { epoch: number; candidate: RTCIceCandidateInit } {
-    const o = JSON.parse(raw);
-    if (o && typeof o === 'object' && o.candidate && typeof o.candidate === 'object') {
-        return { epoch: typeof o.epoch === 'number' ? o.epoch : 0, candidate: o.candidate };
-    }
-    return { epoch: 0, candidate: o as RTCIceCandidateInit }; // legacy bare candidate
-}
-
 async function sendDescription(
     peerId: string,
     session: PeerSession,
     desc: RTCSessionDescription,
 ): Promise<void> {
-    const payload = JSON.stringify({ epoch: session.epoch, description: desc.toJSON() });
+    const payload = serializeDesc(session.epoch, desc.toJSON());
     const cmd = desc.type === 'answer' ? 'mqtt_publish_answer' : 'mqtt_publish_offer';
     log.debug(`[sync] [${peerId}] -> ${desc.type} (epoch=${session.epoch})`);
     await invoke(cmd, { peerId, sdp: payload }).catch((e) =>
@@ -212,7 +222,7 @@ async function sendIceCandidate(
     session: PeerSession,
     candidate: RTCIceCandidate,
 ): Promise<void> {
-    const payload = JSON.stringify({ epoch: session.epoch, candidate: candidate.toJSON() });
+    const payload = serializeIce(session.epoch, candidate.toJSON());
     await invoke('mqtt_publish_ice_candidate', { peerId, candidate: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ICE candidate:`, e),
     );
@@ -246,6 +256,10 @@ function clearSessionTimers(session: PeerSession): void {
     if (session.promoteTimer) {
         clearTimeout(session.promoteTimer);
         session.promoteTimer = undefined;
+    }
+    if (session.negotiationTimer) {
+        clearTimeout(session.negotiationTimer);
+        session.negotiationTimer = undefined;
     }
 }
 
@@ -304,6 +318,11 @@ async function ensurePeerConnection(
     if (existing) {
         const st = existing.pc.connectionState;
         if (!opts.force && (st === 'new' || st === 'connecting' || st === 'connected')) {
+            // A sweep leaves a session that looks in-progress alone, so make
+            // sure something is still watching it. `pauseAllReconnects` clears
+            // the watchdog when signaling drops, and the recovery sweep comes
+            // back through here.
+            if (st !== 'connected') armNegotiationWatchdog(existing);
             return existing;
         }
         teardownSession(peerNodeId, { keepAttempts: true });
@@ -319,6 +338,7 @@ async function ensurePeerConnection(
         polite,
         epoch: (existing?.epoch ?? 0) + 1,
         peerEpoch: existing?.peerEpoch ?? 0,
+        peerBoot: existing?.peerBoot ?? null,
         makingOffer: false,
         ignoreOffer: false,
         isSettingRemoteAnswerPending: false,
@@ -330,6 +350,7 @@ async function ensurePeerConnection(
     sessions.set(peerNodeId, session);
     syncStore.setRoomSyncPhase(roomId, 'connecting');
     markPeerReconnecting(peerNodeId, true);
+    armNegotiationWatchdog(session);
 
     log.debug(
         `[sync] ensurePeerConnection() -> ${displayName} (peer=${peerNodeId}, room=${roomId}, polite=${polite}, initiate=${opts.initiate}, epoch=${session.epoch})`,
@@ -444,7 +465,22 @@ function wireDataChannel(channel: RTCDataChannel, session: PeerSession): void {
         },
     };
 
-    const proto = new DocSyncProtocol(repo, (m) => session.framed?.send(m), sink);
+    // A send that never reached the channel is worth knowing about: the peer
+    // will never answer it, and without this it looked exactly like a peer
+    // that chose not to.
+    const proto = new DocSyncProtocol(
+        repo,
+        (m) => {
+            void session.framed?.send(m).then((sent) => {
+                if (!sent) {
+                    console.warn(
+                        `[sync] [${session.peerNodeId}] could not send '${(m as { t?: string }).t}'`,
+                    );
+                }
+            });
+        },
+        sink,
+    );
     const framed = attachFraming(channel, (m) => {
         if (isSyncMessage(m)) {
             void proto
@@ -506,6 +542,14 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
             console.warn(`[sync] [${from}] offer without room_id, dropping`);
             return;
         }
+        // "Disconnect" has to mean disconnected, not "disconnected until the
+        // peer's next reconnect sweep". Suppression only held back our own
+        // outbound attempts, so the peer reconnected us within seconds and the
+        // button looked broken. Reconnect clears the suppression.
+        if (suppressReconnect.has(from)) {
+            log.debug(`[sync] [${from}] offer ignored, peer was explicitly disconnected`);
+            return;
+        }
         const built = await ensurePeerConnection(from, env.roomId, env.displayName || from, {
             initiate: false,
         });
@@ -513,13 +557,12 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
         session = built;
     }
 
-    if (env.epoch > 0 && env.epoch < session.peerEpoch) {
+    if (admitEnvelope(session, env) === 'stale') {
         log.debug(
             `[sync] [${from}] ignoring stale description (epoch ${env.epoch} < peerEpoch ${session.peerEpoch})`,
         );
         return;
     }
-    if (env.epoch > session.peerEpoch) session.peerEpoch = env.epoch;
 
     const { pc } = session;
     const description = env.description;
@@ -554,7 +597,7 @@ async function handleIceCandidate(from: string, env: IceEnvelope): Promise<void>
         console.warn(`[sync] [${from}] ICE candidate with no session, dropping`);
         return;
     }
-    if (env.epoch > 0 && env.epoch < session.peerEpoch) return;
+    if (admitEnvelope(session, env) === 'stale') return;
     try {
         await session.pc.addIceCandidate(new RTCIceCandidate(env.candidate));
     } catch (e) {
@@ -578,7 +621,9 @@ function scheduleReconnect(peerNodeId: string): void {
 
     const attempt = session.reconnectAttempts;
     session.reconnectAttempts = attempt + 1;
-    const delay = Math.min(1000 * 2 ** attempt, RECONNECT_MAX_MS) + jitter(0, 1000);
+    // Jittered, or two devices that dropped together retry in lockstep and
+    // every retry is a fresh collision.
+    const delay = reconnectDelay(attempt, jitter(0, 1000));
     log.debug(`[sync] [${peerNodeId}] reconnect attempt ${attempt + 1} in ${Math.round(delay)}ms`);
     markPeerReconnecting(peerNodeId, true);
 
@@ -663,14 +708,15 @@ export async function reconnectAllPairedDevices(reason: string): Promise<void> {
         await refreshPairedDevices();
         const connectedRooms = new Set(get(connectedPeers).map((p) => p.room_id));
         for (const pair of get(pairedDevices)) {
-            if (connectedRooms.has(pair.room_id)) continue;
-            if (suppressReconnect.has(pair.peer_node_id)) continue;
-            const s = sessions.get(pair.peer_node_id);
-            if (
-                s &&
-                (s.pc.connectionState === 'connecting' || s.pc.connectionState === 'connected')
-            )
-                continue;
+            const existing = sessions.get(pair.peer_node_id);
+            const take = shouldSweep({
+                peerNodeId: pair.peer_node_id,
+                roomId: pair.room_id,
+                connected: connectedRooms.has(pair.room_id),
+                connectionState: existing?.pc.connectionState,
+                suppressed: suppressReconnect.has(pair.peer_node_id),
+            });
+            if (!take) continue;
             await sleep(jitter(150, 450));
             void ensurePeerConnection(pair.peer_node_id, pair.room_id, pair.peer_display_name, {
                 initiate: !isPolite(pair.peer_node_id),
@@ -700,11 +746,29 @@ export async function initiateOffer(
     });
 }
 
+// How long to wait for the other device to answer a pair request.
+//
+// Long enough that someone has to walk to the other device and tap Accept,
+// short enough that an unanswered request does not look like a hung app.
+// Without it the button read "Requesting..." until the app was restarted, and
+// the id the user typed had already been cleared from the field, so there was
+// nothing to retry with.
+const PAIR_REQUEST_TIMEOUT_MS = 90_000;
+let pairRequestTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPairRequestTimer(): void {
+    if (pairRequestTimer) {
+        clearTimeout(pairRequestTimer);
+        pairRequestTimer = null;
+    }
+}
+
 export async function sendPairRequest(peerNodeId: string): Promise<void> {
     if (!identity) {
         console.warn('[sync] sendPairRequest() called before identity was loaded, aborting');
         return;
     }
+    clearPairRequestTimer();
     syncStore.setPairingState('requesting');
     try {
         log.debug(`[sync] sendPairRequest() -> ${peerNodeId}`);
@@ -712,7 +776,16 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     } catch (e) {
         console.error('[sync] Failed to send pair request:', e);
         syncStore.setPairingState(null);
+        throw e;
     }
+
+    pairRequestTimer = setTimeout(() => {
+        pairRequestTimer = null;
+        if (get(pairingState) === 'requesting') {
+            log.debug(`[sync] pair request to ${peerNodeId} went unanswered`);
+            syncStore.setPairingState('timed-out');
+        }
+    }, PAIR_REQUEST_TIMEOUT_MS);
 }
 
 export async function respondToPairRequest(accept: boolean): Promise<void> {
@@ -830,6 +903,7 @@ async function setupEventListeners(): Promise<void> {
     }>('mqtt-pair-response-received', async (event) => {
         const { from, user_id, display_name, accepted } = event.payload;
         log.debug(`[sync] event: mqtt-pair-response-received from=${from} accepted=${accepted}`);
+        clearPairRequestTimer();
         if (accepted) {
             syncStore.setPairingState(null);
             await initiateOffer(from, user_id, display_name);
@@ -847,8 +921,9 @@ async function setupEventListeners(): Promise<void> {
         const { from, sdp, room_id, display_name } = event.payload;
         log.debug(`[sync] event: mqtt-offer-received from=${from} room_id=${room_id}`);
         try {
-            const { epoch, description } = parseDescPayload(sdp);
+            const { boot, epoch, description } = parseDescPayload(sdp);
             await handleDescription(from, {
+                boot,
                 epoch,
                 description,
                 roomId: room_id,
@@ -865,8 +940,8 @@ async function setupEventListeners(): Promise<void> {
             const { from, sdp } = event.payload;
             log.debug(`[sync] event: mqtt-answer-received from=${from}`);
             try {
-                const { epoch, description } = parseDescPayload(sdp);
-                await handleDescription(from, { epoch, description });
+                const { boot, epoch, description } = parseDescPayload(sdp);
+                await handleDescription(from, { boot, epoch, description });
             } catch (e) {
                 console.error(`[sync] [${from}] bad answer payload:`, e);
             }
@@ -879,13 +954,22 @@ async function setupEventListeners(): Promise<void> {
             const { from, candidate } = event.payload;
             log.debug(`[sync] event: mqtt-ice-candidate-received from=${from}`);
             try {
-                const { epoch, candidate: cand } = parseIcePayload(candidate);
-                await handleIceCandidate(from, { epoch, candidate: cand });
+                const { boot, epoch, candidate: cand } = parseIcePayload(candidate);
+                await handleIceCandidate(from, { boot, epoch, candidate: cand });
             } catch (e) {
                 console.error(`[sync] [${from}] bad ICE payload:`, e);
             }
         },
     );
+
+    // Emitted once per run of failed connection attempts, never after a
+    // session has been up. `mqtt_connect` resolves before a single packet is
+    // exchanged, so this is the only signal that the broker is unreachable or
+    // refusing us.
+    const unlistenError = await listen<string>('mqtt-error', (event) => {
+        log.debug(`[sync] event: mqtt-error -> ${event.payload}`);
+        syncStore.setSignalingError(event.payload);
+    });
 
     const unlistenStatus = await listen<string>('mqtt-status', (event) => {
         const next = event.payload as SignalingStatus;
@@ -906,6 +990,7 @@ async function setupEventListeners(): Promise<void> {
         unlistenAnswer,
         unlistenIce,
         unlistenStatus,
+        unlistenError,
     ];
     log.debug('[sync] Event listeners registered');
 }
@@ -916,6 +1001,7 @@ export function shutdownSync(): void {
     );
     cleanupFns.forEach((fn) => fn());
     cleanupFns = [];
+    clearPairRequestTimer();
     disconnectAll();
     suppressReconnect.clear();
 }

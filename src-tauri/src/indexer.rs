@@ -7,7 +7,7 @@
 //! `get_backlinks` had no edge table and returned every document, and search
 //! could only match titles.
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 /// What the editor extracted from a document, as it arrives over IPC.
 #[derive(Debug, Default, serde::Deserialize)]
@@ -15,9 +15,21 @@ use rusqlite::params;
 pub struct DocumentIndexInput {
     pub text: String,
     pub link_targets: Vec<String>,
+    /// Content hashes of the images this document embeds.
+    #[serde(default)]
+    pub attachment_hashes: Vec<String>,
     pub todo_count: i32,
     pub completed_todo_count: i32,
 }
+
+/// What a fully-built index looks like today.
+///
+/// Stamped on every document `update_document_index` touches, and compared
+/// before collecting unreferenced attachments: a document indexed by an older
+/// version has no attachment rows, and deleting blobs on the strength of that
+/// would throw away images that are still on the page. Bump it whenever the
+/// derived rows gain something that has to be backfilled.
+pub const INDEX_VERSION: i64 = 1;
 
 /// Record the title only, for paths that change a title without seeing content
 /// (a rename, or materialising a row learned from a peer). Leaves counts,
@@ -35,9 +47,32 @@ pub fn update_document_title(
     )
     .map_err(|e| e.to_string())?;
 
+    // An UPDATE here only ever touched documents that already had a row, and
+    // the only thing that creates one is a save with content. A document that
+    // arrived from a peer, or was created and never typed in, therefore had no
+    // row at all and could not be found by search even by its exact title.
+    //
+    // FTS5 has no unique index for ON CONFLICT to target, so insert-or-replace
+    // is a delete and an insert, carrying over whatever body a previous index
+    // pass recorded.
+    let body: String = db
+        .query_row(
+            "SELECT body FROM document_search WHERE document_id = ?",
+            params![doc_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+
     db.execute(
-        "UPDATE document_search SET title = ?2 WHERE document_id = ?1",
-        params![doc_id, title],
+        "DELETE FROM document_search WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO document_search (document_id, title, body) VALUES (?1, ?2, ?3)",
+        params![doc_id, title, body],
     )
     .map_err(|e| e.to_string())?;
 
@@ -67,6 +102,27 @@ pub fn update_document_index(
     db.execute(
         "DELETE FROM document_links WHERE source_id = ?",
         params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Same for attachments: what the document embeds now is the whole truth
+    // about what it embeds.
+    db.execute(
+        "DELETE FROM document_attachments WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    for hash in &index.attachment_hashes {
+        db.execute(
+            "INSERT OR IGNORE INTO document_attachments (document_id, hash) VALUES (?, ?)",
+            params![doc_id, hash],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    db.execute(
+        "UPDATE documents SET index_version = ?2 WHERE id = ?1",
+        params![doc_id, INDEX_VERSION],
     )
     .map_err(|e| e.to_string())?;
     for target in &index.link_targets {
@@ -101,6 +157,12 @@ pub fn update_document_index(
 pub fn clear_document_index(db: &rusqlite::Connection, doc_id: &str) -> Result<(), String> {
     db.execute(
         "DELETE FROM document_links WHERE source_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    // A deleted document holds nothing, so its attachments become collectable.
+    db.execute(
+        "DELETE FROM document_attachments WHERE document_id = ?",
         params![doc_id],
     )
     .map_err(|e| e.to_string())?;
@@ -156,9 +218,70 @@ mod tests {
         DocumentIndexInput {
             text: text.to_string(),
             link_targets: links.iter().map(|s| s.to_string()).collect(),
+            attachment_hashes: vec![],
             todo_count: todo,
             completed_todo_count: done,
         }
+    }
+
+    fn with_attachments(hashes: &[&str]) -> DocumentIndexInput {
+        DocumentIndexInput {
+            attachment_hashes: hashes.iter().map(|s| s.to_string()).collect(),
+            ..index("body", &[], 0, 0)
+        }
+    }
+
+    fn attachments_of(db: &Connection, doc_id: &str) -> Vec<String> {
+        let mut stmt = db
+            .prepare("SELECT hash FROM document_attachments WHERE document_id = ? ORDER BY hash")
+            .unwrap();
+        stmt.query_map([doc_id], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    }
+
+    #[test]
+    fn attachment_references_are_recorded_and_replaced_wholesale() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_attachments(&["h1", "h2"])).unwrap();
+        assert_eq!(attachments_of(&db, "a"), vec!["h1", "h2"]);
+
+        // The second image is removed from the document.
+        update_document_index(&db, "a", "Alpha", &with_attachments(&["h1"])).unwrap();
+        assert_eq!(attachments_of(&db, "a"), vec!["h1"]);
+    }
+
+    #[test]
+    fn indexing_stamps_the_document_as_indexed() {
+        let db = db();
+        let before: i64 = db
+            .query_row(
+                "SELECT index_version FROM documents WHERE id = 'a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 0, "a document starts out never indexed");
+
+        update_document_index(&db, "a", "Alpha", &index("x", &[], 0, 0)).unwrap();
+
+        let after: i64 = db
+            .query_row(
+                "SELECT index_version FROM documents WHERE id = 'a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, INDEX_VERSION);
+    }
+
+    #[test]
+    fn clearing_removes_attachment_references() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_attachments(&["h1"])).unwrap();
+        clear_document_index(&db, "a").unwrap();
+        assert!(attachments_of(&db, "a").is_empty());
     }
 
     fn links_to(db: &Connection, target: &str) -> Vec<String> {
@@ -292,6 +415,63 @@ mod tests {
             .unwrap();
         assert_eq!(stitle, "Renamed");
         assert_eq!(body, "the body");
+    }
+
+    // The regression this guards: a document whose content this device has
+    // never rendered -- one pulled from a peer, or created and not yet typed
+    // in -- had no search row, because only a save with content wrote one and
+    // the title path could only UPDATE. It was unfindable even by exact title.
+    #[test]
+    fn a_document_with_no_body_is_searchable_by_title() {
+        let db = db();
+        update_document_title(&db, "a", "Quarterly review").unwrap();
+
+        let q = to_fts_query("quarterly").unwrap();
+        let hits: Vec<String> = db
+            .prepare("SELECT document_id FROM document_search WHERE document_search MATCH ?")
+            .unwrap()
+            .query_map([&q], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(hits, vec!["a"]);
+    }
+
+    #[test]
+    fn repeated_title_updates_keep_one_search_row() {
+        let db = db();
+        update_document_title(&db, "a", "First").unwrap();
+        update_document_title(&db, "a", "Second").unwrap();
+        update_document_title(&db, "a", "Third").unwrap();
+
+        let (rows, title): (i64, String) = db
+            .query_row(
+                "SELECT COUNT(*), MAX(title) FROM document_search WHERE document_id = 'a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(title, "Third");
+    }
+
+    // A rename must not throw away the body a previous save indexed, which a
+    // blind delete-and-insert would.
+    #[test]
+    fn a_rename_after_indexing_keeps_the_body_searchable() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &index("pineapple", &[], 0, 0)).unwrap();
+        update_document_title(&db, "a", "Renamed").unwrap();
+
+        let q = to_fts_query("pineapple").unwrap();
+        let hits: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM document_search WHERE document_search MATCH ?",
+                [&q],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "the body survives a title-only update");
     }
 
     // FTS5 MATCH has its own syntax; raw user input is not valid query text.

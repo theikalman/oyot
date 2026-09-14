@@ -14,6 +14,10 @@ export default defineConfig({
     resolve: {
         alias: {
             $lib: resolve(__dirname, './src/lib'),
+            // Without the SvelteKit plugin these do not resolve, and anything
+            // that navigates is reachable from a unit test by import.
+            '$app/navigation': resolve(__dirname, './src/test/sveltekit-stubs.ts'),
+            '$app/paths': resolve(__dirname, './src/test/sveltekit-stubs.ts'),
         },
     },
     test: {

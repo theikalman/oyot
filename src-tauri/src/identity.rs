@@ -80,7 +80,12 @@ fn default_display_name(node_id: &str) -> String {
 fn load_identity(db: &rusqlite::Connection) -> Result<Option<LocalIdentity>, String> {
     let row = db
         .query_row(
-            "SELECT user_id, node_id, display_name, secret_key FROM identity LIMIT 1",
+            // `rowid` rather than bare LIMIT 1: without an ordering SQLite
+            // may return any row, and nothing stops the table holding more
+            // than one. Picking a different identity between launches would
+            // invalidate every pairing.
+            "SELECT user_id, node_id, display_name, secret_key FROM identity \
+              ORDER BY rowid LIMIT 1",
             [],
             |row| {
                 Ok((
@@ -124,7 +129,8 @@ fn load_identity(db: &rusqlite::Connection) -> Result<Option<LocalIdentity>, Str
 
 pub fn update_display_name(db: &rusqlite::Connection, display_name: &str) -> Result<(), String> {
     db.execute(
-        "UPDATE identity SET display_name = ? WHERE user_id = (SELECT user_id FROM identity LIMIT 1)",
+        "UPDATE identity SET display_name = ?
+          WHERE user_id = (SELECT user_id FROM identity ORDER BY rowid LIMIT 1)",
         params![display_name],
     )
     .map_err(|e| e.to_string())?;
@@ -140,6 +146,41 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         crate::setup_database_tables(&db).unwrap();
         db
+    }
+
+    // Nothing stops the table holding more than one row, and a bare LIMIT 1
+    // lets SQLite return any of them. Picking a different identity between
+    // launches would invalidate every pairing on the device.
+    #[test]
+    fn the_same_identity_is_loaded_every_time() {
+        let db = db();
+        let first = get_or_create_identity(&db).unwrap();
+
+        // A second row, as a stray migration or a bug might leave behind.
+        db.execute(
+            "INSERT INTO identity (user_id, node_id, display_name, secret_key)
+                 VALUES ('other', 'other-node', 'Other', x'00')",
+            [],
+        )
+        .unwrap();
+
+        for _ in 0..5 {
+            let again = get_or_create_identity(&db).unwrap();
+            assert_eq!(again.public.node_id, first.public.node_id);
+        }
+    }
+
+    #[test]
+    fn renaming_keeps_the_identity_and_changes_only_the_name() {
+        let db = db();
+        let before = get_or_create_identity(&db).unwrap();
+
+        update_display_name(&db, "Kitchen laptop").unwrap();
+
+        let after = get_or_create_identity(&db).unwrap();
+        assert_eq!(after.public.display_name, "Kitchen laptop");
+        assert_eq!(after.public.node_id, before.public.node_id);
+        assert_eq!(after.public.user_id, before.public.user_id);
     }
 
     #[test]

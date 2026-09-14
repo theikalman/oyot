@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - Rust 1.75+ (install via [rustup](https://rustup.rs))
 - Platform build dependencies for Tauri (see below)
 
@@ -81,7 +81,7 @@ Run `make help` for a list of all available commands:
 - `make fmt` - Format code
 - `make lint` - Run the eslint and clippy linters
 - `make test` - Run the frontend and Rust test suites
-- `make verify` - Everything CI runs: format, lint, typecheck, test
+- `make verify` - Everything CI runs: format, lint, typecheck, test, build
 - `make clippy` - Run Rust linter
 
 ## Quality checks
@@ -89,10 +89,10 @@ Run `make help` for a list of all available commands:
 `.github/workflows/ci.yml` runs on every push to `main` and every pull
 request, in two jobs:
 
-| Job      | Checks                                                        |
-| -------- | ------------------------------------------------------------- |
-| Frontend | `prettier --check`, `eslint`, `svelte-check`, `vitest`        |
-| Rust     | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` |
+| Job      | Checks                                                               |
+| -------- | -------------------------------------------------------------------- |
+| Frontend | `prettier --check`, `eslint`, `svelte-check`, `vitest`, `vite build` |
+| Rust     | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`        |
 
 `make verify` runs the same set locally and is the fastest way to know a
 push will pass. Run it before opening a pull request.
@@ -111,16 +111,18 @@ rustfmt uses the default profile.
 The webview is treated as the untrusted surface, because it renders document
 content and image attachments that arrive from paired devices.
 
-**The frontend has no filesystem permission.** `src-tauri/capabilities/`
-grants only `core`, `dialog`, `opener`, `os` (and `barcode-scanner` on mobile).
-Inserting an image opens the native dialog, which returns a path, and
-`import_image_from_path` reads the bytes in Rust. Plugin ACLs constrain the
-webview, not Rust, so nothing needs to be opened up for that read. Avoid
-reaching for `@tauri-apps/plugin-fs` in the frontend; add a command instead.
+**The frontend has no filesystem permission, and cannot pick a file.**
+`src-tauri/capabilities/` grants only `core`, `opener`, `os` (and
+`barcode-scanner` on mobile). `pick_and_import_image` opens the dialog, reads
+the bytes and stores them entirely in Rust, so no path crosses IPC and there
+is nothing for a caller to supply. Plugin ACLs constrain the webview, not
+Rust. Avoid reaching for `@tauri-apps/plugin-fs` in the frontend; add a
+command instead.
 
-**Attachments are raster only.** `ext_for_mime` in
-`src-tauri/src/commands/attachments.rs` is the allowlist, and every entry point
-goes through `store_attachment`, which enforces it along with the 10MB cap. SVG
+**Attachments are raster only, decided by their content.** Every entry point
+goes through `store_attachment`, which identifies the type from the bytes
+themselves, rejects anything that is not PNG, JPEG, GIF or WebP, and enforces
+the 10MB cap. A declared type that disagrees with the content is an error. SVG
 is excluded on purpose: it can carry script, and an attachment from a peer is
 rendered in the webview.
 
@@ -137,16 +139,54 @@ signature over all of its fields. `src-tauri/src/crypto.rs` holds the format and
 the verifier; messages are checked in the MQTT event loop before anything reads
 the payload. The broker is therefore untrusted infrastructure: it relays
 messages it cannot forge, alter or replay. See
-[ADR 0009](decisions/0009-authenticated-signaling.md).
+[ADR 0009](docs/decisions/0009-authenticated-signaling.md).
 
 The signature answers "is this really that device". Whether we want to talk to
 that device is still the pairing check against `device_pairs`, and both must
 pass.
 
-`mqtts://` is supported and preferred for any broker beyond localhost; the
-reference `mosquitto.conf` also requires authentication and restricts each
-device to its own topic subtree. Neither is what makes a message trustworthy,
-but they keep pairing traffic and SDP off the wire in the clear.
+Replay history is per sender, bounded at 32 senders and 256 nonces each. It
+was one shared list, which meant anyone holding any keypair could push enough
+valid messages to evict a real peer's history and replay one of its messages
+inside the 120 second window. Filling the sender map still takes 32 distinct
+keypairs, and the prize is one replayed signaling message, which the pairing
+check and perfect negotiation both absorb.
+
+A pairing prompt from one sender is rate limited to one per 30 seconds.
+Anyone who learns a `node_id` can publish to its topic, and a valid request
+puts a modal in front of the user, so without this an unpaired device could
+make the app unusable by asking repeatedly.
+
+**Pairing is decided in the webview, not in Rust.** `save_pair` persists any
+`peer_node_id` the frontend gives it, and `mqtt_accept_pair_request` takes the
+peer's `user_id` from the frontend too. Rust checks that a message really came
+from the key it claims; it does not own the state machine that decides a
+pairing was agreed. That is a real gap between this section's framing and the
+code: everything above treats the webview as untrusted, and this one decision
+trusts it. Closing it means moving the pair-request exchange into Rust, which
+has not been done.
+
+### Running a broker
+
+`docker compose up -d` starts `mosquitto/config/mosquitto.conf`, which is the
+development configuration: anonymous, listening on every interface. Both are
+deliberate. The point of running it is to pair two of your own devices, so
+localhost binding will not do, and requiring a password file before the app
+can connect at all is friction for no security gain: the signatures are what
+make a message trustworthy, and pairing still means confirming the other
+device's id by hand.
+
+What the broker can still do is read. It sees who is pairing with whom and the
+SDP inside, so do not expose the development configuration beyond a network
+you trust.
+
+For anything more than that, start from `mosquitto.prod.conf.example` and
+`acl.example`. Together they add authentication, a per-device rule so no
+account can subscribe outside its own topic subtree, and a place to put TLS
+certificates. Enter the username and password in Settings > Sync on each
+device, and point it at `mqtts://host:8883`. Credentials are stored in the
+same plaintext `config.json` as the rest of the configuration, alongside the
+signing key.
 
 The secret key lives in the app database rather than the OS keychain. Anything
 that can read it can already read the notes, so this is coherent rather than
@@ -194,37 +234,62 @@ it does not participate in the peer connection itself.
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap (rich text editing)
 - **Backend**: Rust, Tauri 2.0
 - **Database**: SQLite (rusqlite)
-- **Rust Crates**: walkdir, regex, ignore, glob, serde, chrono
+- **Rust Crates**: rusqlite, rumqttc, ed25519-dalek, serde, chrono, sha2
 
 ---
 
 ## Releasing
 
-The app supports 5 platforms: **macOS, Windows, Linux, Android, and iOS**.
+The app builds for **macOS, Windows, Linux, Android, and iOS**.
 
-- `make release` builds a release for **the current platform only** and puts artifacts in `dist/`.
-- `make release-tag VERSION=x.y.z` pushes a git tag that triggers **GitHub Actions to build all 5 platforms** in parallel and publishes a draft GitHub Release.
+- `make release` builds for **the current platform only** and puts artifacts
+  in `dist/`. The per-platform targets below do the same for Android and iOS.
+- `make release-tag VERSION=x.y.z` pushes a git tag, which triggers GitHub
+  Actions and publishes a draft GitHub Release.
+
+**CI currently builds Android only.** The desktop and iOS jobs are commented
+out in `.github/workflows/release.yml`. Everything else is built locally with
+the targets below and attached to the draft by hand. Uncommenting those jobs
+is what it would take to change that; until then a tag produces one artifact,
+not five.
 
 ### Bumping the version
 
-The version lives in four places, and `src/lib/version.test.ts` fails when they
-disagree. Change all four in the same commit:
+```bash
+make bump VERSION=0.1.0
+```
 
-1. `package.json`
-2. `src-tauri/tauri.conf.json` (and `bundle.android.versionCode`)
-3. `src-tauri/Cargo.toml` (run `cargo check` to refresh `Cargo.lock`)
-4. `src/lib/changelog.ts` — add a new entry at the top of `RELEASES`
+That writes the four mechanical places: `package.json`,
+`src-tauri/tauri.conf.json` (both the version and `bundle.android.versionCode`),
+`src-tauri/Cargo.toml`, and `Cargo.lock`.
 
-The sidebar footer shows the version from `package.json`, and clicking it opens
-the About dialog with the changelog, so a release with no entry ships a dialog
-that says nothing about it.
+The versionCode is derived as `1000 + major*10000 + minor*100 + patch`, which
+keeps it increasing as long as minor and patch stay below 100. Play refuses an
+upload whose versionCode repeats or lowers a published one, and it tells you
+after the build has run, so the script computes it rather than leaving it to be
+remembered.
+
+One thing is left to you: **add an entry at the top of `RELEASES` in
+`src/lib/changelog.ts`**. An entry is a sentence about what changed and nothing
+can write it for you. `src/lib/version.test.ts` fails until it exists, which is
+how you are reminded; it also checks every other place the version is written,
+so a hand edit that misses one does not get past `npm test`.
+
+The sidebar footer shows the version, and clicking it opens the About dialog
+with the changelog, so a release with no entry ships a dialog that says nothing
+about it.
+
+`make release-tag` refuses to tag if `package.json` disagrees with the version
+you gave it, if the working tree is dirty, or if the tests fail.
 
 ### Quick release (all platforms via CI)
 
 ```bash
+make bump VERSION=1.0.0
+# edit src/lib/changelog.ts, then commit
 make release-tag VERSION=1.0.0
 # → pushes tag v1.0.0
-# → GitHub Actions builds Mac/Win/Linux/Android/iOS in parallel
+# → GitHub Actions builds the Android artifacts
 # → draft release appears at github.com/<you>/oyot/releases
 ```
 
@@ -287,7 +352,29 @@ You need a signing keystore. Create one with:
 keytool -genkey -v -keystore oyot.jks -alias oyot -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-Keep `oyot.jks` somewhere safe (do **not** commit it).
+Keep `oyot.jks` somewhere safe (do **not** commit it), and keep its password
+out of the repository too. The signing targets read it from the environment:
+
+```bash
+export ANDROID_KEYSTORE=/path/to/oyot.jks   # defaults to ./oyot.jks
+export ANDROID_KEYSTORE_PASSWORD=...
+```
+
+`make release-android`, `make release-android-aab` and `make install-android`
+refuse to run without them rather than failing inside `apksigner`.
+
+An earlier version of the Makefile had the password written into it in plain
+text, so it is in this repository's history. The keystore file itself was
+never committed, so the key is not compromised, but that password should be
+treated as public and rotated:
+
+```bash
+keytool -storepasswd -keystore oyot.jks
+keytool -keypasswd -alias oyot -keystore oyot.jks
+```
+
+Then update `KEY_STORE_PASSWORD` and `KEY_PASSWORD` in the GitHub secrets
+below.
 
 | Secret                | How to get the value                            |
 | --------------------- | ----------------------------------------------- |
@@ -328,10 +415,10 @@ Output is placed in `dist/` (gitignored - release binaries are not committed).
 
 ### Artifact locations after build
 
-| Platform | Local path                       | CI artifact    |
-| -------- | -------------------------------- | -------------- |
-| macOS    | `dist/mac/*.dmg`                 | GitHub Release |
-| Windows  | `dist/windows/*.msi`, `*.exe`    | GitHub Release |
-| Linux    | `dist/linux/*.deb`, `*.AppImage` | GitHub Release |
-| Android  | `dist/android/*.apk`             | GitHub Release |
-| iOS      | `dist/ios/*.ipa`                 | GitHub Release |
+| Platform | Local path                       | CI artifact                   |
+| -------- | -------------------------------- | ----------------------------- |
+| macOS    | `dist/mac/*.dmg`                 | not built (job commented out) |
+| Windows  | `dist/windows/*.msi`, `*.exe`    | not built (job commented out) |
+| Linux    | `dist/linux/*.deb`, `*.AppImage` | not built (job commented out) |
+| Android  | `dist/android/*.apk`             | GitHub Release                |
+| iOS      | `dist/ios/*.ipa`                 | not built (job commented out) |

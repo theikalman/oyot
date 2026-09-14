@@ -81,12 +81,20 @@ export const ResizableImage = Image.extend({
                     const url = await resolveAttachmentSrc(hash);
                     if (url) {
                         el.setAttribute('src', url);
+                        // The placeholder is a 1x1 pixel, so without clearing
+                        // this the real image would be drawn at that size.
+                        el.classList.remove('attachment-pending');
                         unsubscribe?.();
                         unsubscribe = null;
                     }
                 };
                 void applyResolved().then(() => {
                     if (el.getAttribute('src') === PENDING_IMAGE_SRC) {
+                        // A transparent 1x1 pixel is indistinguishable from
+                        // nothing being there. Mark it so the stylesheet can
+                        // show that an image is on its way from another
+                        // device rather than leaving a gap.
+                        el.classList.add('attachment-pending');
                         requestAttachment(hash);
                         unsubscribe = onAttachmentReady(hash, () => void applyResolved());
                     }
@@ -95,8 +103,15 @@ export const ResizableImage = Image.extend({
                 el.setAttribute('src', rawSrc);
             }
 
+            // Width is the stored dimension; height follows from it. Setting
+            // both pixel values together with `max-width: 100%` meant a
+            // resized image squashed on any screen narrower than the width it
+            // was resized at: the width shrank and the height did not.
             if (node.attrs.width) el.style.width = `${node.attrs.width}px`;
-            if (node.attrs.height) el.style.height = `${node.attrs.height}px`;
+            el.style.height = 'auto';
+            if (node.attrs.width && node.attrs.height) {
+                el.style.aspectRatio = `${node.attrs.width} / ${node.attrs.height}`;
+            }
             el.style.display = 'block';
             el.style.maxWidth = '100%';
 
@@ -107,7 +122,7 @@ export const ResizableImage = Image.extend({
                 getPos: getPos as () => number | undefined,
                 onResize: (width: number, height: number) => {
                     el.style.width = `${width}px`;
-                    el.style.height = `${height}px`;
+                    el.style.aspectRatio = `${width} / ${height}`;
                 },
                 onCommit: (width: number, height: number) => {
                     const pos = getPos();

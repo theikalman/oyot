@@ -1,4 +1,3 @@
-import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import type { Editor } from '@tiptap/core';
 import '@tiptap/extension-image';
@@ -23,17 +22,11 @@ function arrayBufferToBase64(buffer: Uint8Array): string {
     return btoa(binary);
 }
 
-// Raster only. SVG is a script-bearing document and attachments are rendered
-// in the webview, so the store refuses it; keeping it out of the picker means
-// the user gets a greyed-out file rather than an error after choosing one.
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
-
-export function registerImageCommand(_editor: Editor): void {
+export function registerImageCommand(): void {
     const command: SlashCommand = {
         id: 'image',
         label: 'Insert Image',
         icon: '<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4.272 20.728 6.597-6.597c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668l6.553 6.553M14 15l2.869-2.869c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668L22 15M10 9a2 2 0 1 1-4 0 2 2 0 0 1 4 0M6.8 21h10.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C22 18.72 22 17.88 22 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C19.72 3 18.88 3 17.2 3H6.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C2 5.28 2 6.12 2 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C4.28 21 5.12 21 6.8 21"/></svg>',
-        onTrigger: () => {},
         onSelect: (props: CommandSelectProps) => {
             const range = props.range;
             const ed = props.editor as Editor;
@@ -48,21 +41,16 @@ export function registerImageCommand(_editor: Editor): void {
 }
 
 export async function insertImageFromFile(editor: Editor): Promise<void> {
-    const filePath = await open({
-        multiple: false,
-        filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
-    });
-
-    if (!filePath) return;
-
     try {
-        // Rust reads the file, so the webview needs no filesystem permission
-        // and a large image never crosses IPC as base64. It enforces the type
-        // allowlist and the size cap on the way in.
-        const stored = await invoke<{ hash: string; mime_type: string; size: number }>(
-            'import_image_from_path',
-            { path: filePath },
+        // Rust opens the dialog, reads the file and stores it. The picked path
+        // never crosses IPC, so a script in the webview cannot name a file for
+        // this to copy into the attachment store, and the frontend needs no
+        // filesystem permission at all. Rust also enforces the size cap and
+        // decides the image type from the bytes.
+        const stored = await invoke<{ hash: string; mime_type: string; size: number } | null>(
+            'pick_and_import_image',
         );
+        if (!stored) return; // cancelled
         insertImageNode(editor, stored.hash, stored.mime_type, stored.size);
     } catch (error) {
         console.error('Failed to insert image:', error);

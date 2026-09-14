@@ -19,8 +19,13 @@ vi.mock('$lib/sync', () => ({
     },
 }));
 
+const counts: Array<{ docId: string; todo: number; done: number }> = [];
 vi.mock('$lib/stores/app', () => ({
-    appStore: { markDocumentHasContent: () => {} },
+    appStore: {
+        markDocumentHasContent: () => {},
+        setDocumentCounts: (docId: string, todo: number, done: number) =>
+            counts.push({ docId, todo, done }),
+    },
 }));
 
 vi.mock('$lib/services/toast', () => ({
@@ -51,6 +56,7 @@ describe('EditorSaveService', () => {
     beforeEach(() => {
         saved.length = 0;
         broadcast.length = 0;
+        counts.length = 0;
         saveShouldThrow = false;
         vi.useFakeTimers();
     });
@@ -147,17 +153,122 @@ describe('EditorSaveService', () => {
         expect(broadcast).toHaveLength(0);
     });
 
-    it('a save broadcasts the same content it persisted', async () => {
+    it('a save broadcasts the edit it recorded', async () => {
+        const ydoc = docWith('shared');
         const svc = new EditorSaveService();
         svc.setDocument(asDocument('doc'));
-        svc.setYDoc(docWith('shared'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(6, '!');
+        svc.recordUpdate(updates[0]);
 
         await svc.flushNow();
 
         expect(broadcast).toHaveLength(1);
         expect(broadcast[0].docId).toBe('doc');
-        const decoded = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        expect(textOf(decoded)).toBe('shared');
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, saved[0].state);
+        expect(peer.getText('content').toString()).toBe('shared!');
+    });
+
+    // The sidebar badge read whatever the counts had been when the app
+    // opened, however many tasks had been ticked since: nothing pushed the
+    // new numbers into the store after a save.
+    it('pushes the task counts it extracted into the store', async () => {
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(docWith('two tasks'));
+        svc.setIndexReader(() => ({
+            text: 'two tasks',
+            linkTargets: [],
+            attachmentHashes: [],
+            todoCount: 2,
+            completedTodoCount: 1,
+        }));
+
+        await svc.flushNow();
+
+        expect(counts).toEqual([{ docId: 'doc', todo: 2, done: 1 }]);
+    });
+
+    // A failed save was reported to the user and then forgotten. If nothing
+    // else was typed, the edit died with the Y.Doc on the next document
+    // switch, so the user saw an error and then lost the work anyway.
+    it('remembers a failed save as still needing to be written', async () => {
+        saveShouldThrow = true;
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(docWith('important'));
+
+        await svc.flushNow();
+
+        expect(svc.hasPendingWrite()).toBe(true);
+    });
+
+    it('writes again after a failure', async () => {
+        const ydoc = docWith('base');
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(4, '!');
+        svc.recordUpdate(updates[0]);
+
+        saveShouldThrow = true;
+        await svc.flushNow();
+        expect(saved).toHaveLength(0);
+
+        saveShouldThrow = false;
+        await svc.flushNow();
+
+        expect(saved).toHaveLength(1);
+        expect(textOf(saved[0].state)).toBe('base!');
+        expect(svc.hasPendingWrite()).toBe(false);
+    });
+
+    it('does not lose the delta a failed save was carrying', async () => {
+        // The peer never saw it, so it still has to go out. Taking the delta
+        // and dropping it on failure meant only the next edit was broadcast,
+        // and the failed one reached other devices only on the next reconnect.
+        const ydoc = docWith('base');
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
+
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(4, ' one');
+        svc.recordUpdate(updates[0]);
+
+        saveShouldThrow = true;
+        await svc.flushNow();
+        expect(broadcast).toHaveLength(0);
+
+        saveShouldThrow = false;
+        await svc.flushNow();
+
+        expect(broadcast).toHaveLength(1);
+        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
+        Y.applyUpdate(peer, sent);
+        expect(peer.getText('content').toString()).toBe('base one');
+    });
+
+    it('a document switch drops the dirty flag with the pending edits', () => {
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc-a'));
+        svc.setYDoc(docWith('x'));
+        svc.recordUpdate(new Uint8Array([1, 2, 3]));
+        expect(svc.hasPendingWrite()).toBe(true);
+
+        svc.setDocument(asDocument('doc-b'));
+        expect(svc.takePendingDelta()).toBeNull();
     });
 
     it('a failed save reports instead of rejecting the caller', async () => {
@@ -177,6 +288,7 @@ describe('delta broadcasting', () => {
     beforeEach(() => {
         saved.length = 0;
         broadcast.length = 0;
+        counts.length = 0;
         saveShouldThrow = false;
         vi.useFakeTimers();
     });
@@ -239,18 +351,19 @@ describe('delta broadcasting', () => {
         expect(peer.getText('content').toString()).toBe('base one two');
     });
 
-    it('falls back to the full state when nothing was recorded', async () => {
-        // The teardown and visibility paths can fire without a recorded update;
-        // sending the whole document is wasteful but correct.
+    it('writes but sends nothing when no local edit was recorded', async () => {
+        // The regression this guards: falling back to the whole document here
+        // meant a peer's edit arriving in the open document triggered a save
+        // that sent the entire document straight back to that peer, once per
+        // remote keystroke batch.
         const svc = new EditorSaveService();
         svc.setDocument(asDocument('doc'));
         svc.setYDoc(docWith('content'));
 
         await svc.flushNow();
 
-        expect(broadcast).toHaveLength(1);
-        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        expect(sent).toEqual(saved[0].state);
+        expect(saved).toHaveLength(1);
+        expect(broadcast).toHaveLength(0);
     });
 
     it('does not carry a pending delta across a document switch', async () => {
@@ -306,19 +419,28 @@ describe('persistSnapshot', () => {
 
     it('writes and broadcasts exactly what it was handed', async () => {
         const state = Y.encodeStateAsUpdate(docWith('captured'));
-        await persistSnapshot('doc-x', state);
+        await persistSnapshot('doc-x', state, state);
 
         expect(saved).toEqual([{ docId: 'doc-x', state }]);
         expect(broadcast[0].docId).toBe('doc-x');
     });
 
+    it('writes without broadcasting when handed no delta', async () => {
+        const state = Y.encodeStateAsUpdate(docWith('captured'));
+        await persistSnapshot('doc-x', state, null);
+
+        expect(saved).toHaveLength(1);
+        expect(broadcast).toHaveLength(0);
+    });
+
     it('skips an empty snapshot', async () => {
-        await persistSnapshot('doc-x', new Uint8Array());
+        await persistSnapshot('doc-x', new Uint8Array(), null);
         expect(saved).toHaveLength(0);
     });
 
     it('skips the bare empty Yjs update', async () => {
-        await persistSnapshot('doc-x', Y.encodeStateAsUpdate(new Y.Doc()));
+        const empty = Y.encodeStateAsUpdate(new Y.Doc());
+        await persistSnapshot('doc-x', empty, empty);
         expect(saved).toHaveLength(0);
         expect(broadcast).toHaveLength(0);
     });

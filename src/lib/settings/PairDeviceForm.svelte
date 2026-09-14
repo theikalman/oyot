@@ -37,8 +37,14 @@
         const trimmed = nodeIdInput.trim();
         if (nodeIdError(trimmed)) return;
         onPair(trimmed);
-        nodeIdInput = '';
     }
+
+    // Clear the field only once the pairing has actually gone through.
+    // Clearing on send meant a request that was declined, or never answered,
+    // left the user with nothing to retry and a 43-character id to find again.
+    $effect(() => {
+        if (pairingState === null && nodeIdInput) nodeIdInput = '';
+    });
 
     function handleKeydown(event: KeyboardEvent) {
         if (event.key === 'Enter') handlePair();
@@ -97,6 +103,12 @@
         {#if pairingState === 'declined'}
             <p class="pair-status error">The other device declined the pairing request.</p>
         {/if}
+        {#if pairingState === 'timed-out'}
+            <p class="pair-status error">
+                No answer from that device. Check it is running, on the same broker, and that the ID
+                is right, then try again.
+            </p>
+        {/if}
         {#if scanError}
             <p class="pair-status error">{scanError}</p>
         {/if}
@@ -112,7 +124,7 @@
         margin-bottom: 32px;
     }
     .node-id-input.invalid {
-        border-color: #d9534f;
+        border-color: var(--status-error);
     }
     .section h2 {
         margin: 0 0 16px 0;

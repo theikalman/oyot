@@ -4,6 +4,7 @@
 - **Date:** 2026-09-14
 - **Amends:** [0003](0003-full-document-set-sync.md) decision 5 ("Tombstones
   always win")
+- **Amended by:** [0012](0012-deletion-propagates-transitively.md)
 
 ## Context
 

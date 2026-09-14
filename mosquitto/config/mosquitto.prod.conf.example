@@ -1,0 +1,36 @@
+# Hardened broker, for anything beyond a development LAN.
+#
+# Copy to mosquitto.conf on the host that will run it, adjust, and mount your
+# certificates. This is defence in depth rather than the security boundary:
+# signalling is signed end to end, so a broker cannot forge, alter or replay a
+# message even without any of this (see
+# docs/decisions/0009-authenticated-signaling.md). What these settings add is
+# that the operator, and anyone on the path, cannot read who is pairing with
+# whom or the SDP inside.
+#
+# Create the password file before first run, one account per device:
+#   docker compose run --rm --entrypoint mosquitto_passwd mqtt -c -b \
+#       /mosquitto/config/passwd laptop <password>
+#   docker compose run --rm --entrypoint mosquitto_passwd mqtt -b \
+#       /mosquitto/config/passwd phone <password>
+#
+# Then enter the username and password in Settings > Sync on each device, and
+# point it at mqtts://your-host:8883.
+
+# Plain listener. Drop this entirely once TLS works, so nothing can fall back
+# to it.
+listener 1883
+
+# TLS. Point these at real certificates; a self-signed one will not be
+# accepted, because the client verifies against the platform root store.
+# listener 8883
+# certfile /mosquitto/config/certs/fullchain.pem
+# keyfile  /mosquitto/config/certs/privkey.pem
+
+allow_anonymous false
+password_file /mosquitto/config/passwd
+acl_file /mosquitto/config/acl.example
+
+persistence true
+persistence_location /mosquitto/data/
+log_dest file /mosquitto/log/mosquitto.log

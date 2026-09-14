@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-29
+- **Amended by:** [0004](0004-manual-reconnect-and-per-direction-epoch.md), [0011](0011-boot-id-for-signaling-sessions.md) (the epoch is per boot, not only per direction)
 
 ## Context
 

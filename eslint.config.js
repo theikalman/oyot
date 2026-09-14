@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
+import svelteParser from 'svelte-eslint-parser';
 import globals from 'globals';
 
 export default ts.config(
@@ -16,6 +17,11 @@ export default ts.config(
             // with type guards; `any` in the Tiptap node-view signatures mirrors the
             // library's own typing. Warn so new ones are visible, do not block.
             '@typescript-eslint/no-explicit-any': 'warn',
+            // `console.log` is tracing, and tracing must not ship: `log.debug`
+            // folds away in a production build. `warn` and `error` are kept,
+            // because a user reporting a problem should have something to
+            // read, which is exactly what `log.warn`/`log.error` forward to.
+            'no-console': ['error', { allow: ['warn', 'error'] }],
             '@typescript-eslint/no-unused-vars': [
                 'error',
                 { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
@@ -25,6 +31,15 @@ export default ts.config(
     {
         files: ['**/*.svelte'],
         languageOptions: {
+            parserOptions: { parser: ts.parser },
+        },
+    },
+    {
+        // Rune modules. They are TypeScript, but `$state` and `$derived` are
+        // Svelte syntax, so the plain TS parser rejects them.
+        files: ['**/*.svelte.ts', '**/*.svelte.js'],
+        languageOptions: {
+            parser: svelteParser,
             parserOptions: { parser: ts.parser },
         },
     },

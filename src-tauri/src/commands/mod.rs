@@ -6,7 +6,10 @@ pub mod pairing;
 pub mod sync;
 
 pub use attachments::*;
-pub use config::{get_mqtt_broker_url, get_theme, save_mqtt_broker_url, save_theme};
+pub use config::{
+    get_mqtt_broker_url, get_mqtt_credentials, get_theme, save_mqtt_broker_url,
+    save_mqtt_credentials, save_theme,
+};
 pub use documents::*;
 pub use mqtt::*;
 pub use pairing::*;

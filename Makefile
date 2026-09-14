@@ -1,9 +1,11 @@
 .PHONY: help install dev build run clean check fmt lint test verify clippy \
-        release release-android release-android-aab release-ios release-tag install-android \
+        release release-android release-android-aab release-ios release-tag bump install-android \
         mqtt-up mqtt-down mqtt-logs
 
-# Only apply custom Rust path on macOS (Apple Silicon) — not needed on CI or Linux/Windows
-ifneq ($(filter darwin,Darwin),)
+# Only apply the custom Rust path on macOS (Apple Silicon); not needed on CI
+# or Linux/Windows. `$(filter darwin,Darwin)` never matched, because filter is
+# case-sensitive, so this block had never run.
+ifeq ($(shell uname -s),Darwin)
 RUST_PATH := /opt/homebrew/opt/rustup/bin:$(HOME)/.rustup/toolchains/stable-aarch64-apple-darwin/bin
 export PATH := $(RUST_PATH):$(PATH)
 endif
@@ -46,7 +48,8 @@ help:
 	@echo "  make release-android            - Build Android APK → dist/android/"
 	@echo "  make release-android-aab        - Build Android AAB (Play Store) → dist/android/"
 	@echo "  make release-ios                - Build iOS IPA → dist/ios/"
-	@echo "  make release-tag VERSION=x.y.z  - Push git tag → triggers full CI"
+	@echo "  make bump VERSION=x.y.z         - Set the version everywhere it is written"
+	@echo "  make release-tag VERSION=x.y.z  - Push git tag → triggers the release build"
 
 install:
 	npm install --force
@@ -72,11 +75,40 @@ mqtt-logs:
 dev:
 	env RUST_BACKTRACE=full npm run tauri dev
 
-REPOPATH ?= /Volumes/YAKINWKSPC/repo
+# Android signing.
+#
+# The keystore path and its password used to be written here, the password in
+# plain text on three lines. It is in the git history as a result, so treat it
+# as public and rotate it: `keytool -storepasswd -keystore oyot.jks` and
+# `keytool -keypasswd -alias oyot -keystore oyot.jks`. The keystore file itself
+# was never committed, so the signing key is not compromised.
+#
+# Set these in your shell, or a .env your shell sources. `make` will not run a
+# signing target without them.
+ANDROID_KEYSTORE ?= $(CURDIR)/oyot.jks
+# ANDROID_KEYSTORE_PASSWORD: no default on purpose.
+
+# Fail with an explanation rather than an apksigner usage error.
+define require_signing
+	@test -n "$(ANDROID_KEYSTORE_PASSWORD)" || { \
+		echo "ERROR: ANDROID_KEYSTORE_PASSWORD is not set."; \
+		echo "  export ANDROID_KEYSTORE_PASSWORD=... (and ANDROID_KEYSTORE if not ./oyot.jks)"; \
+		exit 1; \
+	}
+	@test -f "$(ANDROID_KEYSTORE)" || { \
+		echo "ERROR: keystore not found at $(ANDROID_KEYSTORE)"; \
+		echo "  set ANDROID_KEYSTORE to its path."; \
+		exit 1; \
+	}
+endef
+
 install-android:
+	$(require_signing)
 	npm run tauri android build -- --target aarch64 --debug && \
 		cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
-		./apksigner sign --ks $(REPOPATH)/oyot/oyot.jks --ks-pass pass:ajiyakin123 --out /tmp/oyot-signed.apk $(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && \
+		./apksigner sign --ks "$(ANDROID_KEYSTORE)" --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+			--out /tmp/oyot-signed.apk \
+			$(CURDIR)/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk && \
 		cd $(ANDROID_HOME)/platform-tools/ && \
 		adb install -r /tmp/oyot-signed.apk
 
@@ -115,12 +147,13 @@ verify:
 	npm run lint
 	npm run check
 	npm test
+	npm run build
 	cd src-tauri && cargo fmt --check
 	cd src-tauri && cargo clippy --all-targets -- -D warnings
 	cd src-tauri && cargo test
 
 clippy:
-	cd src-tauri && cargo clippy -- -D warnings
+	cd src-tauri && cargo clippy --all-targets -- -D warnings
 
 # ---------------------------------------------------------------------------
 # Release targets
@@ -148,16 +181,18 @@ release:
 	fi
 
 release-android:
+	$(require_signing)
 	@echo "Building Android release..."
 	npm run tauri android build -- --apk
 	@mkdir -p dist/android
 	cd $(ANDROID_HOME)/build-tools/35.0.0/ && \
-		./apksigner sign --ks $(REPOPATH)/oyot/oyot.jks --ks-pass pass:ajiyakin123 \
-			--out $(REPOPATH)/oyot/dist/android/oyot-release.apk \
-			$(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+		./apksigner sign --ks "$(ANDROID_KEYSTORE)" --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+			--out $(CURDIR)/dist/android/oyot-release.apk \
+			$(CURDIR)/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 	@echo "Android artifacts → dist/android/"
 
 release-android-aab:
+	$(require_signing)
 	@echo "Building Android App Bundle..."
 	@mkdir -p dist/android
 	@echo "Using NDK: $(ANDROID_NDK_HOME)"
@@ -169,12 +204,12 @@ release-android-aab:
 	@echo "Pinning SDK dir for AGP (NDK is selected via ndkVersion in app/build.gradle.kts)..."
 	@printf 'sdk.dir=%s\n' "$(ANDROID_HOME)" > src-tauri/gen/android/local.properties
 	npm run tauri android build -- --aab
-	cp $(REPOPATH)/oyot/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab \
-		$(REPOPATH)/oyot/dist/android/oyot-release.aab
+	cp $(CURDIR)/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab \
+		$(CURDIR)/dist/android/oyot-release.aab
 	jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-		-keystore $(REPOPATH)/oyot/oyot.jks -storepass ajiyakin123 \
-		$(REPOPATH)/oyot/dist/android/oyot-release.aab oyot
-	@unzip -l $(REPOPATH)/oyot/dist/android/oyot-release.aab \
+		-keystore "$(ANDROID_KEYSTORE)" -storepass "$(ANDROID_KEYSTORE_PASSWORD)" \
+		$(CURDIR)/dist/android/oyot-release.aab oyot
+	@unzip -l $(CURDIR)/dist/android/oyot-release.aab \
 		| grep -q 'com.android.tools.build.debugsymbols' \
 		&& echo "OK: native debug symbols bundled in AAB" \
 		|| { echo "ERROR: native debug symbols missing from AAB - check the release strip step is not a no-op"; exit 1; }
@@ -188,12 +223,35 @@ release-ios:
 		-exec cp {} dist/ios/ \; 2>/dev/null || true
 	@echo "iOS artifacts → dist/ios/"
 
+# The version lives in five files. Writing them by hand is how the Android
+# versionCode gets left behind, which Play only tells you about after the
+# build has already run.
+bump:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make bump VERSION=1.2.3"; \
+		exit 1; \
+	fi
+	./scripts/bump-version.sh $(VERSION)
+
 release-tag:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "Usage: make release-tag VERSION=1.2.3"; \
 		exit 1; \
 	fi
+	@# Tagging a commit whose package.json says something else produces a
+	@# release whose artifacts disagree with their own tag.
+	@actual=$$(node -p 'require("./package.json").version'); \
+	if [ "$$actual" != "$(VERSION)" ]; then \
+		echo "ERROR: package.json says $$actual, not $(VERSION)."; \
+		echo "  Run: make bump VERSION=$(VERSION)"; \
+		exit 1; \
+	fi
+	@test -z "$$(git status --porcelain)" || { \
+		echo "ERROR: the working tree is dirty. Commit the version bump first."; \
+		exit 1; \
+	}
+	npm test
 	git tag v$(VERSION)
 	git push origin v$(VERSION)
-	@echo "Tag v$(VERSION) pushed — GitHub Actions will build all platforms."
+	@echo "Tag v$(VERSION) pushed — GitHub Actions will build the release."
 	@echo "Monitor progress at: https://github.com/$$(git remote get-url origin | sed 's/.*github.com[:/]//' | sed 's/\.git$$//')/actions"

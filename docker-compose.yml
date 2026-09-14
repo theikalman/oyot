@@ -11,6 +11,9 @@ services:
     environment:
       - TZ=UTC
     restart: unless-stopped
+    # Subscribes anonymously, which the development config allows. Against the
+    # hardened config this needs `-u`/`-P`, or it will report the broker
+    # unhealthy for ever while it works perfectly well.
     healthcheck:
       test:
         [

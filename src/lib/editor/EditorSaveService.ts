@@ -25,24 +25,33 @@ export interface SaveServiceOptions {
 // the incoming document's empty state under the outgoing document's id.
 //
 // `snapshot` is the whole merged state, because `crdt_state` is a materialised
-// column. `delta` is only what changed, which is all a peer needs; passing the
-// snapshot as the delta is a correct but wasteful fallback. Losing a live delta
-// is not a correctness problem either way: the manifest exchange on every
-// (re)connect is what guarantees convergence, and live messages are a latency
-// optimisation on top of it (ADR 0003).
+// column. `delta` is only what changed locally, which is all a peer needs, and
+// `null` means nothing changed locally and there is nothing to send.
+//
+// A null delta must not fall back to broadcasting the snapshot. The editor
+// saves for reasons other than the user typing -- a peer's edit arriving in
+// the open document is one -- and sending the whole document back in response
+// echoes every peer's own edit at it, once per remote keystroke batch.
+//
+// Skipping a live message is not a correctness problem: the manifest exchange
+// on every (re)connect is what guarantees convergence, and live messages are a
+// latency optimisation on top of it (ADR 0003).
 export async function persistSnapshot(
     docId: string,
     snapshot: Uint8Array,
-    delta: Uint8Array = snapshot,
+    delta: Uint8Array | null,
     index?: DocumentIndex,
 ): Promise<void> {
     if (snapshot.length <= EMPTY_UPDATE_LEN) return;
     try {
         await documentRepository.saveLocalUpdate(docId, snapshot, index);
-        if (delta.length > EMPTY_UPDATE_LEN) {
+        if (delta && delta.length > EMPTY_UPDATE_LEN) {
             broadcastLocalUpdate(docId, bytesToBase64(delta));
         }
         appStore.markDocumentHasContent(docId);
+        if (index) {
+            appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
+        }
     } catch (error) {
         console.error(`[EditorSaveService] [${docId}] Failed to save document:`, error);
         toasts.error('Failed to save document');
@@ -61,6 +70,11 @@ export class EditorSaveService {
     private onSaving?: () => void;
     private onSaved?: (docId: string) => void;
     private isDestroyed = false;
+    // Set when a write fails, so the next trigger writes again instead of
+    // treating the document as saved. A failed save used to be reported and
+    // then forgotten: if nothing else was typed, the edit was lost on the
+    // next document switch, which destroys the Y.Doc it lived in.
+    private dirty = false;
     // Supplied by the editor, because only it can read the rendered document.
     private readIndex: (() => DocumentIndex | null) | null = null;
 
@@ -80,6 +94,7 @@ export class EditorSaveService {
 
     setDocument(doc: Document | null): void {
         this.currentDoc = doc;
+        this.dirty = false;
         // Updates belong to the document that produced them; carrying them
         // across a switch would broadcast one document's edit under another's
         // id.
@@ -91,6 +106,7 @@ export class EditorSaveService {
     recordUpdate(update: Uint8Array): void {
         if (this.isDestroyed) return;
         this.pendingUpdates.push(update);
+        this.dirty = true;
         this.triggerSave();
     }
 
@@ -134,26 +150,32 @@ export class EditorSaveService {
         if (snapshot.length <= EMPTY_UPDATE_LEN) return null;
 
         // Read both synchronously, before the returned promise is awaited: the
-        // caller may be tearing this editor down.
-        const delta = this.takePendingDelta() ?? snapshot;
+        // caller may be tearing this editor down. A null delta is the normal
+        // case for a save that no local edit prompted.
+        const delta = this.takePendingDelta();
         const index = this.readIndex?.() ?? undefined;
 
         this.onSaving?.();
         return persistSnapshot(docId, snapshot, delta, index)
             .then(() => {
+                this.dirty = false;
                 this.onSaved?.(docId);
             })
             .catch(() => {
-                // persistSnapshot already reported it; swallow so a failed save
-                // does not surface as an unhandled rejection on a teardown path.
+                // persistSnapshot already reported it to the user; swallow so
+                // a failed save does not surface as an unhandled rejection on
+                // a teardown path. Remember it, though: the content is still
+                // only in memory.
+                this.dirty = true;
+                if (delta) this.pendingUpdates.unshift(delta);
                 this.onSaved?.(docId);
             });
     }
 
-    // True while an edit is sitting in the debounce window, i.e. there is
-    // unwritten work that a teardown must flush.
+    // True when there is unwritten work a teardown must flush: an edit inside
+    // the debounce window, or a write that failed and has not been retried.
     hasPendingWrite(): boolean {
-        return this.saveTimeout !== null;
+        return this.saveTimeout !== null || this.dirty;
     }
 
     destroy(): void {
@@ -165,6 +187,7 @@ export class EditorSaveService {
         this.ydoc = null;
         this.currentDoc = null;
         this.pendingUpdates = [];
+        this.dirty = false;
     }
 }
 

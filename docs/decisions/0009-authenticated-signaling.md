@@ -4,6 +4,7 @@
 - **Date:** 2026-09-14
 - **Amends:** [0001](0001-mqtt-over-iroh-for-signaling.md), which chose the MQTT
   transport without specifying how a sender is authenticated
+- **Amended by:** [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md) (the reference broker configuration)
 
 ## Context
 

@@ -5,11 +5,13 @@
   "platforms": ["macOS", "windows", "linux"],
   "windows": ["main"],
   "comment": [
-    "No fs permissions: the webview never touches the filesystem. Picking an",
-    "image yields a path from the dialog plugin, and the bytes are read by the",
-    "import_image_from_path command in Rust, which is not subject to this ACL.",
+    "No fs and no dialog permissions: the webview never touches the",
+    "filesystem and never picks a file. pick_and_import_image opens the",
+    "dialog, reads the bytes and stores them entirely in Rust, which is not",
+    "subject to this ACL, so a chosen path never crosses IPC and cannot be",
+    "supplied by anything rendering in the webview.",
     "Rendering an attachment goes through the asset protocol, scoped to the",
     "attachments directory in tauri.conf.json."
   ],
-  "permissions": ["core:default", "opener:default", "dialog:default", "os:default"]
+  "permissions": ["core:default", "opener:default", "os:default"]
 }

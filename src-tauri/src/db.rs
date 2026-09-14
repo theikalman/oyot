@@ -1,4 +1,3 @@
-use crate::db_snapshot::DbSnapshot;
 use crate::network::signaling_manager::SignalingManager;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -7,8 +6,7 @@ use tauri::{AppHandle, Manager};
 
 /// Connection settings applied once at open. None of these were set before, so
 /// the database ran with SQLite's defaults: rollback journalling, and foreign
-/// keys OFF, which meant the `ON DELETE CASCADE` declared on `yjs_updates` and
-/// `yjs_snapshots` had never actually fired.
+/// keys OFF, so no `ON DELETE CASCADE` in the schema had ever actually fired.
 pub fn configure_connection(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
@@ -21,7 +19,6 @@ pub fn configure_connection(conn: &Connection) -> Result<(), String> {
 
 pub struct AppState {
     pub db: Arc<parking_lot::Mutex<Connection>>,
-    pub snapshot: Arc<DbSnapshot>,
     pub signaling_manager: Arc<SignalingManager>,
     #[allow(dead_code)]
     pub app_handle: AppHandle,
@@ -48,7 +45,6 @@ impl AppState {
 
         Ok(Self {
             db: db.clone(),
-            snapshot: Arc::new(DbSnapshot::new(db.clone())),
             signaling_manager,
             app_handle,
             data_dir: app_data_dir,

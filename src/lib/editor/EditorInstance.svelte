@@ -4,32 +4,20 @@
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
-    import StarterKit from '@tiptap/starter-kit';
     import Placeholder from '@tiptap/extension-placeholder';
-    import TaskList from '@tiptap/extension-task-list';
-    import TaskItem from '@tiptap/extension-task-item';
-    import { Table } from '@tiptap/extension-table';
-    import TableRow from '@tiptap/extension-table-row';
-    import TableCell from '@tiptap/extension-table-cell';
-    import TableHeader from '@tiptap/extension-table-header';
-    import Typography from '@tiptap/extension-typography';
     import { Extension } from '@tiptap/core';
     import { SlashCommand } from '$lib/tiptap/SlashCommand';
-    import { DocumentLinkNode } from '$lib/tiptap/nodes/DocumentLinkNode';
+    import { createContentExtensions } from './extensions';
     import {
         registerDocumentLinkCommand,
         registerDateCommand,
         registerTodoCommand,
         registerImageCommand,
     } from '$lib/tiptap';
-    import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
-    import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import {
-        loadYjsDocFromState,
-        createInitialContent,
-        createCollaborationExtension,
-        REMOTE_ORIGIN,
-    } from './yjs';
+    import { createCollaborationExtension } from './yjs';
+    import { REMOTE_ORIGIN } from './origin';
+    import { unregisterOpenDoc } from './openDocs';
+    import { documentRepository } from '$lib/sync';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -45,9 +33,7 @@
 
     interface Props {
         document: any | null;
-        autoSave?: boolean;
         onEditorReady?: (editor: EditorType, ydoc: any) => void;
-        onContentChange?: () => void;
         // Called with the outgoing document's id and ydoc immediately before
         // the editor behind them is destroyed, so a pending save can be
         // flushed while the state that produced it is still live.
@@ -58,14 +44,7 @@
         onLocalUpdate?: (update: Uint8Array) => void;
     }
 
-    let {
-        document,
-        autoSave = true,
-        onEditorReady,
-        onContentChange,
-        onBeforeTeardown,
-        onLocalUpdate,
-    }: Props = $props();
+    let { document, onEditorReady, onBeforeTeardown, onLocalUpdate }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
@@ -79,7 +58,8 @@
     let keyboardHeight = $state(0);
 
     async function initializeEditor() {
-        if (!element) {
+        const docId: string | null = document?.id ?? null;
+        if (!element || !docId) {
             return false;
         }
 
@@ -90,6 +70,13 @@
             onBeforeTeardown?.(currentDocId, ydoc);
         }
 
+        // Stop the sync layer handing a peer's edit to a document we are about
+        // to discard. Before the teardown below, so there is no window where a
+        // merge could land on a Y.Doc nothing is reading any more.
+        if (ydoc && currentDocId) {
+            unregisterOpenDoc(currentDocId, ydoc);
+        }
+
         if (editor) {
             editor.destroy();
             editor = null;
@@ -98,61 +85,51 @@
             ydoc = null;
         }
 
-        const newYDoc = loadYjsDocFromState(
-            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array(),
-        );
-
-        const title = document?.title ?? 'Untitled';
-        let initialContent: object = createInitialContent(title) as object;
+        // Reads the stored state and registers this Y.Doc as the open copy in
+        // one queued step. Loading from `document.crdt_state` instead would
+        // reopen whatever was fetched when the user clicked, which a merge
+        // since then has already made stale.
+        const newYDoc = await documentRepository.openDocument(docId);
 
         const collabExt = createCollaborationExtension(newYDoc, 'content');
 
         const ed = new Editor({
             element,
             extensions: [
-                StarterKit.configure({
-                    undoRedo: false,
-                }),
+                // The schema, shared with the sync layer so a document merged
+                // from a peer is read the same way this editor renders it.
+                ...createContentExtensions(),
+                // Interaction, which only a live editor has any use for.
+                // Collaboration declares priority 1000, so it leads the plugin
+                // order wherever it sits in this list.
                 collabExt,
-                ResizableImage.configure({
-                    inline: false,
-                    allowBase64: true,
-                }),
-                ImageExtension,
                 Placeholder.configure({
                     placeholder: 'Start writing...',
                 }),
-                TaskList,
-                TaskItem.configure({
-                    nested: true,
-                }),
-                Table.configure({
-                    resizable: true,
-                }),
-                TableRow,
-                TableHeader,
-                TableCell,
-                Typography,
-                DocumentLinkNode,
                 SlashCommand,
                 ScrollOnFocus,
             ],
-            content: initialContent,
+            // No initial content. The collaboration binding replaces the
+            // document with the Yjs fragment as soon as the editor is
+            // constructed, so anything passed here was discarded before it
+            // could be seen. A new document starts empty, which is what it
+            // did in practice anyway.
             editable: true,
-            onUpdate: () => {
-                if (autoSave && editor) {
-                    onContentChange?.();
-                }
-            },
         });
 
         ed.view.dom.addEventListener('click', handleImageClick);
 
-        registerDocumentLinkCommand(ed);
-        registerDateCommand(ed);
-        registerTodoCommand(ed);
-        registerImageCommand(ed);
+        // These register into a module-level registry, not into `ed`. They
+        // took an editor argument that none of them used.
+        registerDocumentLinkCommand();
+        registerDateCommand();
+        registerTodoCommand();
+        registerImageCommand();
 
+        // The only thing that schedules a save. Tiptap's `onUpdate` used to do
+        // it as well, which meant a peer's edit landing in this document
+        // scheduled a save whose "delta" was the whole document, sent straight
+        // back to the peer that had just sent it.
         newYDoc.on('update', (update: Uint8Array, origin: unknown) => {
             if (origin === REMOTE_ORIGIN) return;
             onLocalUpdate?.(update);
@@ -161,7 +138,7 @@
         ydoc = newYDoc;
         editor = ed;
         isInitialized = true;
-        currentDocId = document?.id ?? null;
+        currentDocId = docId;
 
         onEditorReady?.(ed, newYDoc);
         return true;
@@ -224,6 +201,7 @@
 
         if (ydoc && currentDocId) {
             onBeforeTeardown?.(currentDocId, ydoc);
+            unregisterOpenDoc(currentDocId, ydoc);
         }
 
         if (editor) {
@@ -366,6 +344,18 @@
         background-color: var(--accent-bg-hover);
     }
 
+    /* The target is gone. Still readable, because the text is part of the
+       sentence, but plainly not somewhere you can go. */
+    .editor-content :global(.document-link-missing) {
+        background-color: var(--bg-hover);
+        color: var(--text-muted);
+        text-decoration: line-through;
+    }
+
+    .editor-content :global(.document-link-missing:hover) {
+        background-color: var(--bg-hover);
+    }
+
     .editor-content :global(.document-link-icon) {
         font-size: 12px;
     }
@@ -427,6 +417,17 @@
 
     .editor-content :global(th) {
         background: var(--bg-secondary);
+    }
+
+    /* An attachment whose bytes have not arrived from the other device yet.
+       The placeholder is a transparent 1x1 pixel, which on its own is
+       indistinguishable from nothing being there at all. */
+    .editor-content :global(img.attachment-pending) {
+        min-width: 120px;
+        min-height: 90px;
+        background: var(--bg-hover);
+        border: 1px dashed var(--border-color);
+        border-radius: 6px;
     }
 
     .editor-content :global(img) {

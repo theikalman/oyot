@@ -7,9 +7,14 @@ class FakeChannel extends EventTarget {
     readyState: RTCDataChannelState = 'open';
     bufferedAmount = 0;
     bufferedAmountLowThreshold = 0;
+    binaryType: 'arraybuffer' | 'blob' = 'blob';
     partner: FakeChannel | null = null;
+    // Everything put on the wire, so a test can assert how it was framed and
+    // not merely that it arrived.
+    sent: Array<string | ArrayBuffer> = [];
 
-    send(data: string): void {
+    send(data: string | ArrayBuffer): void {
+        this.sent.push(data);
         queueMicrotask(() => {
             this.partner?.dispatchEvent(Object.assign(new Event('message'), { data }));
         });
@@ -27,6 +32,57 @@ function pair(): [FakeChannel, FakeChannel] {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe('Framing', () => {
+    it('sends chunk payloads as binary, not base64 inside JSON', async () => {
+        // Base64 in JSON cost 1.33x plus the wrapper, on top of the base64 an
+        // attachment payload already carries from Rust.
+        const [a, b] = pair();
+        attachFraming(b as unknown as RTCDataChannel, () => {});
+        const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
+
+        await sender.send({ body: 'x'.repeat(200 * 1024) });
+
+        const binary = a.sent.filter((f) => f instanceof ArrayBuffer);
+        expect(binary.length).toBeGreaterThan(0);
+        // One JSON control frame announcing the chunks, and nothing else.
+        expect(a.sent.filter((f) => typeof f === 'string')).toHaveLength(1);
+        expect(a.binaryType).toBe('arraybuffer');
+    });
+
+    it('does not let a short message overtake a chunked one', async () => {
+        // A `doc-deleted` arriving before the `sync-delta` for the same
+        // document applies the delete and then writes content back under it.
+        const [a, b] = pair();
+        const order: string[] = [];
+        attachFraming(b as unknown as RTCDataChannel, (m) => order.push((m as { id: string }).id));
+        const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
+
+        const big = sender.send({ id: 'big', body: 'A'.repeat(300 * 1024) });
+        const small = sender.send({ id: 'small' });
+        await Promise.all([big, small]);
+        await flush();
+
+        expect(order).toEqual(['big', 'small']);
+    });
+
+    it('reports a send the channel never took', async () => {
+        const [a, b] = pair();
+        attachFraming(b as unknown as RTCDataChannel, () => {});
+        const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
+
+        a.readyState = 'closed';
+
+        expect(await sender.send({ id: 'lost' })).toBe(false);
+    });
+
+    it('reports a successful send', async () => {
+        const [a, b] = pair();
+        attachFraming(b as unknown as RTCDataChannel, () => {});
+        const sender = attachFraming(a as unknown as RTCDataChannel, () => {});
+
+        expect(await sender.send({ id: 'fine' })).toBe(true);
+        expect(await sender.send({ body: 'x'.repeat(100 * 1024) })).toBe(true);
+    });
+
     it('round-trips messages of assorted sizes intact', async () => {
         const [a, b] = pair();
         const received: unknown[] = [];

@@ -9,4 +9,3 @@ export {
     insertImageFromFile,
     insertImageFromBlob,
 } from './commands/ImageCommand';
-export { ImageExtension } from './extensions/ImageExtension';

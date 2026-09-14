@@ -8,10 +8,42 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 // Topic plus payload, handed to the publish task that owns the live MQTT client.
 type PublishSender = mpsc::Sender<(String, Vec<u8>)>;
+
+/// How often one sender may raise a pairing prompt.
+///
+/// A signature proves who sent a request, not that we want it. Anyone who
+/// learns a node_id can publish to its topic, and every valid request put a
+/// modal in front of the user, so an unpaired device could make the app
+/// unusable by asking repeatedly. Declining is still the answer to a request
+/// you did not expect; this only stops it being asked faster than a person
+/// can read it.
+const PAIR_REQUEST_COOLDOWN_MS: i64 = 30_000;
+
+/// Distinct senders whose last request time we remember. Bounded, or asking
+/// from many keys would grow it; the oldest entry is dropped, which at worst
+/// lets that sender ask once more.
+const MAX_PAIR_REQUEST_SENDERS: usize = 64;
+
+/// Whether a pairing prompt from `from` should be shown, given when that
+/// sender last raised one. Records the time when it allows.
+fn allow_pair_prompt(seen: &mut Vec<(String, i64)>, from: &str, now: i64) -> bool {
+    if let Some(entry) = seen.iter_mut().find(|(id, _)| id == from) {
+        if now - entry.1 < PAIR_REQUEST_COOLDOWN_MS {
+            return false;
+        }
+        entry.1 = now;
+        return true;
+    }
+    if seen.len() >= MAX_PAIR_REQUEST_SENDERS {
+        seen.remove(0);
+    }
+    seen.push((from.to_string(), now));
+    true
+}
 
 #[derive(Debug, Clone)]
 struct PeerContext {
@@ -50,6 +82,22 @@ impl SignalingManager {
             app_handle,
             publish_tx: Arc::new(ParkingMutex::new(None)),
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
+        }
+    }
+
+    /// The public half of the loaded identity, or `None` before startup has
+    /// set it. Deliberately not the whole `LocalIdentity`: callers outside
+    /// this module have no business holding the signing key, and not making
+    /// it cloneable is what keeps that true.
+    pub fn public_identity(&self) -> Option<crate::identity::UserIdentity> {
+        self.identity.lock().as_ref().map(|i| i.public.clone())
+    }
+
+    /// Keep the in-memory copy in step with a rename, so the next pair request
+    /// advertises the new name rather than the one loaded at startup.
+    pub fn set_display_name(&self, display_name: &str) {
+        if let Some(identity) = self.identity.lock().as_mut() {
+            identity.public.display_name = display_name.to_string();
         }
     }
 
@@ -118,7 +166,26 @@ impl SignalingManager {
         );
     }
 
-    pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
+    /// Forget a session authorization.
+    ///
+    /// `authorize_peer` vouches for a node for the rest of the session, and
+    /// `handle_offer` accepts an offer on the strength of either that or a
+    /// persisted pairing. Removing a pair only deleted the row, so the
+    /// in-memory entry kept vouching: the removed device's next offer was
+    /// accepted, the frontend connected and then re-saved the very pair the
+    /// user had just removed.
+    pub fn revoke_peer(&self, node_id: &str) {
+        if self.authorized_peers.lock().remove(node_id).is_some() {
+            trace!("[Signaling] revoked session authorization for {}", node_id);
+        }
+    }
+
+    pub async fn connect(
+        &self,
+        broker_url: &str,
+        node_id: &str,
+        credentials: Option<(String, String)>,
+    ) -> Result<(), String> {
         trace!(
             "[Signaling] connect() broker_url={} node_id={}",
             broker_url,
@@ -132,7 +199,7 @@ impl SignalingManager {
             old.shutdown();
         }
 
-        let client = MqttSignalingClient::new(broker_url, node_id).await?;
+        let client = MqttSignalingClient::new(broker_url, node_id, credentials).await?;
         // Topic subscription now happens inside the client's poll loop on every
         // ConnAck, so it is replayed automatically after a reconnect.
 
@@ -169,8 +236,32 @@ impl SignalingManager {
             // One verifier per client generation, so its replay history spans
             // the whole session rather than a single message.
             let mut verifier = EnvelopeVerifier::new();
+            // Owned by this task, like the verifier, so it spans the session
+            // rather than a single message.
+            let mut pair_prompts: Vec<(String, i64)> = Vec::new();
             tokio::spawn(async move {
-                while let Ok(event) = event_rx.recv().await {
+                loop {
+                    let event = match event_rx.recv().await {
+                        Ok(event) => event,
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            // Keep going. Breaking here stopped every signaling
+                            // message reaching the frontend for the rest of the
+                            // session, while MQTT went on reporting "connected"
+                            // and nothing recovered short of a manual
+                            // reconnect. Anyone able to publish to the broker
+                            // could cause it, since a message is parsed and
+                            // queued before its signature is checked.
+                            warn_log!(
+                                "[Signaling] event channel lagged, {} message(s) dropped",
+                                skipped
+                            );
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            trace!("[Signaling] event channel closed, forwarder exiting");
+                            break;
+                        }
+                    };
                     match event {
                         MqttEvent::Connected => {
                             trace!("[Signaling] MQTT Connected");
@@ -178,6 +269,11 @@ impl SignalingManager {
                         }
                         MqttEvent::Disconnected => {
                             let _ = app.emit("mqtt-status", "disconnected");
+                        }
+                        MqttEvent::Error(reason) => {
+                            warn_log!("[Signaling] MQTT could not connect: {}", reason);
+                            let _ = app.emit("mqtt-status", "error");
+                            let _ = app.emit("mqtt-error", reason);
                         }
                         MqttEvent::Message { topic, msg } => {
                             trace!(
@@ -223,6 +319,7 @@ impl SignalingManager {
                                 msg,
                                 our_user_id.clone(),
                                 authorized_peers.clone(),
+                                &mut pair_prompts,
                             )
                             .await;
                         }
@@ -239,6 +336,7 @@ impl SignalingManager {
         msg: SignalingMessage,
         our_user_id: String,
         authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
+        pair_prompts: &mut Vec<(String, i64)>,
     ) {
         trace!(
             "[Signaling] handle_message() type={} from={} our_user_id={}",
@@ -249,6 +347,13 @@ impl SignalingManager {
         match msg.msg_type.as_str() {
             "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
                 Ok(req) => {
+                    if !allow_pair_prompt(pair_prompts, &msg.from, crypto::now_ms()) {
+                        warn_log!(
+                            "[Signaling] Ignoring a repeat pair-request from {} inside the cooldown",
+                            msg.from
+                        );
+                        return;
+                    }
                     let _ = app.emit(
                         "mqtt-pair-request-received",
                         serde_json::json!({
@@ -445,6 +550,53 @@ mod tests {
 
     // The unit tests in crypto cover the primitives; this covers the wiring,
     // i.e. that what seal() produces is what a peer's verifier accepts.
+    #[test]
+    fn a_repeat_pair_request_inside_the_cooldown_is_dropped() {
+        // Every valid request put a modal in front of the user, so anyone who
+        // learned a node_id could make the app unusable by asking repeatedly.
+        let mut seen = Vec::new();
+        let now = 1_000_000;
+
+        assert!(allow_pair_prompt(&mut seen, "peer-a", now));
+        assert!(!allow_pair_prompt(&mut seen, "peer-a", now + 1));
+        assert!(!allow_pair_prompt(
+            &mut seen,
+            "peer-a",
+            now + PAIR_REQUEST_COOLDOWN_MS - 1
+        ));
+        assert!(allow_pair_prompt(
+            &mut seen,
+            "peer-a",
+            now + PAIR_REQUEST_COOLDOWN_MS
+        ));
+    }
+
+    #[test]
+    fn one_sender_in_cooldown_does_not_silence_another() {
+        let mut seen = Vec::new();
+        let now = 1_000_000;
+
+        assert!(allow_pair_prompt(&mut seen, "peer-a", now));
+        assert!(!allow_pair_prompt(&mut seen, "peer-a", now));
+        assert!(
+            allow_pair_prompt(&mut seen, "peer-b", now),
+            "a different device asking is a different request"
+        );
+    }
+
+    #[test]
+    fn the_pair_request_history_is_bounded() {
+        let mut seen = Vec::new();
+        for i in 0..MAX_PAIR_REQUEST_SENDERS * 2 {
+            assert!(allow_pair_prompt(
+                &mut seen,
+                &format!("peer-{i}"),
+                1_000_000
+            ));
+        }
+        assert_eq!(seen.len(), MAX_PAIR_REQUEST_SENDERS);
+    }
+
     #[test]
     fn a_sealed_message_verifies_on_the_receiving_side() {
         let (mgr, node_id) = manager_with_identity();

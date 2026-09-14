@@ -1,10 +1,9 @@
 <script lang="ts">
     import { log } from '$lib/log';
     import { onMount, onDestroy } from 'svelte';
-    import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event';
     import { getCurrentWindow } from '@tauri-apps/api/window';
-    import { currentDocument, appStore } from '$lib/stores/app';
+    import { currentDocument } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
@@ -15,21 +14,16 @@
         DEFAULT_DEBOUNCE_MS,
         type EditorSaveService,
     } from './EditorSaveService';
-    import { loadDocument } from '$lib/services/documents';
-    import { REMOTE_ORIGIN } from './yjs';
     import { extractDocumentIndex } from './documentIndex';
-    import { base64ToBytes } from '$lib/sync/protocol';
     import * as Y from 'yjs';
 
     interface Props {
         debounceMs?: number;
-        autoSave?: boolean;
     }
 
-    let { debounceMs = DEFAULT_DEBOUNCE_MS, autoSave = true }: Props = $props();
+    let { debounceMs = DEFAULT_DEBOUNCE_MS }: Props = $props();
 
     let current = $derived($currentDocument);
-    let ydoc = $state<Y.Doc | null>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
     let unlistenSyncEvent: (() => void) | null = null;
@@ -41,7 +35,6 @@
 
     function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
-        ydoc = doc;
 
         if (saveService) {
             saveService.destroy();
@@ -67,10 +60,6 @@
         }
     }
 
-    function handleContentChange() {
-        saveService?.triggerSave();
-    }
-
     function handleLocalUpdate(update: Uint8Array) {
         saveService?.recordUpdate(update);
     }
@@ -90,77 +79,62 @@
         const snapshot = Y.encodeStateAsUpdate(doc);
         // Read the index here, while the editor still exists.
         const index = editorInstance ? extractDocumentIndex(editorInstance.state.doc) : undefined;
-        void persistSnapshot(docId, snapshot, delta ?? snapshot, index);
-    }
-
-    async function reloadCurrentDocument() {
-        if (!current?.id) return;
-        log.debug(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
-        try {
-            const stateResult = await invoke<{ doc_id: string; state: string }>('get_yjs_state', {
-                docId: current.id,
-            });
-            if (stateResult.state && ydoc) {
-                Y.applyUpdate(ydoc, base64ToBytes(stateResult.state), REMOTE_ORIGIN);
-                log.debug(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
-            }
-        } catch (error) {
-            console.error(`[Editor] [${current.id}] Failed to reload document:`, error);
-        }
-    }
-
-    async function handleOpenDocument(event: Event) {
-        const { id } = (event as CustomEvent<{ id: string }>).detail;
-        if (!id) return;
-        try {
-            const doc = await loadDocument(id);
-            appStore.setCurrentDocument(doc);
-        } catch {
-            // loadDocument already shows a toast on error
-        }
+        // Nothing awaits this; persistSnapshot rethrows after reporting, so
+        // swallow here rather than leave an unhandled rejection on a teardown.
+        void persistSnapshot(docId, snapshot, delta, index).catch(() => {});
     }
 
     // The debounce timer dies with the process, so flush on every predictable
     // exit. `hidden` is the one that matters on mobile: Android can kill a
     // backgrounded app without ever firing a close event.
     function handleVisibilityChange() {
-        if (document.visibilityState === 'hidden') {
-            void saveService?.flushNow();
+        // Only when there is something to write. Flushing regardless rewrote
+        // the whole document, bumped `updated_at` and broadcast it to every
+        // peer each time the user switched away from the window.
+        if (document.visibilityState === 'hidden' && saveService?.hasPendingWrite()) {
+            void saveService.flushNow();
         }
     }
 
+    // Both Tauri listeners are registered asynchronously, so a component
+    // destroyed before they resolve would have had nothing to unregister and
+    // would have leaked a handler holding a stale editor. That happens
+    // whenever the open document is deleted.
+    let destroyed = false;
+
     onMount(async () => {
-        window.addEventListener('openDocument', handleOpenDocument);
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('pagehide', handleVisibilityChange);
 
         try {
-            unlistenCloseRequested = await getCurrentWindow().onCloseRequested(() => {
-                void saveService?.flushNow();
+            const unlisten = await getCurrentWindow().onCloseRequested(() => {
+                if (saveService?.hasPendingWrite()) void saveService.flushNow();
             });
+            if (destroyed) unlisten();
+            else unlistenCloseRequested = unlisten;
         } catch (e) {
             // Not running under Tauri (unit tests, browser preview): the
             // visibilitychange and pagehide listeners above still cover it.
             console.warn('[Editor] window close listener unavailable:', e);
         }
 
-        unlistenSyncEvent = await listen('sync-received', async (event) => {
-            const payload = event.payload as { doc_id?: string; from?: string };
-            log.debug(
-                `[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`,
-            );
+        // A peer's edit is applied straight into the open document by the
+        // sync layer, so there is nothing to fetch here and nothing to apply.
+        // What still needs telling is the panel below the editor, which reads
+        // derived rows out of SQL rather than out of the document.
+        const unlistenSync = await listen('sync-received', (event) => {
+            const payload = event.payload as { doc_id?: string };
+            log.debug(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'}`);
             if (payload?.doc_id && payload.doc_id === current?.id) {
-                await reloadCurrentDocument();
-            } else {
-                log.debug(
-                    `[Editor] Ignoring sync-received, doc_id does not match currently open document`,
-                );
+                indexRevision++;
             }
         });
+        if (destroyed) unlistenSync();
+        else unlistenSyncEvent = unlistenSync;
     });
 
     onDestroy(() => {
-        window.removeEventListener('openDocument', handleOpenDocument);
+        destroyed = true;
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('pagehide', handleVisibilityChange);
         unlistenSyncEvent?.();
@@ -177,9 +151,7 @@
 
         <EditorInstance
             document={current}
-            {autoSave}
             onEditorReady={handleEditorReady}
-            onContentChange={handleContentChange}
             onBeforeTeardown={handleBeforeTeardown}
             onLocalUpdate={handleLocalUpdate}
         />

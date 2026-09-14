@@ -1,15 +1,6 @@
 <script lang="ts">
     import { appStore, documents } from '../stores/app';
-    import {
-        pairedDevices,
-        connectedPeerIds,
-        reconnectingPeerIds,
-        roomSync,
-        signalingStatus,
-    } from '../stores/sync';
-    import { reconnectPeer } from '../sync';
-    import type { Document, DocumentSummary } from '../types';
-    import { invoke } from '@tauri-apps/api/core';
+    import type { DocumentSummary } from '../types';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import {
@@ -18,15 +9,22 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
+    import { openDocument, openHome } from '../services/navigation';
+    import { toasts } from '../services/toast';
+    import { snippetParts } from '../search/snippet';
+    import { createSearch, type SearchHit } from '../search/searchStore.svelte';
     import AboutDialog from './AboutDialog.svelte';
+    import Modal from './Modal.svelte';
+    import DocumentList from './DocumentList.svelte';
+    import SidebarDeviceList from './SidebarDeviceList.svelte';
+    import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
 
+    // Navigate; the document route loads it. Fetching and assigning the store
+    // here meant the URL never changed, so there was nothing to go back to.
     function handleDocClick(doc: DocumentSummary) {
-        invoke<Document>('get_document', { docId: doc.id })
-            .then((fullDoc) => {
-                appStore.setCurrentDocument(fullDoc);
-            })
-            .catch((err) => console.error('[Sidebar] Failed to load document:', err));
+        void openDocument(doc.id);
+        dismissOnSmallScreen();
     }
 
     let searchInput = $state('');
@@ -41,9 +39,49 @@
     }
 
     let collapsed = $state(isSmallScreen());
+    let small = $state(isSmallScreen());
     let showCalendar = $state(false);
 
-    let currentDate = $state(new Date());
+    // Follow the viewport rather than sampling it once at startup. Rotating a
+    // tablet or resizing a window left the sidebar in whatever state it had
+    // been in when the app opened.
+    $effect(() => {
+        if (typeof window === 'undefined') return;
+        const mq = window.matchMedia(SMALL_SCREEN_QUERY);
+        const onChange = (e: MediaQueryListEvent) => {
+            small = e.matches;
+            collapsed = e.matches;
+        };
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    });
+
+    // On a phone the sidebar covers the editor rather than sitting beside it,
+    // so picking something has to get it out of the way. Expanded, it left
+    // about 125px of a 375px screen to write in.
+    function dismissOnSmallScreen() {
+        if (small) collapsed = true;
+    }
+
+    // Recomputed rather than read from `new Date()` at render time, so an app
+    // left open overnight stops calling yesterday "today".
+    let today = $state(new Date());
+
+    $effect(() => {
+        const refresh = () => {
+            const now = new Date();
+            if (now.toDateString() !== today.toDateString()) today = now;
+        };
+        // A minute is close enough to midnight, and cheaper to reason about
+        // than a timer that has to reschedule itself. The visibility check
+        // covers a device that was asleep across the boundary.
+        const timer = setInterval(refresh, 60_000);
+        document.addEventListener('visibilitychange', refresh);
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener('visibilitychange', refresh);
+        };
+    });
 
     let currentDocId = $derived($appStore.currentDocument?.id);
     let currentJournalTitle = $derived(
@@ -51,86 +89,76 @@
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
+    let journalsNewestFirst = $derived(
+        [...journals].sort((a, b) => b.title.localeCompare(a.title)),
+    );
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
-    // well as notes. It used to be a substring match on note titles only.
-    interface SearchHit {
-        id: string;
-        doc_type: string;
-        title: string;
-        snippet: string;
-    }
-
-    let searchResults = $state<SearchHit[]>([]);
-    let isSearching = $state(false);
-    // A failed search must not render as "nothing matches": that reads as an
-    // answer when it is the absence of one.
-    let searchFailed = $state(false);
-    let searchTimer: ReturnType<typeof setTimeout> | null = null;
-    let searchSeq = 0;
+    // well as notes. The debounce, the sequencing and the selection live in
+    // $lib/search: three pieces of state that have to stay in step, which they
+    // did not reliably do as loose variables among everything else here.
+    const search = createSearch();
 
     let isSearchActive = $derived(searchInput.trim().length > 0);
 
-    async function runSearch(query: string) {
-        const seq = ++searchSeq;
-        try {
-            const hits = await invoke<SearchHit[]>('search_documents', { query });
-            // Drop a response that a newer keystroke has already superseded.
-            if (seq !== searchSeq) return;
-            searchResults = hits;
-            searchFailed = false;
-        } catch (err) {
-            if (seq !== searchSeq) return;
-            console.error('[Sidebar] Search failed:', err);
-            searchResults = [];
-            searchFailed = true;
-        } finally {
-            if (seq === searchSeq) isSearching = false;
-        }
-    }
+    $effect(() => search.schedule(searchInput.trim()));
 
-    $effect(() => {
-        const query = searchInput.trim();
-        if (searchTimer) clearTimeout(searchTimer);
-
-        if (!query) {
-            searchSeq++; // invalidate anything in flight
-            searchResults = [];
-            searchFailed = false;
-            isSearching = false;
+    // Arrow keys move through the results and Enter opens one, so a search can
+    // be completed without leaving the keyboard. Escape clears the box, which
+    // is also how you get back to the document list.
+    function handleSearchKeydown(event: KeyboardEvent) {
+        if (event.key === 'Escape') {
+            searchInput = '';
             return;
         }
+        if (search.results.length === 0) return;
 
-        isSearching = true;
-        searchTimer = setTimeout(() => void runSearch(query), 150);
-    });
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            search.move(1);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            search.move(-1);
+        } else if (event.key === 'Enter') {
+            event.preventDefault();
+            const hit = search.current();
+            if (hit) openSearchHit(hit);
+        }
+    }
 
     function openSearchHit(hit: SearchHit) {
-        invoke<Document>('get_document', { docId: hit.id })
-            .then((doc) => appStore.setCurrentDocument(doc))
-            .catch((err) => console.error('[Sidebar] Failed to open search hit:', err));
+        void openDocument(hit.id);
+        dismissOnSmallScreen();
     }
+
+    let createError = $state<string | null>(null);
 
     async function createDocument() {
         if (!newDocTitle.trim()) return;
 
+        createError = null;
+        let doc;
         try {
-            await createNote(newDocTitle.trim());
-            newDocTitle = '';
-            showModal = false;
+            doc = await createNote(newDocTitle.trim());
         } catch (error) {
+            // Keep the dialog open with what was typed still in it. Closing
+            // regardless discarded the title and said nothing went wrong.
             console.error('Failed to create document:', error);
+            createError = 'Could not create this note.';
+            return;
         }
+        closeModal();
+        await openDocument(doc.id);
     }
 
     function closeModal() {
         newDocTitle = '';
+        createError = null;
         showModal = false;
     }
 
     let openMenuId = $state<string | null>(null);
-    let openDeviceMenuId = $state<string | null>(null);
     let renameDoc = $state<DocumentSummary | null>(null);
     let renameTitle = $state('');
     let deleteDoc = $state<DocumentSummary | null>(null);
@@ -140,23 +168,10 @@
         openMenuId = openMenuId === docId ? null : docId;
     }
 
-    function toggleDeviceMenu(e: MouseEvent, peerNodeId: string) {
-        e.stopPropagation();
-        openDeviceMenuId = openDeviceMenuId === peerNodeId ? null : peerNodeId;
-    }
-
-    function handleReconnectDevice(peerNodeId: string) {
-        openDeviceMenuId = null;
-        void reconnectPeer(peerNodeId);
-    }
-
     function handleWindowClick(e: MouseEvent) {
         const target = e.target as HTMLElement;
         if (!target.closest('.doc-menu-btn') && !target.closest('.doc-menu')) {
             openMenuId = null;
-        }
-        if (!target.closest('.device-menu-btn') && !target.closest('.device-menu')) {
-            openDeviceMenuId = null;
         }
     }
 
@@ -169,20 +184,27 @@
     function closeRenameModal() {
         renameDoc = null;
         renameTitle = '';
+        renameError = null;
     }
+
+    let renameError = $state<string | null>(null);
 
     async function confirmRename() {
         if (!renameDoc || !renameTitle.trim()) return;
         const docId = renameDoc.id;
         const title = renameTitle.trim();
 
+        renameError = null;
         try {
             await renameDocument(docId, title);
         } catch (err) {
+            // Closing in a `finally` threw the edit away on failure and left
+            // the user believing the rename had worked.
             console.error('[Sidebar] Failed to rename document:', err);
-        } finally {
-            closeRenameModal();
+            renameError = 'Could not rename this note.';
+            return;
         }
+        closeRenameModal();
     }
 
     function startDelete(doc: DocumentSummary) {
@@ -192,30 +214,35 @@
 
     function closeDeleteModal() {
         deleteDoc = null;
+        deleteError = null;
     }
+
+    let deleteError = $state<string | null>(null);
 
     async function confirmDelete() {
         if (!deleteDoc) return;
         const docId = deleteDoc.id;
         const wasOpen = currentDocId === docId;
 
-        if (wasOpen) {
-            appStore.setCurrentDocument(null);
-        }
-
+        // Nothing is cleared until the delete has actually succeeded. Clearing
+        // the open document first left the editor on a permanent "Loading..."
+        // with no way back whenever the delete failed, and whenever the note
+        // deleted was the last one.
+        deleteError = null;
         try {
             await deleteDocumentAction(docId);
-
-            if (wasOpen) {
-                const nextNote = notes.find((d: DocumentSummary) => d.id !== docId);
-                if (nextNote) {
-                    handleDocClick(nextNote);
-                }
-            }
         } catch (err) {
             console.error('[Sidebar] Failed to delete document:', err);
-        } finally {
-            closeDeleteModal();
+            deleteError = 'Could not delete this note.';
+            return;
+        }
+
+        closeDeleteModal();
+        if (wasOpen) {
+            const nextNote = notes.find((d: DocumentSummary) => d.id !== docId);
+            // No note left to fall back to, so go to the entry point, which
+            // opens today's journal.
+            await (nextNote ? openDocument(nextNote.id) : openHome());
         }
     }
 
@@ -229,117 +256,38 @@
         goto(resolve('/settings/sync'));
     }
 
-    function prevMonth() {
-        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
-    }
-
-    function nextMonth() {
-        currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
-    }
-
-    function getCalendarDays() {
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth();
-        const firstDay = new Date(year, month, 1).getDay();
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const days: (number | null)[] = [];
-
-        for (let i = 0; i < firstDay; i++) days.push(null);
-        for (let d = 1; d <= daysInMonth; d++) days.push(d);
-        while (days.length % 7 !== 0) days.push(null);
-
-        return days;
-    }
-
-    const monthNames = [
-        'January',
-        'February',
-        'March',
-        'April',
-        'May',
-        'June',
-        'July',
-        'August',
-        'September',
-        'October',
-        'November',
-        'December',
-    ];
-    const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-
-    let calendarDays = $derived(getCalendarDays());
-    let calendarMonthYear = $derived(
-        `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`,
-    );
-
-    function handleDateClick(day: number | null) {
-        if (day === null) return;
-        const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(date.getDate()).padStart(2, '0');
-        const dateTitle = `${year}-${month}-${dayStr}`;
-
-        const existing = journals.find((d: DocumentSummary) => d.title === dateTitle);
+    // One way in for "open the journal for this date", used by the calendar.
+    // The date arithmetic moved to $lib/calendar; what stays here is the part
+    // that needs the document list and the router.
+    async function openJournalFor(journalTitle: string) {
+        const existing = journals.find((d: DocumentSummary) => d.title === journalTitle);
         if (existing) {
             handleDocClick(existing);
-        } else {
-            createJournalForDate(dateTitle);
+            return;
         }
-    }
-
-    async function createJournalForDate(dateTitle: string) {
         try {
-            await createJournalForDateAction(dateTitle);
+            const doc = await createJournalForDateAction(journalTitle);
+            await openDocument(doc.id);
+            dismissOnSmallScreen();
         } catch (err) {
-            console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
+            console.error('[Sidebar] Failed to create journal for date:', journalTitle, err);
+            toasts.error('Could not open that day');
         }
-    }
-
-    function isToday(day: number | null): boolean {
-        if (day === null) return false;
-        const today = new Date();
-        return (
-            day === today.getDate() &&
-            currentDate.getMonth() === today.getMonth() &&
-            currentDate.getFullYear() === today.getFullYear()
-        );
-    }
-
-    function isSelectedDate(day: number | null): boolean {
-        if (day === null || !currentJournalTitle) return false;
-        const year = currentDate.getFullYear();
-        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(day).padStart(2, '0');
-        return currentJournalTitle === `${year}-${month}-${dayStr}`;
-    }
-
-    function hasJournal(day: number | null): boolean {
-        if (day === null) return false;
-        const year = currentDate.getFullYear();
-        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-        const dayStr = String(day).padStart(2, '0');
-        const dateTitle = `${year}-${month}-${dayStr}`;
-        return journals.some((d: DocumentSummary) => d.title === dateTitle && d.has_content);
-    }
-
-    function goToToday() {
-        const today = new Date();
-        currentDate = today;
-        handleDateClick(today.getDate());
     }
 </script>
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar" class:collapsed>
+<aside class="sidebar" class:collapsed class:overlay={small && !collapsed}>
     <div class="sidebar-header">
         {#if !collapsed}
             <input
                 type="text"
                 placeholder="Search documents..."
                 bind:value={searchInput}
+                onkeydown={handleSearchKeydown}
                 class="search-input"
+                aria-label="Search documents"
             />
         {/if}
     </div>
@@ -349,21 +297,22 @@
             {#if isSearchActive}
                 <div class="sidebar-section">
                     <h3>
-                        Results {#if !isSearching}({searchResults.length}){/if}
+                        Results {#if !search.searching}({search.results.length}){/if}
                     </h3>
-                    {#if isSearching && searchResults.length === 0}
+                    {#if search.searching && search.results.length === 0}
                         <p class="search-note">Searching...</p>
-                    {:else if searchFailed}
+                    {:else if search.failed}
                         <p class="search-note error">Search is unavailable right now</p>
-                    {:else if searchResults.length === 0}
+                    {:else if search.results.length === 0}
                         <p class="search-note">Nothing matches "{searchInput.trim()}"</p>
                     {:else}
                         <ul class="doc-list">
-                            {#each searchResults as hit (hit.id)}
+                            {#each search.results as hit, i (hit.id)}
                                 <li class="doc-item">
                                     <button
                                         class="search-hit"
                                         class:current={currentDocId === hit.id}
+                                        class:selected={i === search.selected}
                                         onclick={() => openSearchHit(hit)}
                                     >
                                         <span class="search-hit-title">
@@ -373,7 +322,11 @@
                                             {/if}
                                         </span>
                                         {#if hit.snippet}
-                                            <span class="search-hit-snippet">{hit.snippet}</span>
+                                            <span class="search-hit-snippet">
+                                                {#each snippetParts(hit.snippet) as part, pi (pi)}{#if part.match}<mark
+                                                            >{part.text}</mark
+                                                        >{:else}{part.text}{/if}{/each}
+                                            </span>
                                         {/if}
                                     </button>
                                 </li>
@@ -384,62 +337,12 @@
             {:else}
                 <div class="sidebar-section">
                     {#if showCalendar}
-                        <div class="calendar">
-                            <div class="calendar-header">
-                                <button
-                                    class="cal-nav-btn"
-                                    onclick={prevMonth}
-                                    title="Previous month"
-                                >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg
-                                    >
-                                </button>
-                                <div class="cal-center">
-                                    <span class="calendar-title">{calendarMonthYear}</span>
-                                    <button class="today-btn" onclick={goToToday}>Today</button>
-                                </div>
-                                <button class="cal-nav-btn" onclick={nextMonth} title="Next month">
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg
-                                    >
-                                </button>
-                            </div>
-                            <div class="calendar-grid">
-                                {#each dayNames as d (d)}
-                                    <div class="cal-day-name">{d}</div>
-                                {/each}
-                                {#each calendarDays as day, i (i)}
-                                    <button
-                                        class="cal-day"
-                                        class:empty={day === null}
-                                        class:today={isToday(day)}
-                                        class:selected={isSelectedDate(day)}
-                                        onclick={() => handleDateClick(day)}
-                                        disabled={day === null}
-                                    >
-                                        {#if hasJournal(day)}
-                                            <span class="journal-dot"></span>
-                                        {/if}
-                                        {day ?? ''}
-                                    </button>
-                                {/each}
-                            </div>
-                        </div>
+                        <JournalCalendar
+                            {journals}
+                            {currentJournalTitle}
+                            {today}
+                            onPick={openJournalFor}
+                        />
                     {/if}
                 </div>
 
@@ -473,6 +376,19 @@
                             >
                         </button>
                     </h3>
+                    <!-- Journals were reachable only through the calendar,
+                         which is hidden by default, and could not be renamed
+                         or deleted at all. Newest first: the one you want is
+                         almost always a recent one. -->
+                    <DocumentList
+                        documents={journalsNewestFirst}
+                        {currentDocId}
+                        {openMenuId}
+                        onOpen={handleDocClick}
+                        onToggleMenu={toggleMenu}
+                        onRename={startRename}
+                        onDelete={startDelete}
+                    />
                 </div>
 
                 <div class="sidebar-section">
@@ -480,161 +396,19 @@
                         Notes
                         <button class="add-doc-btn" onclick={() => (showModal = true)}>+</button>
                     </h3>
-                    <ul class="doc-list">
-                        {#each notes as doc (doc.id)}
-                            <li class="doc-item">
-                                <button
-                                    class="doc-btn"
-                                    class:current={currentDocId === doc.id}
-                                    onclick={() => handleDocClick(doc)}
-                                >
-                                    <span class="doc-type"
-                                        ><svg
-                                            width="16"
-                                            height="16"
-                                            xmlns="http://www.w3.org/2000/svg"
-                                            fill="none"
-                                            viewBox="0 0 24 24"
-                                            ><path
-                                                stroke="#A1A1A1"
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                stroke-width="1.5"
-                                                d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
-                                            /></svg
-                                        ></span
-                                    >
-                                    {doc.title}
-                                    {#if doc.todo_count > 0}
-                                        <span
-                                            class="todo-badge"
-                                            class:done={doc.completed_todo_count === doc.todo_count}
-                                            title="{doc.completed_todo_count} of {doc.todo_count} done"
-                                        >
-                                            {doc.completed_todo_count}/{doc.todo_count}
-                                        </span>
-                                    {/if}
-                                </button>
-                                <button
-                                    class="doc-menu-btn"
-                                    onclick={(e) => toggleMenu(e, doc.id)}
-                                    title="Note options"
-                                >
-                                    <svg
-                                        width="16"
-                                        height="16"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><circle cx="12" cy="5" r="1" /><circle
-                                            cx="12"
-                                            cy="12"
-                                            r="1"
-                                        /><circle cx="12" cy="19" r="1" /></svg
-                                    >
-                                </button>
-                                {#if openMenuId === doc.id}
-                                    <div class="doc-menu">
-                                        <button
-                                            class="doc-menu-item"
-                                            onclick={() => startRename(doc)}>Rename</button
-                                        >
-                                        <button
-                                            class="doc-menu-item danger"
-                                            onclick={() => startDelete(doc)}>Delete</button
-                                        >
-                                    </div>
-                                {/if}
-                            </li>
-                        {/each}
-                    </ul>
+                    <DocumentList
+                        documents={notes}
+                        {currentDocId}
+                        {openMenuId}
+                        onOpen={handleDocClick}
+                        onToggleMenu={toggleMenu}
+                        onRename={startRename}
+                        onDelete={startDelete}
+                    />
                 </div>
             {/if}
 
-            <div class="sidebar-section">
-                <h3>
-                    Connected Devices
-                    <button class="cal-toggle-btn" onclick={goToSync} title="Manage devices">
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            ><path
-                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                            /></svg
-                        >
-                    </button>
-                </h3>
-                {#if $pairedDevices.length === 0}
-                    <p class="empty-hint">No paired devices yet</p>
-                {:else}
-                    <ul class="device-list">
-                        {#each $pairedDevices as device (device.peer_node_id)}
-                            {@const online = $connectedPeerIds.has(device.peer_node_id)}
-                            {@const reconnecting = $reconnectingPeerIds.has(device.peer_node_id)}
-                            {@const rs = $roomSync[device.room_id]}
-                            <li class="device-item">
-                                <span class="device-dot" class:online></span>
-                                <span class="device-name">{device.peer_display_name}</span>
-                                <span class="device-status">
-                                    {#if !online}
-                                        {reconnecting ? 'Connecting…' : 'Offline'}
-                                    {:else if rs?.phase === 'transferring' && rs.total > 0}
-                                        {rs.total - rs.pending}/{rs.total}
-                                    {:else if rs?.phase === 'reconciling' || rs?.phase === 'transferring'}
-                                        Syncing…
-                                    {:else if rs?.phase === 'error'}
-                                        Error
-                                    {:else}
-                                        Online
-                                    {/if}
-                                </span>
-                                <button
-                                    class="device-menu-btn"
-                                    onclick={(e) => toggleDeviceMenu(e, device.peer_node_id)}
-                                    title="Device options"
-                                >
-                                    <svg
-                                        width="16"
-                                        height="16"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><circle cx="12" cy="5" r="1" /><circle
-                                            cx="12"
-                                            cy="12"
-                                            r="1"
-                                        /><circle cx="12" cy="19" r="1" /></svg
-                                    >
-                                </button>
-                                {#if openDeviceMenuId === device.peer_node_id}
-                                    <div class="device-menu">
-                                        <button
-                                            class="doc-menu-item"
-                                            disabled={online || $signalingStatus !== 'connected'}
-                                            onclick={() =>
-                                                handleReconnectDevice(device.peer_node_id)}
-                                        >
-                                            {reconnecting ? 'Reconnect now' : 'Reconnect'}
-                                        </button>
-                                    </div>
-                                {/if}
-                            </li>
-                        {/each}
-                    </ul>
-                {/if}
-            </div>
+            <SidebarDeviceList onManage={goToSync} />
         </div>
 
         <div class="sidebar-footer">
@@ -666,8 +440,15 @@
     {/if}
 </aside>
 
+{#if small && !collapsed}
+    <!-- Tapping away closes it, which is the only way out on a phone once the
+         sidebar covers the editor. -->
+    <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
+{/if}
+
 <button
-    class="toggle-btn collapsed"
+    class="toggle-btn"
+    class:collapsed
     onclick={() => (collapsed = !collapsed)}
     title={collapsed ? 'Expand' : 'Collapse'}
 >
@@ -705,74 +486,60 @@
 </button>
 
 {#if showModal}
-    <div class="modal-overlay" role="presentation" onclick={closeModal}>
-        <div
-            class="modal-content"
-            role="dialog"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.key === 'Escape' && closeModal()}
-        >
-            <h3>New Note</h3>
-            <input
-                type="text"
-                bind:value={newDocTitle}
-                placeholder="Enter file name..."
-                class="modal-input"
-                onkeydown={(e) => e.key === 'Enter' && createDocument()}
-            />
-            <div class="modal-actions">
-                <button class="modal-btn" onclick={createDocument}>OK</button>
-            </div>
-        </div>
-    </div>
+    <Modal title="New Note" onClose={closeModal}>
+        <input
+            type="text"
+            bind:value={newDocTitle}
+            placeholder="Enter file name..."
+            class="modal-input"
+            onkeydown={(e) => e.key === 'Enter' && createDocument()}
+        />
+        {#if createError}
+            <p class="modal-error">{createError}</p>
+        {/if}
+        {#snippet actions()}
+            <button class="modal-btn" onclick={createDocument}>OK</button>
+        {/snippet}
+    </Modal>
 {/if}
 
 {#if renameDoc}
-    <div class="modal-overlay" role="presentation" onclick={closeRenameModal}>
-        <div
-            class="modal-content"
-            role="dialog"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.key === 'Escape' && closeRenameModal()}
-        >
-            <h3>Rename Note</h3>
-            <input
-                type="text"
-                bind:value={renameTitle}
-                placeholder="Enter file name..."
-                class="modal-input"
-                onkeydown={(e) => e.key === 'Enter' && confirmRename()}
-            />
-            <div class="modal-actions">
-                <button class="modal-btn secondary" onclick={closeRenameModal}>Cancel</button>
-                <button class="modal-btn" onclick={confirmRename}>Rename</button>
-            </div>
-        </div>
-    </div>
+    <Modal title="Rename" onClose={closeRenameModal}>
+        <input
+            type="text"
+            bind:value={renameTitle}
+            placeholder="Enter file name..."
+            class="modal-input"
+            onkeydown={(e) => e.key === 'Enter' && confirmRename()}
+        />
+        {#if renameError}
+            <p class="modal-error">{renameError}</p>
+        {/if}
+        {#snippet actions()}
+            <button class="modal-btn secondary" data-secondary onclick={closeRenameModal}>
+                Cancel
+            </button>
+            <button class="modal-btn" onclick={confirmRename}>Rename</button>
+        {/snippet}
+    </Modal>
 {/if}
 
 {#if deleteDoc}
-    <div class="modal-overlay" role="presentation" onclick={closeDeleteModal}>
-        <div
-            class="modal-content"
-            role="dialog"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.key === 'Escape' && closeDeleteModal()}
-        >
-            <h3>Delete "{deleteDoc.title}"?</h3>
-            <p class="modal-warning">
-                This can't be undone. If this note has been synchronized to other devices, it will
-                be deleted there too.
-            </p>
-            <div class="modal-actions">
-                <button class="modal-btn secondary" onclick={closeDeleteModal}>Cancel</button>
-                <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
-            </div>
-        </div>
-    </div>
+    <Modal title={`Delete "${deleteDoc.title}"?`} onClose={closeDeleteModal}>
+        <p class="modal-warning">
+            This can't be undone. If this note has been synchronized to other devices, it will be
+            deleted there too.
+        </p>
+        {#if deleteError}
+            <p class="modal-error">{deleteError}</p>
+        {/if}
+        {#snippet actions()}
+            <button class="modal-btn secondary" data-secondary onclick={closeDeleteModal}>
+                Cancel
+            </button>
+            <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
+        {/snippet}
+    </Modal>
 {/if}
 
 {#if showAbout}
@@ -795,6 +562,24 @@
 
     .sidebar.collapsed {
         display: none;
+    }
+
+    /* Over the editor, not beside it. As a column on a 375px screen it left
+       about 125px to write in. */
+    .sidebar.overlay {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 120;
+        box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+    }
+
+    .sidebar-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 110;
+        background: rgba(0, 0, 0, 0.35);
     }
 
     .toggle-btn {
@@ -839,10 +624,6 @@
     .toggle-btn.collapsed svg {
         width: 20px;
         height: 20px;
-    }
-
-    .sidebar.collapsed .search-input {
-        display: none;
     }
 
     .sidebar-header {
@@ -894,21 +675,6 @@
         justify-content: space-between;
     }
 
-    .todo-badge {
-        margin-left: 6px;
-        padding: 1px 6px;
-        font-size: 10px;
-        font-variant-numeric: tabular-nums;
-        color: var(--text-secondary);
-        background: var(--bg-hover);
-        border-radius: 8px;
-        white-space: nowrap;
-    }
-    .todo-badge.done {
-        color: var(--accent-color);
-        background: var(--accent-bg);
-    }
-
     .search-note {
         margin: 0;
         padding: 8px 4px;
@@ -949,6 +715,17 @@
         letter-spacing: 0.04em;
         color: var(--text-muted);
     }
+    .search-hit.selected {
+        background: var(--bg-hover);
+        outline: 2px solid var(--accent-color);
+        outline-offset: -2px;
+    }
+    .search-hit-snippet :global(mark) {
+        background: var(--accent-bg-hover);
+        color: var(--text-primary);
+        border-radius: 2px;
+        padding: 0 1px;
+    }
     .search-hit-snippet {
         font-size: 11px;
         line-height: 1.4;
@@ -958,116 +735,6 @@
         -webkit-line-clamp: 2;
         line-clamp: 2;
         -webkit-box-orient: vertical;
-    }
-
-    .doc-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .doc-list li {
-        margin-bottom: 4px;
-    }
-
-    .doc-item {
-        position: relative;
-        display: flex;
-        align-items: center;
-        gap: 2px;
-    }
-
-    .doc-btn {
-        flex: 1;
-        min-width: 0;
-        text-align: left;
-        padding: 6px 8px;
-        border: none;
-        background: transparent;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 14px;
-        color: var(--text-primary);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .doc-btn:hover {
-        background: var(--bg-hover);
-    }
-
-    .doc-btn.current {
-        background: var(--accent-bg);
-        color: var(--accent-color);
-    }
-
-    .doc-menu-btn {
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        padding: 0;
-        border: none;
-        background: transparent;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        cursor: pointer;
-        opacity: 0;
-    }
-
-    .doc-item:hover .doc-menu-btn,
-    .doc-menu-btn:focus-visible {
-        opacity: 1;
-    }
-
-    .doc-menu-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .doc-menu {
-        position: absolute;
-        top: calc(100% + 2px);
-        right: 0;
-        z-index: 50;
-        min-width: 120px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
-        padding: 4px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .doc-menu-item {
-        text-align: left;
-        padding: 6px 8px;
-        border: none;
-        background: transparent;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 13px;
-        color: var(--text-primary);
-    }
-
-    .doc-menu-item:hover {
-        background: var(--bg-hover);
-    }
-
-    .doc-menu-item.danger {
-        color: #ef4444;
-    }
-
-    .doc-type {
-        margin-right: 6px;
-        display: inline-flex;
-        align-items: center;
-        vertical-align: middle;
-        margin-top: -4px;
     }
 
     .add-doc-btn {
@@ -1097,106 +764,6 @@
 
     .cal-toggle-btn:hover {
         color: var(--text-primary);
-    }
-
-    .empty-hint {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-muted);
-    }
-
-    .device-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .device-item {
-        position: relative;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 8px;
-        border-radius: 4px;
-        font-size: 14px;
-        color: var(--text-primary);
-    }
-
-    .device-dot {
-        flex-shrink: 0;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--text-muted);
-    }
-
-    .device-dot.online {
-        background: #22c55e;
-        box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
-    }
-
-    .device-name {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .device-status {
-        flex-shrink: 0;
-        font-size: 11px;
-        color: var(--text-muted);
-    }
-
-    .device-menu-btn {
-        flex-shrink: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
-        padding: 0;
-        border: none;
-        background: transparent;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        cursor: pointer;
-        opacity: 0;
-    }
-
-    .device-item:hover .device-menu-btn,
-    .device-menu-btn:focus-visible {
-        opacity: 1;
-    }
-
-    .device-menu-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .device-menu {
-        position: absolute;
-        top: calc(100% + 2px);
-        right: 0;
-        z-index: 50;
-        min-width: 140px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
-        padding: 4px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .doc-menu-item:disabled {
-        opacity: 0.5;
-        cursor: default;
-    }
-
-    .doc-menu-item:disabled:hover {
-        background: transparent;
     }
 
     /* ── Sidebar footer ── */
@@ -1256,34 +823,6 @@
     }
 
     /* ── Modals ── */
-    .modal-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.45);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-    }
-
-    .modal-content {
-        background: var(--bg-primary);
-        padding: 20px;
-        border-radius: 8px;
-        min-width: 300px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-        color: var(--text-primary);
-    }
-
-    .modal-content h3 {
-        margin: 0 0 12px 0;
-        font-size: 16px;
-        color: var(--text-primary);
-    }
-
     .modal-input {
         width: 100%;
         padding: 8px 12px;
@@ -1299,18 +838,17 @@
         color: var(--text-muted);
     }
 
+    .modal-error {
+        margin: 0 0 12px 0;
+        font-size: 13px;
+        color: var(--status-error);
+    }
+
     .modal-warning {
         margin: 0 0 4px 0;
         font-size: 13px;
         color: var(--text-secondary);
         line-height: 1.4;
-    }
-
-    .modal-actions {
-        margin-top: 12px;
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
     }
 
     .modal-btn {
@@ -1346,132 +884,4 @@
     }
 
     /* ── Calendar ── */
-    .calendar {
-        border: 1px solid var(--border-light);
-        border-radius: 8px;
-        padding: 8px;
-        background: var(--bg-primary);
-    }
-
-    .calendar-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 8px;
-    }
-
-    .calendar-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-
-    .cal-center {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-    }
-
-    .today-btn {
-        background: none;
-        border: 1px solid var(--border-light);
-        cursor: pointer;
-        padding: 2px 8px;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        font-size: 11px;
-        font-weight: 500;
-        transition:
-            background 0.1s,
-            color 0.1s;
-    }
-
-    .today-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .cal-nav-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 2px;
-        color: var(--text-secondary);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .cal-nav-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .calendar-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 2px;
-    }
-
-    .cal-day-name {
-        text-align: center;
-        font-size: 10px;
-        color: var(--text-muted);
-        padding: 2px 0;
-        font-weight: 600;
-    }
-
-    .cal-day {
-        aspect-ratio: 1;
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        color: var(--text-primary);
-        background: transparent;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background 0.1s;
-    }
-
-    .journal-dot {
-        position: absolute;
-        top: 3px;
-        left: 3px;
-        width: 4px;
-        height: 4px;
-        border-radius: 50%;
-        background: #666;
-        pointer-events: none;
-    }
-
-    .cal-day:hover:not(:disabled):not(.empty) {
-        background: var(--bg-hover);
-    }
-
-    .cal-day.today {
-        background: var(--accent-bg);
-        color: var(--accent-color);
-        font-weight: 700;
-    }
-
-    .cal-day.selected:not(.today) {
-        box-shadow: inset 0 0 0 1.5px var(--accent-color);
-    }
-
-    .cal-day.today.selected {
-        box-shadow: inset 0 0 0 2px var(--accent-color);
-    }
-
-    .cal-day.empty {
-        cursor: default;
-    }
-
-    .cal-day:disabled {
-        cursor: default;
-    }
 </style>

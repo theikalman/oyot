@@ -25,6 +25,12 @@ pub struct SignalingMessage {
 pub enum MqttEvent {
     Connected,
     Disconnected,
+    /// The client has never had a session up and the last attempt failed, so
+    /// the address, the TLS setup or the credentials are wrong and retrying
+    /// will not help. Emitted once per run of failures, not once per retry:
+    /// without it a bad broker URL left the UI on "connecting" indefinitely
+    /// while the loop backed off silently to 30s.
+    Error(String),
     Message {
         topic: String,
         msg: SignalingMessage,
@@ -148,7 +154,11 @@ impl Clone for MqttSignalingClient {
 }
 
 impl MqttSignalingClient {
-    pub async fn new(broker_url: &str, node_id: &str) -> Result<Self, String> {
+    pub async fn new(
+        broker_url: &str,
+        node_id: &str,
+        credentials: Option<(String, String)>,
+    ) -> Result<Self, String> {
         let url = broker_url.trim();
         let BrokerUrl { host, port, tls } = parse_broker_url(url)?;
 
@@ -162,6 +172,13 @@ impl MqttSignalingClient {
 
         let mut mqtt_options = rumqttc::MqttOptions::new(node_id, &host, port);
         mqtt_options.set_keep_alive(std::time::Duration::from_secs(30));
+        if let Some((username, password)) = credentials {
+            // A broker that requires authentication rejected every connection
+            // before this, and the reference configuration in the repository
+            // was one, so following the documentation produced a broker the
+            // app could not use.
+            mqtt_options.set_credentials(username, password);
+        }
         if tls {
             // Signaling is signed end to end, so TLS is not what makes a
             // message trustworthy. It is what stops the broker operator, or
@@ -171,7 +188,9 @@ impl MqttSignalingClient {
         }
 
         let (client, event_loop) = rumqttc::AsyncClient::new(mqtt_options, 100);
-        let (event_tx, _) = broadcast::channel(100);
+        // Generous, because overflowing this channel costs dropped signaling.
+        // A burst is cheap to hold and the messages are small.
+        let (event_tx, _) = broadcast::channel(1024);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         // Only ever subscribe to our own node-scoped topics. Nothing broadcasts
@@ -198,6 +217,12 @@ impl MqttSignalingClient {
             let mut event_loop = event_loop;
             let mut shutdown_rx = shutdown_rx;
             let mut backoff = RECONNECT_BACKOFF_START;
+            // Whether a session has ever come up on this client, and whether
+            // we have already reported the current run of failures. Together
+            // they separate "cannot connect at all" from "was connected and
+            // dropped", and keep the first from firing on every retry.
+            let mut ever_connected = false;
+            let mut reported_failure = false;
 
             loop {
                 tokio::select! {
@@ -221,6 +246,8 @@ impl MqttSignalingClient {
                                         }
                                     }
                                     connected_clone.store(true, Ordering::Relaxed);
+                                    ever_connected = true;
+                                    reported_failure = false;
                                     let _ = event_tx_clone.send(MqttEvent::Connected);
                                 }
                                 rumqttc::Event::Incoming(rumqttc::Packet::SubAck(ack)) => {
@@ -250,6 +277,13 @@ impl MqttSignalingClient {
                             // long outage doesn't spam the frontend with status events.
                             if connected_clone.swap(false, Ordering::Relaxed) {
                                 let _ = event_tx_clone.send(MqttEvent::Disconnected);
+                            } else if !ever_connected && !reported_failure {
+                                // Never got a session up. `new()` returns before
+                                // a single packet is exchanged, so this is the
+                                // only place a wrong host, a refused TLS
+                                // handshake or a rejected login can be reported.
+                                reported_failure = true;
+                                let _ = event_tx_clone.send(MqttEvent::Error(e.to_string()));
                             }
                             tokio::select! {
                                 _ = tokio::time::sleep(backoff) => {}

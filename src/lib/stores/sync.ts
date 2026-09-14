@@ -46,6 +46,9 @@ function createSyncStore() {
         identity: null as UserIdentity | null,
         signalingUrl: null as string | null,
         signalingStatus: 'disconnected' as SignalingStatus,
+        // Why signaling could not connect, when the status is 'error'. Null
+        // otherwise. Without it the UI can say something is wrong but not what.
+        signalingError: null as string | null,
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
@@ -61,7 +64,15 @@ function createSyncStore() {
         setIdentity: (identity: UserIdentity) => update((s) => ({ ...s, identity })),
         setSignalingUrl: (url: string | null) => update((s) => ({ ...s, signalingUrl: url })),
         setSignalingStatus: (status: SignalingStatus) =>
-            update((s) => ({ ...s, signalingStatus: status })),
+            update((s) => ({
+                ...s,
+                signalingStatus: status,
+                // Any status that is not an error clears the reason, so a
+                // recovered connection does not keep explaining an old one.
+                signalingError: status === 'error' ? s.signalingError : null,
+            })),
+        setSignalingError: (reason: string) =>
+            update((s) => ({ ...s, signalingStatus: 'error', signalingError: reason })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
         setConnectedPeers: (peers: ConnectedPeer[]) =>
@@ -140,6 +151,7 @@ function createSyncStore() {
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
 export const signalingStatus = derived(syncStore, ($s) => $s.signalingStatus);
+export const signalingError = derived(syncStore, ($s) => $s.signalingError);
 export const pairedDevices = derived(syncStore, ($s) => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, ($s) => $s.connectedPeers);
 export const connectedPeerIds = derived(

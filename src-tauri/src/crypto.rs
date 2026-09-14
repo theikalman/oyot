@@ -10,7 +10,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier as _, VerifyingKey};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How far a message's timestamp may be from ours before we reject it. Covers
@@ -22,6 +22,22 @@ pub const MAX_CLOCK_SKEW_MS: i64 = 120_000;
 /// handful of messages, so this is generous; it is bounded so a peer cannot
 /// grow it without limit.
 const NONCE_HISTORY: usize = 256;
+
+/// How many distinct senders we keep nonce history for.
+///
+/// This used to be one shared list, despite the comment above saying
+/// otherwise: 256 entries across all senders, so anyone holding any key could
+/// push 256 valid messages of their own and evict a real peer's history,
+/// making a captured message from that peer replayable inside the timestamp
+/// window. A personal install talks to a handful of devices, so a per-sender
+/// history costs nothing and removes that.
+///
+/// The map is still bounded, or a sender with many keys would grow it without
+/// limit, and eviction is by insertion order. Filling it still takes 32
+/// distinct valid keypairs, and the prize is replaying one signaling message
+/// inside 120 seconds, which the pairing check and perfect negotiation both
+/// absorb. That residue is acceptable; silently sharing one list was not.
+const MAX_TRACKED_SENDERS: usize = 32;
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -126,13 +142,16 @@ impl std::fmt::Display for VerifyError {
 /// only once". It says nothing about whether we want to talk to that device -
 /// that is the pairing check, which stays where it was.
 pub struct EnvelopeVerifier {
-    seen: VecDeque<(String, String)>,
+    seen: HashMap<String, VecDeque<String>>,
+    /// Senders in the order they were first seen, so the map can be bounded.
+    order: VecDeque<String>,
 }
 
 impl EnvelopeVerifier {
     pub fn new() -> Self {
         Self {
-            seen: VecDeque::with_capacity(NONCE_HISTORY),
+            seen: HashMap::new(),
+            order: VecDeque::new(),
         }
     }
 
@@ -168,14 +187,26 @@ impl EnvelopeVerifier {
 
         // Only after the signature checks out: an unverified sender must not be
         // able to fill our nonce history.
-        let entry = (from.to_string(), nonce.to_string());
-        if self.seen.contains(&entry) {
+        let history = match self.seen.get_mut(from) {
+            Some(history) => history,
+            None => {
+                if self.order.len() >= MAX_TRACKED_SENDERS {
+                    if let Some(evicted) = self.order.pop_front() {
+                        self.seen.remove(&evicted);
+                    }
+                }
+                self.order.push_back(from.to_string());
+                self.seen.entry(from.to_string()).or_default()
+            }
+        };
+
+        if history.contains(&nonce.to_string()) {
             return Err(VerifyError::Replay);
         }
-        if self.seen.len() == NONCE_HISTORY {
-            self.seen.pop_front();
+        if history.len() == NONCE_HISTORY {
+            history.pop_front();
         }
-        self.seen.push_back(entry);
+        history.push_back(nonce.to_string());
 
         Ok(())
     }
@@ -435,7 +466,57 @@ mod tests {
                 Ok(())
             );
         }
-        assert_eq!(v.seen.len(), NONCE_HISTORY);
+        assert_eq!(v.seen[&node_id].len(), NONCE_HISTORY);
+    }
+
+    // The regression this guards: one shared list meant anyone holding any
+    // key could push enough of their own messages to evict a real peer's
+    // nonces, making a captured message from that peer replayable inside the
+    // timestamp window.
+    #[test]
+    fn one_sender_cannot_evict_another_senders_nonces() {
+        let (victim_key, victim) = parts();
+        let (noisy_key, noisy) = parts();
+        let now = now_ms();
+        let mut v = EnvelopeVerifier::new();
+
+        let sig = signed(&victim_key, &victim, "sdp", now, "the-nonce");
+        assert_eq!(
+            v.verify(&victim, "peer", "offer", "sdp", now, "the-nonce", &sig, now),
+            Ok(())
+        );
+
+        // Far more than the whole history, all validly signed, from someone else.
+        for i in 0..NONCE_HISTORY * 2 {
+            let nonce = format!("flood{i}");
+            let s = signed(&noisy_key, &noisy, "sdp", now, &nonce);
+            let _ = v.verify(&noisy, "peer", "offer", "sdp", now, &nonce, &s, now);
+        }
+
+        assert_eq!(
+            v.verify(&victim, "peer", "offer", "sdp", now, "the-nonce", &sig, now),
+            Err(VerifyError::Replay),
+            "the victim's nonce must still be remembered"
+        );
+    }
+
+    #[test]
+    fn the_number_of_tracked_senders_is_bounded() {
+        let now = now_ms();
+        let mut v = EnvelopeVerifier::new();
+
+        for i in 0..MAX_TRACKED_SENDERS * 2 {
+            let (key, node_id) = parts();
+            let nonce = format!("n{i}");
+            let sig = signed(&key, &node_id, "sdp", now, &nonce);
+            assert_eq!(
+                v.verify(&node_id, "peer", "offer", "sdp", now, &nonce, &sig, now),
+                Ok(())
+            );
+        }
+
+        assert_eq!(v.seen.len(), MAX_TRACKED_SENDERS);
+        assert_eq!(v.order.len(), MAX_TRACKED_SENDERS);
     }
 
     #[test]

@@ -5,11 +5,5 @@
   "platforms": ["android", "iOS"],
   "windows": ["main"],
   "comment": "See the note in default.json on why there are no fs permissions.",
-  "permissions": [
-    "core:default",
-    "opener:default",
-    "dialog:default",
-    "os:default",
-    "barcode-scanner:default"
-  ]
+  "permissions": ["core:default", "opener:default", "os:default", "barcode-scanner:default"]
 }

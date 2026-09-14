@@ -1,7 +1,7 @@
 {
   "name": "oyot",
   "version": "0.0.10-alpha",
-  "description": "",
+  "description": "A local-first note-taking app that syncs directly between your own devices.",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -24,7 +24,6 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-os": "^2.3.2",
     "@tiptap/core": "^3.23.5",
-    "@tiptap/extension-bubble-menu": "^3.23.5",
     "@tiptap/extension-collaboration": "^3.23.5",
     "@tiptap/extension-image": "^3.23.5",
     "@tiptap/extension-placeholder": "^3.23.5",
@@ -39,11 +38,9 @@
     "@tiptap/starter-kit": "^3.23.5",
     "@tiptap/suggestion": "^3.23.5",
     "@tiptap/y-tiptap": "^3.0.3",
-    "@types/qrcode": "^1.5.6",
     "qrcode": "^1.5.4",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0",
-    "y-webrtc": "^10.3.0",
     "yjs": "^13.6.0"
   },
   "devDependencies": {
@@ -52,6 +49,7 @@
     "@sveltejs/kit": "^2.67.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2",
+    "@types/qrcode": "^1.5.6",
     "eslint": "^10.10.0",
     "eslint-plugin-svelte": "^3.23.0",
     "globals": "^17.12.0",
