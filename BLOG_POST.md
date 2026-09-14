@@ -29,13 +29,13 @@ The core architectural decision was **local-first**. The primary data store is
 on-device. The network is a convenience, not a requirement. This inverts the
 traditional client-server model:
 
-| Aspect | Traditional SaaS | Local-First (Oyot) |
-|---|---|---|
-| Primary data | Server-side database | Local SQLite database |
-| Offline usage | Limited or broken | Full functionality |
-| Sync | Client pulls from server | P2P, CRDT-based merge |
-| Data ownership | Vendor | You |
-| Infrastructure | Required (server) | Optional (self-hosted) |
+| Aspect         | Traditional SaaS         | Local-First (Oyot)     |
+| -------------- | ------------------------ | ---------------------- |
+| Primary data   | Server-side database     | Local SQLite database  |
+| Offline usage  | Limited or broken        | Full functionality     |
+| Sync           | Client pulls from server | P2P, CRDT-based merge  |
+| Data ownership | Vendor                   | You                    |
+| Infrastructure | Required (server)        | Optional (self-hosted) |
 
 This is not just a philosophical stance — it has practical implications. When
 you are on a plane, in a tunnel, or in a country with aggressive internet
@@ -83,7 +83,7 @@ for web-based editing. It is extensible, predictable, and well-documented.
 
 Yjs provides the CRDT (Conflict-free Replicated Data Type) layer. More on that below.
 
---- 
+---
 
 ## The Sync Architecture: Why We Do Not Use a (Public) Relay Server
 
@@ -305,18 +305,18 @@ better software for everyone.
 
 ## Tech Stack Summary
 
-| Category | Choice |
-|---|---|
-| Desktop framework | Tauri 2.0 (Rust) |
-| Frontend | SvelteKit 2, Svelte 5, TypeScript |
-| Rich text | Tiptap 3 (ProseMirror) |
-| CRDT | Yjs 13 |
-| P2P transport | WebRTC (browser native) |
-| Signaling | MQTT (Eclipse Mosquitto) |
-| Database | SQLite (rusqlite) |
-| Identity | UUIDv4 + SHA-256 pairing |
-| Attachments | SHA-256 content addressing |
-| Build | Vite 6, GitHub Actions CI |
-| Platforms | macOS, Windows, Linux, Android, iOS |
+| Category          | Choice                              |
+| ----------------- | ----------------------------------- |
+| Desktop framework | Tauri 2.0 (Rust)                    |
+| Frontend          | SvelteKit 2, Svelte 5, TypeScript   |
+| Rich text         | Tiptap 3 (ProseMirror)              |
+| CRDT              | Yjs 13                              |
+| P2P transport     | WebRTC (browser native)             |
+| Signaling         | MQTT (Eclipse Mosquitto)            |
+| Database          | SQLite (rusqlite)                   |
+| Identity          | UUIDv4 + SHA-256 pairing            |
+| Attachments       | SHA-256 content addressing          |
+| Build             | Vite 6, GitHub Actions CI           |
+| Platforms         | macOS, Windows, Linux, Android, iOS |
 
 The full source code is available at **[github.com/ikalman/oyot](https://github.com/ikalman/oyot)** (MIT license).

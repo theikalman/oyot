@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import type { PairingState } from '$lib/stores/sync';
+    import { nodeIdError } from '$lib/sync/nodeId';
 
     interface Props {
         pairingState: PairingState;
@@ -13,20 +14,28 @@
     let isMobile = $state(false);
     let scanError = $state<string | null>(null);
 
+    // Only complain once there is something to complain about, so the field is
+    // not red before it has been touched.
+    let validationError = $derived(nodeIdInput.trim() ? nodeIdError(nodeIdInput) : null);
+    let canPair = $derived(!validationError && pairingState !== 'requesting');
+
     onMount(async () => {
         try {
             const { platform } = await import('@tauri-apps/plugin-os');
             const p = platform();
             isMobile = p === 'android' || p === 'ios';
         } catch (e) {
-            console.warn('[PairDeviceForm] Platform detection unavailable, hiding QR scan button:', e);
+            console.warn(
+                '[PairDeviceForm] Platform detection unavailable, hiding QR scan button:',
+                e,
+            );
             isMobile = false;
         }
     });
 
     function handlePair() {
         const trimmed = nodeIdInput.trim();
-        if (!trimmed) return;
+        if (nodeIdError(trimmed)) return;
         onPair(trimmed);
         nodeIdInput = '';
     }
@@ -49,7 +58,10 @@
                 scanError = 'Camera permission denied';
                 return;
             }
-            const result = await scanner.scan({ windowed: false, formats: [scanner.Format.QRCode] });
+            const result = await scanner.scan({
+                windowed: false,
+                formats: [scanner.Format.QRCode],
+            });
             if (result?.content) {
                 nodeIdInput = result.content;
             }
@@ -69,32 +81,38 @@
             placeholder="Paste or type the other device's Node ID"
             bind:value={nodeIdInput}
             onkeydown={handleKeydown}
+            class:invalid={validationError}
         />
         <div class="pair-actions">
             {#if isMobile}
                 <button class="btn-scan" onclick={handleScan}>Scan QR</button>
             {/if}
-            <button
-                class="btn-pair"
-                onclick={handlePair}
-                disabled={!nodeIdInput.trim() || pairingState === 'requesting'}
-            >
+            <button class="btn-pair" onclick={handlePair} disabled={!canPair}>
                 {pairingState === 'requesting' ? 'Requesting...' : 'Pair'}
             </button>
         </div>
+        {#if validationError}
+            <p class="pair-status error">{validationError}</p>
+        {/if}
         {#if pairingState === 'declined'}
             <p class="pair-status error">The other device declined the pairing request.</p>
         {/if}
         {#if scanError}
             <p class="pair-status error">{scanError}</p>
         {/if}
-        <p class="hint">Get the Node ID from the other device's "My Device" card above (copy/paste, or scan its QR code).</p>
+        <p class="hint">
+            Get the Node ID from the other device's "My Device" card above (copy/paste, or scan its
+            QR code).
+        </p>
     </div>
 </section>
 
 <style>
     .section {
         margin-bottom: 32px;
+    }
+    .node-id-input.invalid {
+        border-color: #d9534f;
     }
     .section h2 {
         margin: 0 0 16px 0;

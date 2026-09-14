@@ -18,13 +18,16 @@
     let { pairedDevices, connectedPeers, onDisconnect, onReconnect, onRemove }: Props = $props();
 
     function isConnected(roomId: string): boolean {
-        return connectedPeers.some(p => p.room_id === roomId);
+        return connectedPeers.some((p) => p.room_id === roomId);
     }
 
     // The app reconnects paired devices automatically (on startup, when signaling
     // recovers, and with backoff after a drop). The "Reconnect" action lets the
     // user bypass the backoff wait and force an attempt right now.
-    function peerStatus(pair: { peer_node_id: string; room_id: string }): 'connected' | 'connecting' | 'offline' {
+    function peerStatus(pair: {
+        peer_node_id: string;
+        room_id: string;
+    }): 'connected' | 'connecting' | 'offline' {
         if (isConnected(pair.room_id)) return 'connected';
         if ($reconnectingPeerIds.has(pair.peer_node_id)) return 'connecting';
         return 'offline';
@@ -57,22 +60,30 @@
         <p class="empty-state">No paired devices yet. Scan a QR code or enter a Node ID to pair.</p>
     {:else}
         <ul class="peer-list">
-            {#each pairedDevices as pair}
+            {#each pairedDevices as pair (pair.peer_node_id)}
                 {@const pstatus = peerStatus(pair)}
                 <li class="peer-item">
                     <div class="peer-info">
                         <div class="peer-header">
                             <span class="peer-icon">📱</span>
                             <span class="peer-name">{pair.peer_display_name}</span>
-                            <span class="peer-status {pstatus === 'connected' ? 'online' : pstatus}">
-                                {pstatus === 'connected' ? 'Connected' : pstatus === 'connecting' ? 'Connecting…' : 'Offline'}
+                            <span
+                                class="peer-status {pstatus === 'connected' ? 'online' : pstatus}"
+                            >
+                                {pstatus === 'connected'
+                                    ? 'Connected'
+                                    : pstatus === 'connecting'
+                                      ? 'Connecting…'
+                                      : 'Offline'}
                             </span>
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>
                         {#if pstatus === 'connected'}
                             <span class="peer-sync">{syncLabel(pair)}</span>
                         {:else if pair.last_synchronized}
-                            <span class="peer-sync">Last sync: {formatLastSync(pair.last_synchronized)}</span>
+                            <span class="peer-sync"
+                                >Last sync: {formatLastSync(pair.last_synchronized)}</span
+                            >
                         {/if}
                     </div>
                     <div class="peer-actions">
@@ -165,11 +176,11 @@
         background: #fef3c7;
         color: #92400e;
     }
-    :global([data-theme="dark"]) .peer-status.online {
+    :global([data-theme='dark']) .peer-status.online {
         background: #14532d;
         color: #86efac;
     }
-    :global([data-theme="dark"]) .peer-status.connecting {
+    :global([data-theme='dark']) .peer-status.connecting {
         background: #451a03;
         color: #fcd34d;
     }

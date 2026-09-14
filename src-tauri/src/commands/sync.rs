@@ -1,24 +1,26 @@
 use crate::db::AppState;
 use crate::indexer;
-use crate::network::peer_manager;
-use crate::network::webrtc_manager::WebRtcMessage;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct YjsStateResult {
-    pub doc_id: String,
-    pub state: Vec<u8>,
+// Yjs state crosses the IPC boundary as base64 rather than a JSON array of
+// numbers. A number array serialises to roughly 3.6 bytes of JSON per byte of
+// payload; base64 is 1.33. On a document of any size this was the dominant cost
+// of a save.
+fn decode(field: &str, value: &str) -> Result<Vec<u8>, String> {
+    BASE64
+        .decode(value)
+        .map_err(|e| format!("{field} is not valid base64: {e}"))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DocumentMetadata {
+pub struct YjsStateResult {
     pub doc_id: String,
-    pub title: String,
-    pub doc_type: String,
-    pub created_at: i64,
-    pub updated_at: i64,
+    /// base64 of the merged Yjs state; empty string when there is none.
+    pub state: String,
 }
 
 #[tauri::command]
@@ -26,7 +28,7 @@ pub fn get_yjs_state(
     state: tauri::State<'_, AppState>,
     doc_id: String,
 ) -> Result<YjsStateResult, String> {
-    eprintln!("[cmd] get_yjs_state doc_id={}", doc_id);
+    trace!("[cmd] get_yjs_state doc_id={}", doc_id);
     let state_vec: Vec<u8> = {
         let db = state.db.lock();
         db.query_row(
@@ -36,19 +38,52 @@ pub fn get_yjs_state(
         )
         .unwrap_or_default()
     };
-    eprintln!("[cmd] get_yjs_state doc_id={} -> {} bytes", doc_id, state_vec.len());
-    Ok(YjsStateResult { doc_id, state: state_vec })
+    trace!(
+        "[cmd] get_yjs_state doc_id={} -> {} bytes",
+        doc_id,
+        state_vec.len()
+    );
+    Ok(YjsStateResult {
+        doc_id,
+        state: BASE64.encode(&state_vec),
+    })
+}
+
+/// Where a Yjs update came from, which decides whether the editor is told to
+/// reload the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateOrigin {
+    /// The editor's own save. It already has this content in its ydoc.
+    Local,
+    /// Merged from a peer. An open editor has to be told.
+    Remote,
 }
 
 #[tauri::command]
 pub async fn save_yjs_update(
     state: tauri::State<'_, AppState>,
     doc_id: String,
-    update: Vec<u8>,
-    merged_state: Vec<u8>,
-    content_hash: Option<Vec<u8>>,
+    update: String,
+    merged_state: String,
+    content_hash: Option<String>,
+    origin: UpdateOrigin,
+    // What the editor extracted from the document: text for search, link
+    // targets, todo counts. Absent on the sync path, which merges a peer's
+    // update without ever rendering it, so there is nothing to extract.
+    index: Option<indexer::DocumentIndexInput>,
 ) -> Result<(), String> {
-    eprintln!("[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes", doc_id, update.len(), merged_state.len());
+    let update = decode("update", &update)?;
+    let merged_state = decode("merged_state", &merged_state)?;
+    let content_hash = content_hash
+        .map(|h| decode("content_hash", &h))
+        .transpose()?;
+    trace!(
+        "[cmd] save_yjs_update doc_id={} update={} bytes merged_state={} bytes",
+        doc_id,
+        update.len(),
+        merged_state.len()
+    );
     let db_snapshot = state.snapshot.clone();
     db_snapshot.append_update(&doc_id, &update)?;
 
@@ -76,22 +111,26 @@ pub async fn save_yjs_update(
         .unwrap_or_default()
     };
 
-    indexer::update_document_index(&state.db.lock(), &doc_id, &title)?;
+    {
+        let db = state.db.lock();
+        match &index {
+            Some(index) => indexer::update_document_index(&db, &doc_id, &title, index)?,
+            None => indexer::update_document_title(&db, &doc_id, &title)?,
+        }
+    }
 
     let _ = db_snapshot.check_and_consolidate(&doc_id, &merged_state);
 
-    let connected_peers = state.webrtc_manager.get_connected_peers().await;
-    eprintln!("[cmd] save_yjs_update doc_id={} broadcasting to {} Rust-side webrtc_manager peer(s): {:?}", doc_id, connected_peers.len(), connected_peers);
-    state.webrtc_manager.broadcast_message(
-        WebRtcMessage::CrdtUpdate {
-            doc_id: doc_id.clone(),
-            update,
-        },
-        None,
-    ).await;
-
-    eprintln!("[cmd] save_yjs_update doc_id={} emitting sync-received (local echo)", doc_id);
-    let _ = state.app_handle.emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
+    // Only a peer's update needs to reach an open editor. This used to fire on
+    // every save, including the editor's own: the editor listened, saw its own
+    // document id, and pulled the entire document back over IPC to apply state
+    // it had just produced. Idempotent in Yjs terms, and pure waste that grew
+    // with document size.
+    if origin == UpdateOrigin::Remote {
+        let _ = state
+            .app_handle
+            .emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
+    }
 
     Ok(())
 }
@@ -102,8 +141,9 @@ pub async fn save_yjs_update(
 pub fn set_content_hash(
     state: tauri::State<'_, AppState>,
     doc_id: String,
-    content_hash: Vec<u8>,
+    content_hash: String,
 ) -> Result<(), String> {
+    let content_hash = decode("content_hash", &content_hash)?;
     let db = state.db.lock();
     db.execute(
         "UPDATE documents SET content_hash = ? WHERE id = ?",
@@ -111,121 +151,4 @@ pub fn set_content_hash(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[tauri::command]
-pub fn load_document(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-) -> Result<DocumentMetadata, String> {
-    let db = state.db.lock();
-    let meta: DocumentMetadata = db
-        .query_row(
-            "SELECT id, title, type, created_at, updated_at FROM documents WHERE id = ? AND is_deleted = 0",
-            params![&doc_id],
-            |row| {
-                Ok(DocumentMetadata {
-                    doc_id: row.get(0)?,
-                    title: row.get(1)?,
-                    doc_type: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                })
-            },
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(meta)
-}
-
-#[tauri::command]
-pub async fn add_sync_peer(
-    state: tauri::State<'_, AppState>,
-    peer_id: String,
-    display_name: String,
-) -> Result<(), String> {
-    eprintln!("[cmd] add_sync_peer peer_id={} display_name={}", peer_id, display_name);
-    {
-        let db = state.db.lock();
-        peer_manager::save_peer(&db, &peer_id, &display_name)?;
-    }
-
-    let _ = state.peer_registry.add_peer(peer_id.clone(), display_name).await;
-    state.webrtc_manager.register_channel(peer_id.clone()).await;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn get_sync_peers(state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
-    let db_peers = {
-        let db = state.db.lock();
-        peer_manager::load_trusted_peers(&db)?
-    };
-    eprintln!("[cmd] get_sync_peers -> {} trusted peer(s) in db", db_peers.len());
-
-    let mut result = Vec::new();
-    for peer in db_peers {
-        let _ = state.peer_registry.add_peer(peer.node_id.clone(), peer.device_name.clone()).await;
-        result.push(serde_json::json!({
-            "node_id": peer.node_id,
-            "device_name": peer.device_name,
-        }));
-    }
-
-    Ok(result)
-}
-
-#[tauri::command]
-pub async fn remove_sync_peer(
-    state: tauri::State<'_, AppState>,
-    peer_id: String,
-) -> Result<(), String> {
-    eprintln!("[cmd] remove_sync_peer peer_id={}", peer_id);
-    {
-        let db = state.db.lock();
-        peer_manager::remove_peer(&db, &peer_id)?;
-    }
-
-    state.peer_registry.remove_peer(&peer_id).await;
-    state.webrtc_manager.unregister_channel(&peer_id).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_sync_enabled(_state: tauri::State<'_, AppState>, _enabled: bool) -> Result<(), String> {
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let peers = state.webrtc_manager.get_connected_peers().await;
-    eprintln!("[cmd] trigger_sync -> {} Rust-side webrtc_manager peer(s): {:?}", peers.len(), peers);
-    for peer_id in peers {
-        eprintln!("[cmd] trigger_sync sending CrdtStateRequest to {}", peer_id);
-        state.webrtc_manager.send_to_peer(
-            &peer_id,
-            WebRtcMessage::CrdtStateRequest {
-                doc_id: String::new(),
-            },
-        ).await?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn create_snapshot(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-    snapshot_blob: Vec<u8>,
-) -> Result<(), String> {
-    let last_update_id = state.snapshot.get_latest_update_id(&doc_id)?;
-    state.snapshot.save_snapshot(&doc_id, &snapshot_blob, last_update_id)
-}
-
-#[tauri::command]
-pub fn get_all_updates(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-) -> Result<Vec<Vec<u8>>, String> {
-    state.snapshot.get_all_updates(&doc_id)
 }

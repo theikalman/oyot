@@ -17,10 +17,11 @@ if (update) this.send({ t: 'sync-delta', id, update });
 ```
 
 `computeDelta` returns nothing when the asker is equal-or-ahead on that document
-- which is the normal case whenever the *other* device made the offline edits.
-So a routine one-directional edit left the ahead side's `sync-need` unanswered.
-That side then waited out `NEED_TIMEOUT_MS` twice (2 x 20s), logged
-`gave up pulling <id> after 2 attempts`, and only then settled the doc.
+
+- which is the normal case whenever the _other_ device made the offline edits.
+  So a routine one-directional edit left the ahead side's `sync-need` unanswered.
+  That side then waited out `NEED_TIMEOUT_MS` twice (2 x 20s), logged
+  `gave up pulling <id> after 2 attempts`, and only then settled the doc.
 
 Consequences of the silent path:
 
@@ -30,7 +31,7 @@ Consequences of the silent path:
   typical reconnect.
 - With `MAX_IN_FLIGHT = 4`, four such documents hold every slot for the timeout
   window, delaying healthy documents queued behind them.
-- Document *content* still converged (the other direction's `sync-delta` carried
+- Document _content_ still converged (the other direction's `sync-delta` carried
   it); only the completion signal and throughput suffered.
 
 ## Decision

@@ -1,14 +1,24 @@
 <script lang="ts">
+    import { log } from '$lib/log';
     import { onMount, onDestroy } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event';
+    import { getCurrentWindow } from '@tauri-apps/api/window';
     import { currentDocument, appStore } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
-    import type { Document } from '$lib/types';
-    import { Toolbar, EditorHeader } from '$lib/editor';
+    import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
-    import { createSaveService, type EditorSaveService } from './EditorSaveService';
+    import Backlinks from './Backlinks.svelte';
+    import {
+        createSaveService,
+        persistSnapshot,
+        DEFAULT_DEBOUNCE_MS,
+        type EditorSaveService,
+    } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
+    import { REMOTE_ORIGIN } from './yjs';
+    import { extractDocumentIndex } from './documentIndex';
+    import { base64ToBytes } from '$lib/sync/protocol';
     import * as Y from 'yjs';
 
     interface Props {
@@ -16,18 +26,18 @@
         autoSave?: boolean;
     }
 
-    let {
-        debounceMs = 1000,
-        autoSave = true
-    }: Props = $props();
+    let { debounceMs = DEFAULT_DEBOUNCE_MS, autoSave = true }: Props = $props();
 
     let current = $derived($currentDocument);
     let ydoc = $state<Y.Doc | null>(null);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
-    let isSaving = $state(false);
     let unlistenSyncEvent: (() => void) | null = null;
-    let previousDocId = $state<string | null>(null);
+    // Bumped after a save so the backlinks panel re-reads: a link added in this
+    // document changes what other documents' panels show, and this one's too if
+    // the save also removed a link.
+    let indexRevision = $state(0);
+    let unlistenCloseRequested: (() => void) | null = null;
 
     function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
@@ -39,9 +49,17 @@
 
         saveService = createSaveService({
             debounceMs,
-            onSaving: () => { isSaving = true; },
-            onSaved: () => { isSaving = false; }
+            onSaved: () => {
+                indexRevision++;
+            },
         });
+
+        // Only the editor can read the rendered document, so it supplies the
+        // index the save path records: text for search, link targets, todo
+        // counts. Read lazily at flush time so it reflects the final state.
+        saveService.setIndexReader(() =>
+            editorInstance ? extractDocumentIndex(editorInstance.state.doc) : null,
+        );
 
         if (current) {
             saveService.setDocument(current);
@@ -53,28 +71,38 @@
         saveService?.triggerSave();
     }
 
-    async function handleDocumentChange(newDoc: Document | null, oldDoc: Document | null) {
-        if (!newDoc || !oldDoc) return;
+    function handleLocalUpdate(update: Uint8Array) {
+        saveService?.recordUpdate(update);
+    }
 
-        if (saveService && previousDocId && previousDocId !== newDoc.id) {
-            await saveService.forceSave();
-        }
-
-        previousDocId = newDoc.id;
-        saveService?.setDocument(newDoc);
+    // EditorInstance is about to destroy the editor behind `doc`. Encode now,
+    // synchronously, and let the write land in the background: once the editor
+    // is gone the ydoc can no longer be read.
+    //
+    // `saveService` still points at the outgoing document at this point (the
+    // incoming one is set later, in handleEditorReady), so its pending flag
+    // answers for the document being torn down. Skipping when nothing is
+    // pending keeps plain navigation from rewriting and re-broadcasting a
+    // document nobody edited.
+    function handleBeforeTeardown(docId: string, doc: Y.Doc) {
+        if (!saveService?.hasPendingWrite()) return;
+        const delta = saveService.takePendingDelta();
+        const snapshot = Y.encodeStateAsUpdate(doc);
+        // Read the index here, while the editor still exists.
+        const index = editorInstance ? extractDocumentIndex(editorInstance.state.doc) : undefined;
+        void persistSnapshot(docId, snapshot, delta ?? snapshot, index);
     }
 
     async function reloadCurrentDocument() {
         if (!current?.id) return;
-        console.log(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
+        log.debug(`[Editor] reloadCurrentDocument() for docId=${current.id}`);
         try {
-            const stateResult = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', {
+            const stateResult = await invoke<{ doc_id: string; state: string }>('get_yjs_state', {
                 docId: current.id,
             });
-            console.log(`[Editor] [${current.id}] Fetched state: ${stateResult.state?.length ?? 0} bytes, ydoc present=${!!ydoc}`);
-            if (stateResult.state && stateResult.state.length > 0 && ydoc) {
-                Y.applyUpdate(ydoc, new Uint8Array(stateResult.state));
-                console.log(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
+            if (stateResult.state && ydoc) {
+                Y.applyUpdate(ydoc, base64ToBytes(stateResult.state), REMOTE_ORIGIN);
+                log.debug(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
             }
         } catch (error) {
             console.error(`[Editor] [${current.id}] Failed to reload document:`, error);
@@ -92,31 +120,53 @@
         }
     }
 
+    // The debounce timer dies with the process, so flush on every predictable
+    // exit. `hidden` is the one that matters on mobile: Android can kill a
+    // backgrounded app without ever firing a close event.
+    function handleVisibilityChange() {
+        if (document.visibilityState === 'hidden') {
+            void saveService?.flushNow();
+        }
+    }
+
     onMount(async () => {
         window.addEventListener('openDocument', handleOpenDocument);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('pagehide', handleVisibilityChange);
+
+        try {
+            unlistenCloseRequested = await getCurrentWindow().onCloseRequested(() => {
+                void saveService?.flushNow();
+            });
+        } catch (e) {
+            // Not running under Tauri (unit tests, browser preview): the
+            // visibilitychange and pagehide listeners above still cover it.
+            console.warn('[Editor] window close listener unavailable:', e);
+        }
+
         unlistenSyncEvent = await listen('sync-received', async (event) => {
             const payload = event.payload as { doc_id?: string; from?: string };
-            console.log(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`);
+            log.debug(
+                `[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'} from=${payload?.from ?? '(local)'} currentDocId=${current?.id ?? '(none)'}`,
+            );
             if (payload?.doc_id && payload.doc_id === current?.id) {
                 await reloadCurrentDocument();
             } else {
-                console.log(`[Editor] Ignoring sync-received, doc_id does not match currently open document`);
+                log.debug(
+                    `[Editor] Ignoring sync-received, doc_id does not match currently open document`,
+                );
             }
         });
     });
 
     onDestroy(() => {
         window.removeEventListener('openDocument', handleOpenDocument);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('pagehide', handleVisibilityChange);
         unlistenSyncEvent?.();
+        unlistenCloseRequested?.();
         if (saveService) {
             saveService.destroy();
-        }
-    });
-
-    $effect(() => {
-        const newDoc = current;
-        if (newDoc) {
-            handleDocumentChange(newDoc, previousDocId ? { id: previousDocId } as Document : null);
         }
     });
 </script>
@@ -124,14 +174,17 @@
 <div class="editor-container">
     {#if current}
         <Toolbar editor={editorInstance} />
-        
+
         <EditorInstance
             document={current}
             {autoSave}
-            {debounceMs}
             onEditorReady={handleEditorReady}
             onContentChange={handleContentChange}
+            onBeforeTeardown={handleBeforeTeardown}
+            onLocalUpdate={handleLocalUpdate}
         />
+
+        <Backlinks docId={current.id} revision={indexRevision} />
     {:else}
         <div class="empty-state">
             <p>Select a file to edit</p>

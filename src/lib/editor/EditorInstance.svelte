@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
+    import type * as Y from 'yjs';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
@@ -24,11 +25,11 @@
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
     import {
-        createYjsDoc,
         loadYjsDocFromState,
         createInitialContent,
         createCollaborationExtension,
-    } from '$lib/yjs/YjsEditorExtension';
+        REMOTE_ORIGIN,
+    } from './yjs';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -39,23 +40,31 @@
                     this.editor.commands.scrollIntoView();
                 });
             }
-        }
+        },
     });
 
     interface Props {
         document: any | null;
         autoSave?: boolean;
-        debounceMs?: number;
         onEditorReady?: (editor: EditorType, ydoc: any) => void;
         onContentChange?: () => void;
+        // Called with the outgoing document's id and ydoc immediately before
+        // the editor behind them is destroyed, so a pending save can be
+        // flushed while the state that produced it is still live.
+        onBeforeTeardown?: (docId: string, ydoc: Y.Doc) => void;
+        // Every local change to the document, as a Yjs update. Changes merged
+        // from a peer are tagged REMOTE_ORIGIN and skipped, so a merge is not
+        // rebroadcast to the peer that sent it.
+        onLocalUpdate?: (update: Uint8Array) => void;
     }
 
     let {
         document,
         autoSave = true,
-        debounceMs = 1000,
         onEditorReady,
-        onContentChange
+        onContentChange,
+        onBeforeTeardown,
+        onLocalUpdate,
     }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
@@ -74,6 +83,13 @@
             return false;
         }
 
+        // Flush the document we are leaving before its ydoc goes away. This has
+        // to happen here rather than in a sibling effect: the two effects race,
+        // and if this one wins, the outgoing document's pending edit is lost.
+        if (editor && ydoc && currentDocId) {
+            onBeforeTeardown?.(currentDocId, ydoc);
+        }
+
         if (editor) {
             editor.destroy();
             editor = null;
@@ -83,7 +99,7 @@
         }
 
         const newYDoc = loadYjsDocFromState(
-            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array()
+            document?.crdt_state ? new Uint8Array(document.crdt_state) : new Uint8Array(),
         );
 
         const title = document?.title ?? 'Untitled';
@@ -100,18 +116,18 @@
                 collabExt,
                 ResizableImage.configure({
                     inline: false,
-                    allowBase64: true
+                    allowBase64: true,
                 }),
                 ImageExtension,
                 Placeholder.configure({
-                    placeholder: 'Start writing...'
+                    placeholder: 'Start writing...',
                 }),
                 TaskList,
                 TaskItem.configure({
-                    nested: true
+                    nested: true,
                 }),
                 Table.configure({
-                    resizable: true
+                    resizable: true,
                 }),
                 TableRow,
                 TableHeader,
@@ -127,7 +143,7 @@
                 if (autoSave && editor) {
                     onContentChange?.();
                 }
-            }
+            },
         });
 
         ed.view.dom.addEventListener('click', handleImageClick);
@@ -136,6 +152,11 @@
         registerDateCommand(ed);
         registerTodoCommand(ed);
         registerImageCommand(ed);
+
+        newYDoc.on('update', (update: Uint8Array, origin: unknown) => {
+            if (origin === REMOTE_ORIGIN) return;
+            onLocalUpdate?.(update);
+        });
 
         ydoc = newYDoc;
         editor = ed;
@@ -201,6 +222,10 @@
         window.visualViewport?.removeEventListener('resize', handleViewportChange);
         window.visualViewport?.removeEventListener('scroll', handleViewportChange);
 
+        if (ydoc && currentDocId) {
+            onBeforeTeardown?.(currentDocId, ydoc);
+        }
+
         if (editor) {
             editor.view.dom.removeEventListener('click', handleImageClick);
             editor.destroy();
@@ -265,17 +290,63 @@
         height: 0;
     }
 
-    .editor-content :global(h1) { font-size: 2em; margin: 0.67em 0; color: var(--text-primary); }
-    .editor-content :global(h2) { font-size: 1.5em; margin: 0.83em 0; color: var(--text-primary); }
-    .editor-content :global(h3) { font-size: 1.17em; margin: 1em 0; color: var(--text-primary); }
-    .editor-content :global(p) { margin: 1em 0; }
-    .editor-content :global(ul), .editor-content :global(ol) { margin: 0.3em 0 !important; padding-left: 2em; line-height: 1.7 !important; }
-    .editor-content :global(ul li), .editor-content :global(ol li) { line-height: 1.7 !important; margin: 0 !important; }
-    .editor-content :global(ul li p), .editor-content :global(ol li p) { margin: 0 !important; line-height: 1.7 !important; }
-    .editor-content :global(code) { background: var(--code-bg); color: var(--text-primary); padding: 2px 4px; border-radius: 3px; }
-    .editor-content :global(pre) { background: var(--code-bg); color: var(--text-primary); padding: 16px; border-radius: 6px; overflow-x: auto; }
-    .editor-content :global(blockquote) { border-left: 4px solid var(--border-light); margin: 1em 0; padding-left: 1em; color: var(--text-secondary); }
-    .editor-content :global(a) { color: var(--accent-color); text-decoration: underline; }
+    .editor-content :global(h1) {
+        font-size: 2em;
+        margin: 0.67em 0;
+        color: var(--text-primary);
+    }
+    .editor-content :global(h2) {
+        font-size: 1.5em;
+        margin: 0.83em 0;
+        color: var(--text-primary);
+    }
+    .editor-content :global(h3) {
+        font-size: 1.17em;
+        margin: 1em 0;
+        color: var(--text-primary);
+    }
+    .editor-content :global(p) {
+        margin: 1em 0;
+    }
+    .editor-content :global(ul),
+    .editor-content :global(ol) {
+        margin: 0.3em 0 !important;
+        padding-left: 2em;
+        line-height: 1.7 !important;
+    }
+    .editor-content :global(ul li),
+    .editor-content :global(ol li) {
+        line-height: 1.7 !important;
+        margin: 0 !important;
+    }
+    .editor-content :global(ul li p),
+    .editor-content :global(ol li p) {
+        margin: 0 !important;
+        line-height: 1.7 !important;
+    }
+    .editor-content :global(code) {
+        background: var(--code-bg);
+        color: var(--text-primary);
+        padding: 2px 4px;
+        border-radius: 3px;
+    }
+    .editor-content :global(pre) {
+        background: var(--code-bg);
+        color: var(--text-primary);
+        padding: 16px;
+        border-radius: 6px;
+        overflow-x: auto;
+    }
+    .editor-content :global(blockquote) {
+        border-left: 4px solid var(--border-light);
+        margin: 1em 0;
+        padding-left: 1em;
+        color: var(--text-secondary);
+    }
+    .editor-content :global(a) {
+        color: var(--accent-color);
+        text-decoration: underline;
+    }
 
     .editor-content :global(.document-link) {
         display: inline-flex;
@@ -295,38 +366,44 @@
         background-color: var(--accent-bg-hover);
     }
 
-    .editor-content :global(.document-link-icon) { font-size: 12px; }
-    .editor-content :global(.document-link-title) { font-weight: 500; }
+    .editor-content :global(.document-link-icon) {
+        font-size: 12px;
+    }
+    .editor-content :global(.document-link-title) {
+        font-weight: 500;
+    }
 
-    .editor-content :global(ul[data-type="taskList"]) {
+    .editor-content :global(ul[data-type='taskList']) {
         list-style: none;
         padding-left: 0;
         margin: 0;
     }
 
-    .editor-content :global(ul[data-type="taskList"] > li) {
+    .editor-content :global(ul[data-type='taskList'] > li) {
         display: flex;
         align-items: flex-start;
         gap: 4px;
         padding: 1px 0;
     }
 
-    .editor-content :global(ul[data-type="taskList"] > li > label) {
+    .editor-content :global(ul[data-type='taskList'] > li > label) {
         display: flex;
         align-items: flex-start;
         gap: 2px;
         flex-shrink: 0;
     }
 
-    .editor-content :global(ul[data-type="taskList"] > li > div) { flex: 1; }
+    .editor-content :global(ul[data-type='taskList'] > li > div) {
+        flex: 1;
+    }
 
-    .editor-content :global(ul[data-type="taskList"] > li > div > p) {
+    .editor-content :global(ul[data-type='taskList'] > li > div > p) {
         margin: 0;
         display: inline;
         line-height: 1.4;
     }
 
-    .editor-content :global(ul[data-type="taskList"] input[type="checkbox"]) {
+    .editor-content :global(ul[data-type='taskList'] input[type='checkbox']) {
         margin-top: 4px;
         width: 18px;
         height: 18px;
@@ -340,14 +417,17 @@
         width: 100%;
     }
 
-    .editor-content :global(th), .editor-content :global(td) {
+    .editor-content :global(th),
+    .editor-content :global(td) {
         border: 1px solid var(--border-light);
         padding: 8px;
         text-align: left;
         color: var(--text-primary);
     }
 
-    .editor-content :global(th) { background: var(--bg-secondary); }
+    .editor-content :global(th) {
+        background: var(--bg-secondary);
+    }
 
     .editor-content :global(img) {
         max-width: 100%;

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { log } from '$lib/log';
     import { onMount } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import {
@@ -37,16 +38,36 @@
     let copySuccess = $state(false);
 
     onMount(() => {
-        const un1 = identity.subscribe(v => { localIdentity = v; });
-        const un2 = signalingStatus.subscribe(v => { status = v; });
-        const un4 = pairedDevices.subscribe(v => { paired = v; });
-        const un5 = connectedPeers.subscribe(v => { connected = v; });
-        const un6 = pendingPairRequest.subscribe(v => { pending = v; });
-        const un7 = syncStore.subscribe(s => { signalingUrl = s.signalingUrl; });
-        const un8 = pairingState.subscribe(v => { pairState = v; });
+        const un1 = identity.subscribe((v) => {
+            localIdentity = v;
+        });
+        const un2 = signalingStatus.subscribe((v) => {
+            status = v;
+        });
+        const un4 = pairedDevices.subscribe((v) => {
+            paired = v;
+        });
+        const un5 = connectedPeers.subscribe((v) => {
+            connected = v;
+        });
+        const un6 = pendingPairRequest.subscribe((v) => {
+            pending = v;
+        });
+        const un7 = syncStore.subscribe((s) => {
+            signalingUrl = s.signalingUrl;
+        });
+        const un8 = pairingState.subscribe((v) => {
+            pairState = v;
+        });
 
         return () => {
-            un1(); un2(); un4(); un5(); un6(); un7(); un8();
+            un1();
+            un2();
+            un4();
+            un5();
+            un6();
+            un7();
+            un8();
         };
     });
 
@@ -55,7 +76,7 @@
         try {
             await navigator.clipboard.writeText(localIdentity.node_id);
             copySuccess = true;
-            setTimeout(() => copySuccess = false, 2000);
+            setTimeout(() => (copySuccess = false), 2000);
         } catch (e) {
             console.error('Failed to copy:', e);
         }
@@ -63,7 +84,7 @@
 
     async function handleSaveSignalingUrl(newUrl: string) {
         try {
-            console.log('handleSaveSignalingUrl', newUrl);
+            log.debug('handleSaveSignalingUrl', newUrl);
 
             await invoke('save_mqtt_broker_url', { url: newUrl });
             syncStore.setSignalingUrl(newUrl);
@@ -71,6 +92,14 @@
         } catch (e) {
             console.error('Failed to save MQTT URL:', e);
         }
+    }
+
+    async function handleRename(displayName: string) {
+        await invoke('set_display_name', { displayName });
+        // Re-read rather than patching the store: Rust owns the identity, and
+        // the name is what peers will be told on the next exchange.
+        const updated = await invoke<UserIdentity>('get_identity');
+        syncStore.setIdentity(updated);
     }
 
     async function handlePair(nodeId: string) {
@@ -104,20 +133,59 @@
     }
 
     let isConnected = $derived(status === 'connected');
+
+    // Schema v3 replaced UUID device identity with an Ed25519 keypair and
+    // cleared every stored pairing, because a pairing records a peer's node_id
+    // and every node_id changed meaning. Say so once, rather than leaving the
+    // user to notice their devices silently stopped syncing.
+    const REPAIR_NOTICE_KEY = 'oyot.repairNoticeDismissed.v3';
+    let showRepairNotice = $state(false);
+
+    onMount(() => {
+        try {
+            showRepairNotice = localStorage.getItem(REPAIR_NOTICE_KEY) !== '1';
+        } catch {
+            // Private mode or blocked storage: showing it every time is the
+            // safe failure, since the alternative is never showing it.
+            showRepairNotice = true;
+        }
+    });
+
+    function dismissRepairNotice() {
+        showRepairNotice = false;
+        try {
+            localStorage.setItem(REPAIR_NOTICE_KEY, '1');
+        } catch {
+            /* nothing to do; it reappears next visit */
+        }
+    }
 </script>
 
 <div class="sync-page">
+    {#if showRepairNotice && paired.length === 0}
+        <div class="notice">
+            <div class="notice-body">
+                <strong>Devices need pairing again</strong>
+                <p>
+                    This version gives every device a cryptographic identity, so signaling messages
+                    can be verified rather than taken on trust. Device IDs changed as a result, and
+                    previous pairings no longer apply. Your notes are untouched.
+                </p>
+            </div>
+            <button class="notice-dismiss" onclick={dismissRepairNotice} aria-label="Dismiss">
+                Got it
+            </button>
+        </div>
+    {/if}
+
     <IdentityCard
         identity={localIdentity}
         onCopy={copyNodeId}
         {copySuccess}
+        onRename={handleRename}
     />
 
-    <SignalingConfig
-        {signalingUrl}
-        {isConnected}
-        onSave={handleSaveSignalingUrl}
-    />
+    <SignalingConfig {signalingUrl} {isConnected} onSave={handleSaveSignalingUrl} />
 
     {#if isConnected}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
@@ -142,6 +210,44 @@
 </div>
 
 <style>
+    .notice {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 16px;
+        margin-bottom: 24px;
+        background: var(--accent-bg);
+        border: 1px solid var(--accent-color);
+        border-radius: 8px;
+    }
+    .notice-body {
+        flex: 1;
+    }
+    .notice-body strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--text-primary);
+        font-size: 14px;
+    }
+    .notice-body p {
+        margin: 0;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.5;
+    }
+    .notice-dismiss {
+        flex-shrink: 0;
+        padding: 6px 12px;
+        background: transparent;
+        color: var(--accent-color);
+        border: 1px solid var(--accent-color);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .notice-dismiss:hover {
+        background: var(--accent-bg-hover);
+    }
     .sync-page {
         max-width: 600px;
         margin: 0 auto;

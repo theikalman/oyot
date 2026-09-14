@@ -1,10 +1,17 @@
 <script lang="ts">
     import { appStore, documents } from '../stores/app';
-    import { pairedDevices, connectedPeerIds, reconnectingPeerIds, roomSync, signalingStatus } from '../stores/sync';
+    import {
+        pairedDevices,
+        connectedPeerIds,
+        reconnectingPeerIds,
+        roomSync,
+        signalingStatus,
+    } from '../stores/sync';
     import { reconnectPeer } from '../sync';
     import type { Document, DocumentSummary } from '../types';
-    import { invoke } from "@tauri-apps/api/core";
-    import { goto } from "$app/navigation";
+    import { invoke } from '@tauri-apps/api/core';
+    import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import {
         createNote,
         createJournalForDate as createJournalForDateAction,
@@ -13,9 +20,11 @@
     } from '../services/documentActions';
 
     function handleDocClick(doc: DocumentSummary) {
-        invoke<Document>('get_document', { docId: doc.id }).then(fullDoc => {
-            appStore.setCurrentDocument(fullDoc);
-        }).catch(err => console.error('[Sidebar] Failed to load document:', err));
+        invoke<Document>('get_document', { docId: doc.id })
+            .then((fullDoc) => {
+                appStore.setCurrentDocument(fullDoc);
+            })
+            .catch((err) => console.error('[Sidebar] Failed to load document:', err));
     }
 
     let searchInput = $state('');
@@ -36,15 +45,69 @@
 
     let currentDocId = $derived($appStore.currentDocument?.id);
     let currentJournalTitle = $derived(
-        $appStore.currentDocument?.doc_type === 'journal' ? $appStore.currentDocument.title : null
+        $appStore.currentDocument?.doc_type === 'journal' ? $appStore.currentDocument.title : null,
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
-    function filterNotes(): DocumentSummary[] {
-        if (!searchInput.trim()) return notes;
-        const query = searchInput.toLowerCase();
-        return notes.filter((d: DocumentSummary) => d.title.toLowerCase().includes(query));
+    // Search runs in SQL over an FTS index of titles and bodies, so it finds
+    // what the user wrote, not just what they named it, and covers journals as
+    // well as notes. It used to be a substring match on note titles only.
+    interface SearchHit {
+        id: string;
+        doc_type: string;
+        title: string;
+        snippet: string;
+    }
+
+    let searchResults = $state<SearchHit[]>([]);
+    let isSearching = $state(false);
+    // A failed search must not render as "nothing matches": that reads as an
+    // answer when it is the absence of one.
+    let searchFailed = $state(false);
+    let searchTimer: ReturnType<typeof setTimeout> | null = null;
+    let searchSeq = 0;
+
+    let isSearchActive = $derived(searchInput.trim().length > 0);
+
+    async function runSearch(query: string) {
+        const seq = ++searchSeq;
+        try {
+            const hits = await invoke<SearchHit[]>('search_documents', { query });
+            // Drop a response that a newer keystroke has already superseded.
+            if (seq !== searchSeq) return;
+            searchResults = hits;
+            searchFailed = false;
+        } catch (err) {
+            if (seq !== searchSeq) return;
+            console.error('[Sidebar] Search failed:', err);
+            searchResults = [];
+            searchFailed = true;
+        } finally {
+            if (seq === searchSeq) isSearching = false;
+        }
+    }
+
+    $effect(() => {
+        const query = searchInput.trim();
+        if (searchTimer) clearTimeout(searchTimer);
+
+        if (!query) {
+            searchSeq++; // invalidate anything in flight
+            searchResults = [];
+            searchFailed = false;
+            isSearching = false;
+            return;
+        }
+
+        isSearching = true;
+        searchTimer = setTimeout(() => void runSearch(query), 150);
+    });
+
+    function openSearchHit(hit: SearchHit) {
+        invoke<Document>('get_document', { docId: hit.id })
+            .then((doc) => appStore.setCurrentDocument(doc))
+            .catch((err) => console.error('[Sidebar] Failed to open search hit:', err));
     }
 
     async function createDocument() {
@@ -142,7 +205,7 @@
             await deleteDocumentAction(docId);
 
             if (wasOpen) {
-                const nextNote = filterNotes().find((d: DocumentSummary) => d.id !== docId);
+                const nextNote = notes.find((d: DocumentSummary) => d.id !== docId);
                 if (nextNote) {
                     handleDocClick(nextNote);
                 }
@@ -155,11 +218,11 @@
     }
 
     function goToSettings() {
-        goto('/settings');
+        goto(resolve('/settings'));
     }
 
     function goToSync() {
-        goto('/settings/sync');
+        goto(resolve('/settings/sync'));
     }
 
     function prevMonth() {
@@ -184,11 +247,26 @@
         return days;
     }
 
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const monthNames = [
+        'January',
+        'February',
+        'March',
+        'April',
+        'May',
+        'June',
+        'July',
+        'August',
+        'September',
+        'October',
+        'November',
+        'December',
+    ];
     const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
     let calendarDays = $derived(getCalendarDays());
-    let calendarMonthYear = $derived(`${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`);
+    let calendarMonthYear = $derived(
+        `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`,
+    );
 
     function handleDateClick(day: number | null) {
         if (day === null) return;
@@ -264,92 +342,238 @@
 
     {#if !collapsed}
         <div class="sidebar-content">
-            <div class="sidebar-section">
-                {#if showCalendar}
-                <div class="calendar">
-                    <div class="calendar-header">
-                        <button class="cal-nav-btn" onclick={prevMonth} title="Previous month">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-                        </button>
-                        <div class="cal-center">
-                            <span class="calendar-title">{calendarMonthYear}</span>
-                            <button class="today-btn" onclick={goToToday}>Today</button>
-                        </div>
-                        <button class="cal-nav-btn" onclick={nextMonth} title="Next month">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-                        </button>
-                    </div>
-                    <div class="calendar-grid">
-                        {#each dayNames as d}
-                            <div class="cal-day-name">{d}</div>
-                        {/each}
-                        {#each calendarDays as day}
-                            <button
-                                class="cal-day"
-                                class:empty={day === null}
-                                class:today={isToday(day)}
-                                class:selected={isSelectedDate(day)}
-                                onclick={() => handleDateClick(day)}
-                                disabled={day === null}
-                            >
-                                {#if hasJournal(day)}
-                                    <span class="journal-dot"></span>
-                                {/if}
-                                {day ?? ''}
-                            </button>
-                        {/each}
-                    </div>
+            {#if isSearchActive}
+                <div class="sidebar-section">
+                    <h3>
+                        Results {#if !isSearching}({searchResults.length}){/if}
+                    </h3>
+                    {#if isSearching && searchResults.length === 0}
+                        <p class="search-note">Searching...</p>
+                    {:else if searchFailed}
+                        <p class="search-note error">Search is unavailable right now</p>
+                    {:else if searchResults.length === 0}
+                        <p class="search-note">Nothing matches "{searchInput.trim()}"</p>
+                    {:else}
+                        <ul class="doc-list">
+                            {#each searchResults as hit (hit.id)}
+                                <li class="doc-item">
+                                    <button
+                                        class="search-hit"
+                                        class:current={currentDocId === hit.id}
+                                        onclick={() => openSearchHit(hit)}
+                                    >
+                                        <span class="search-hit-title">
+                                            {hit.title}
+                                            {#if hit.doc_type === 'journal'}
+                                                <span class="search-hit-kind">journal</span>
+                                            {/if}
+                                        </span>
+                                        {#if hit.snippet}
+                                            <span class="search-hit-snippet">{hit.snippet}</span>
+                                        {/if}
+                                    </button>
+                                </li>
+                            {/each}
+                        </ul>
+                    {/if}
                 </div>
-                {/if}
-            </div>
-
-            <div class="sidebar-section">
-                <h3>
-                    Journals ({journals.length})
-                    <button class="cal-toggle-btn" onclick={() => showCalendar = !showCalendar} title="Toggle calendar">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M3 9H21M7 3V5M17 3V5M6 13H8M6 17H8M11 13H13M11 17H13M16 13H18M16 17H18M6.2 21H17.8C18.9201 21 19.4802 21 19.908 20.782C20.2843 20.5903 20.5903 20.2843 20.782 19.908C21 19.4802 21 18.9201 21 17.8V8.2C21 7.07989 21 6.51984 20.782 6.09202C20.5903 5.71569 20.2843 5.40973 19.908 5.21799C19.4802 5 18.9201 5 17.8 5H6.2C5.0799 5 4.51984 5 4.09202 5.21799C3.71569 5.40973 3.40973 5.71569 3.21799 6.09202C3 6.51984 3 7.07989 3 8.2V17.8C3 18.9201 3 19.4802 3.21799 19.908C3.40973 20.2843 3.71569 20.5903 4.09202 20.782C4.51984 21 5.07989 21 6.2 21Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path> </g></svg>
-                    </button>
-                </h3>
-            </div>
-
-            <div class="sidebar-section">
-                <h3>
-                    Notes
-                    <button class="add-doc-btn" onclick={() => showModal = true}>+</button>
-                </h3>
-                <ul class="doc-list">
-                    {#each filterNotes() as doc}
-                        <li class="doc-item">
-                            <button class="doc-btn" class:current={currentDocId === doc.id} onclick={() => handleDocClick(doc)}>
-                                <span class="doc-type"><svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"/></svg></span>
-                                {doc.title}
-                            </button>
-                            <button class="doc-menu-btn" onclick={(e) => toggleMenu(e, doc.id)} title="Note options">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
-                            </button>
-                            {#if openMenuId === doc.id}
-                                <div class="doc-menu">
-                                    <button class="doc-menu-item" onclick={() => startRename(doc)}>Rename</button>
-                                    <button class="doc-menu-item danger" onclick={() => startDelete(doc)}>Delete</button>
+            {:else}
+                <div class="sidebar-section">
+                    {#if showCalendar}
+                        <div class="calendar">
+                            <div class="calendar-header">
+                                <button
+                                    class="cal-nav-btn"
+                                    onclick={prevMonth}
+                                    title="Previous month"
+                                >
+                                    <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg
+                                    >
+                                </button>
+                                <div class="cal-center">
+                                    <span class="calendar-title">{calendarMonthYear}</span>
+                                    <button class="today-btn" onclick={goToToday}>Today</button>
                                 </div>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </div>
+                                <button class="cal-nav-btn" onclick={nextMonth} title="Next month">
+                                    <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg
+                                    >
+                                </button>
+                            </div>
+                            <div class="calendar-grid">
+                                {#each dayNames as d (d)}
+                                    <div class="cal-day-name">{d}</div>
+                                {/each}
+                                {#each calendarDays as day, i (i)}
+                                    <button
+                                        class="cal-day"
+                                        class:empty={day === null}
+                                        class:today={isToday(day)}
+                                        class:selected={isSelectedDate(day)}
+                                        onclick={() => handleDateClick(day)}
+                                        disabled={day === null}
+                                    >
+                                        {#if hasJournal(day)}
+                                            <span class="journal-dot"></span>
+                                        {/if}
+                                        {day ?? ''}
+                                    </button>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>
+                        Journals ({journals.length})
+                        <button
+                            class="cal-toggle-btn"
+                            onclick={() => (showCalendar = !showCalendar)}
+                            title="Toggle calendar"
+                        >
+                            <svg
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                ><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g
+                                    id="SVGRepo_tracerCarrier"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                ></g><g id="SVGRepo_iconCarrier">
+                                    <path
+                                        d="M3 9H21M7 3V5M17 3V5M6 13H8M6 17H8M11 13H13M11 17H13M16 13H18M16 17H18M6.2 21H17.8C18.9201 21 19.4802 21 19.908 20.782C20.2843 20.5903 20.5903 20.2843 20.782 19.908C21 19.4802 21 18.9201 21 17.8V8.2C21 7.07989 21 6.51984 20.782 6.09202C20.5903 5.71569 20.2843 5.40973 19.908 5.21799C19.4802 5 18.9201 5 17.8 5H6.2C5.0799 5 4.51984 5 4.09202 5.21799C3.71569 5.40973 3.40973 5.71569 3.21799 6.09202C3 6.51984 3 7.07989 3 8.2V17.8C3 18.9201 3 19.4802 3.21799 19.908C3.40973 20.2843 3.71569 20.5903 4.09202 20.782C4.51984 21 5.07989 21 6.2 21Z"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    ></path>
+                                </g></svg
+                            >
+                        </button>
+                    </h3>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>
+                        Notes
+                        <button class="add-doc-btn" onclick={() => (showModal = true)}>+</button>
+                    </h3>
+                    <ul class="doc-list">
+                        {#each notes as doc (doc.id)}
+                            <li class="doc-item">
+                                <button
+                                    class="doc-btn"
+                                    class:current={currentDocId === doc.id}
+                                    onclick={() => handleDocClick(doc)}
+                                >
+                                    <span class="doc-type"
+                                        ><svg
+                                            width="16"
+                                            height="16"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            ><path
+                                                stroke="#A1A1A1"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="1.5"
+                                                d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
+                                            /></svg
+                                        ></span
+                                    >
+                                    {doc.title}
+                                    {#if doc.todo_count > 0}
+                                        <span
+                                            class="todo-badge"
+                                            class:done={doc.completed_todo_count === doc.todo_count}
+                                            title="{doc.completed_todo_count} of {doc.todo_count} done"
+                                        >
+                                            {doc.completed_todo_count}/{doc.todo_count}
+                                        </span>
+                                    {/if}
+                                </button>
+                                <button
+                                    class="doc-menu-btn"
+                                    onclick={(e) => toggleMenu(e, doc.id)}
+                                    title="Note options"
+                                >
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><circle cx="12" cy="5" r="1" /><circle
+                                            cx="12"
+                                            cy="12"
+                                            r="1"
+                                        /><circle cx="12" cy="19" r="1" /></svg
+                                    >
+                                </button>
+                                {#if openMenuId === doc.id}
+                                    <div class="doc-menu">
+                                        <button
+                                            class="doc-menu-item"
+                                            onclick={() => startRename(doc)}>Rename</button
+                                        >
+                                        <button
+                                            class="doc-menu-item danger"
+                                            onclick={() => startDelete(doc)}>Delete</button
+                                        >
+                                    </div>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </div>
+            {/if}
 
             <div class="sidebar-section">
                 <h3>
                     Connected Devices
                     <button class="cal-toggle-btn" onclick={goToSync} title="Manage devices">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            ><path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                            /></svg
+                        >
                     </button>
                 </h3>
                 {#if $pairedDevices.length === 0}
                     <p class="empty-hint">No paired devices yet</p>
                 {:else}
                     <ul class="device-list">
-                        {#each $pairedDevices as device}
+                        {#each $pairedDevices as device (device.peer_node_id)}
                             {@const online = $connectedPeerIds.has(device.peer_node_id)}
                             {@const reconnecting = $reconnectingPeerIds.has(device.peer_node_id)}
                             {@const rs = $roomSync[device.room_id]}
@@ -374,14 +598,29 @@
                                     onclick={(e) => toggleDeviceMenu(e, device.peer_node_id)}
                                     title="Device options"
                                 >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        ><circle cx="12" cy="5" r="1" /><circle
+                                            cx="12"
+                                            cy="12"
+                                            r="1"
+                                        /><circle cx="12" cy="19" r="1" /></svg
+                                    >
                                 </button>
                                 {#if openDeviceMenuId === device.peer_node_id}
                                     <div class="device-menu">
                                         <button
                                             class="doc-menu-item"
                                             disabled={online || $signalingStatus !== 'connected'}
-                                            onclick={() => handleReconnectDevice(device.peer_node_id)}
+                                            onclick={() =>
+                                                handleReconnectDevice(device.peer_node_id)}
                                         >
                                             {reconnecting ? 'Reconnect now' : 'Reconnect'}
                                         </button>
@@ -395,31 +634,74 @@
         </div>
 
         <div class="sidebar-footer">
-            <button
-                class="settings-btn"
-                onclick={goToSettings}
-                title="Settings"
-            >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="3"/>
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            <button class="settings-btn" onclick={goToSettings} title="Settings">
+                <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <circle cx="12" cy="12" r="3" />
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                    />
                 </svg>
             </button>
         </div>
     {/if}
 </aside>
 
-<button class="toggle-btn collapsed" onclick={() => collapsed = !collapsed} title={collapsed ? 'Expand' : 'Collapse'}>
+<button
+    class="toggle-btn collapsed"
+    onclick={() => (collapsed = !collapsed)}
+    title={collapsed ? 'Expand' : 'Collapse'}
+>
     {#if collapsed}
-        <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M3 18h12"/></svg>
+        <svg
+            width="20"
+            height="20"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            ><path
+                stroke="#A1A1A1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M3 12h18M3 6h18M3 18h12"
+            /></svg
+        >
     {:else}
-        <svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="#A1A1A1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12h18M3 6h18M9 18h12"/></svg>
+        <svg
+            width="20"
+            height="20"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            ><path
+                stroke="#A1A1A1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M3 12h18M3 6h18M9 18h12"
+            /></svg
+        >
     {/if}
 </button>
 
 {#if showModal}
     <div class="modal-overlay" role="presentation" onclick={closeModal}>
-        <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && closeModal()}>
+        <div
+            class="modal-content"
+            role="dialog"
+            tabindex="-1"
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.key === 'Escape' && closeModal()}
+        >
             <h3>New Note</h3>
             <input
                 type="text"
@@ -437,7 +719,13 @@
 
 {#if renameDoc}
     <div class="modal-overlay" role="presentation" onclick={closeRenameModal}>
-        <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && closeRenameModal()}>
+        <div
+            class="modal-content"
+            role="dialog"
+            tabindex="-1"
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.key === 'Escape' && closeRenameModal()}
+        >
             <h3>Rename Note</h3>
             <input
                 type="text"
@@ -456,9 +744,18 @@
 
 {#if deleteDoc}
     <div class="modal-overlay" role="presentation" onclick={closeDeleteModal}>
-        <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && closeDeleteModal()}>
+        <div
+            class="modal-content"
+            role="dialog"
+            tabindex="-1"
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.key === 'Escape' && closeDeleteModal()}
+        >
             <h3>Delete "{deleteDoc.title}"?</h3>
-            <p class="modal-warning">This can't be undone. If this note has been synchronized to other devices, it will be deleted there too.</p>
+            <p class="modal-warning">
+                This can't be undone. If this note has been synchronized to other devices, it will
+                be deleted there too.
+            </p>
             <div class="modal-actions">
                 <button class="modal-btn secondary" onclick={closeDeleteModal}>Cancel</button>
                 <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
@@ -466,7 +763,6 @@
         </div>
     </div>
 {/if}
-
 
 <style>
     .sidebar {
@@ -477,7 +773,9 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        transition: width 0.2s ease, min-width 0.2s ease;
+        transition:
+            width 0.2s ease,
+            min-width 0.2s ease;
     }
 
     .sidebar.collapsed {
@@ -514,7 +812,9 @@
         border: 1px solid var(--border-color);
         border-radius: 50%;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        transition: box-shadow 0.2s ease, transform 0.2s ease;
+        transition:
+            box-shadow 0.2s ease,
+            transform 0.2s ease;
     }
 
     .toggle-btn.collapsed:hover {
@@ -577,6 +877,72 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+    }
+
+    .todo-badge {
+        margin-left: 6px;
+        padding: 1px 6px;
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-secondary);
+        background: var(--bg-hover);
+        border-radius: 8px;
+        white-space: nowrap;
+    }
+    .todo-badge.done {
+        color: var(--accent-color);
+        background: var(--accent-bg);
+    }
+
+    .search-note {
+        margin: 0;
+        padding: 8px 4px;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    .search-note.error {
+        color: #d9534f;
+    }
+    .search-hit {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        width: 100%;
+        padding: 6px 8px;
+        text-align: left;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        color: var(--text-primary);
+    }
+    .search-hit:hover {
+        background: var(--bg-hover);
+    }
+    .search-hit.current {
+        background: var(--accent-bg);
+    }
+    .search-hit-title {
+        font-size: 13px;
+        font-weight: 500;
+    }
+    .search-hit-kind {
+        margin-left: 6px;
+        font-size: 10px;
+        font-weight: 400;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+    }
+    .search-hit-snippet {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--text-secondary);
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        -webkit-box-orient: vertical;
     }
 
     .doc-list {
@@ -840,7 +1206,9 @@
         border: 1px solid var(--border-color);
         border-radius: 8px;
         cursor: pointer;
-        transition: background-color 0.15s, color 0.15s;
+        transition:
+            background-color 0.15s,
+            color 0.15s;
     }
 
     .settings-btn:hover {
@@ -870,8 +1238,6 @@
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
         color: var(--text-primary);
     }
-
-    
 
     .modal-content h3 {
         margin: 0 0 12px 0;
@@ -977,7 +1343,9 @@
         border-radius: 4px;
         font-size: 11px;
         font-weight: 500;
-        transition: background 0.1s, color 0.1s;
+        transition:
+            background 0.1s,
+            color 0.1s;
     }
 
     .today-btn:hover {

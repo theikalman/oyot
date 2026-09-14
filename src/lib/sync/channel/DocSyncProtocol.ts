@@ -1,5 +1,5 @@
 import type { DocumentRepository } from '../DocumentRepository';
-import { type ManifestEntry, type SyncMessage } from '../protocol';
+import { lifecycleStamp, type ManifestEntry, type SyncMessage } from '../protocol';
 
 export interface SyncProgressSink {
     onPhase(phase: 'reconciling' | 'transferring' | 'synced' | 'error'): void;
@@ -24,8 +24,16 @@ interface NeedItem {
 // Attachment transfer runs on its own queue, off the document finish gate: an
 // image can be large and slow, and text sync should not wait on it.
 const MAX_ATTACH_IN_FLIGHT = 2;
-const ATTACH_TIMEOUT_MS = 30_000;
+export const ATTACH_TIMEOUT_MS = 30_000;
 const MAX_ATTACH_ATTEMPTS = 2;
+
+// Carries its own attempt count, the way NeedItem does. Tracking attempts in
+// the in-flight map instead did not work: the timeout handler deletes the entry
+// before requeueing, so the next read always missed and the count reset to 1.
+interface AttachItem {
+    hash: string;
+    attempts: number;
+}
 
 // Runs the two-phase reconciliation (manifest, then delta) for ONE data channel,
 // plus the steady-state live-message fast path. Pure logic: it talks to a
@@ -43,8 +51,8 @@ export class DocSyncProtocol {
     private total = 0;
     private settled = 0;
 
-    private attachQueue: string[] = [];
-    private attachInFlight = new Map<string, number>(); // hash -> attempts
+    private attachQueue: AttachItem[] = [];
+    private attachInFlight = new Map<string, AttachItem>();
     private attachTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     constructor(
@@ -102,9 +110,11 @@ export class DocSyncProtocol {
                 await this.repo.applyDelete(msg.id, msg.deletedAt);
                 return;
             case 'live-update':
-                await this.repo.mergeDelta(msg.id, msg.update).catch((e) =>
-                    console.error(`[sync] live-update merge failed for ${msg.id}:`, e),
-                );
+                await this.repo
+                    .mergeDelta(msg.id, msg.update)
+                    .catch((e) =>
+                        console.error(`[sync] live-update merge failed for ${msg.id}:`, e),
+                    );
                 return;
             case 'attach-manifest':
                 await this.onAttachManifest(msg.items.map((i) => i.hash));
@@ -135,50 +145,54 @@ export class DocSyncProtocol {
 
     private async onAttachManifest(hashes: string[]): Promise<void> {
         for (const hash of hashes) {
-            if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) continue;
+            if (this.isAttachTracked(hash)) continue;
             try {
                 if (await this.repo.hasAttachment(hash)) continue;
             } catch (e) {
                 console.error(`[sync] hasAttachment(${hash}) failed:`, e);
                 continue;
             }
-            this.attachQueue.push(hash);
+            this.attachQueue.push({ hash, attempts: 0 });
         }
         this.attachPump();
     }
 
+    private isAttachTracked(hash: string): boolean {
+        return this.attachInFlight.has(hash) || this.attachQueue.some((q) => q.hash === hash);
+    }
+
     // Pull one attachment now (steady-state: a freshly inserted image).
     requestAttachment(hash: string): void {
-        if (this.attachInFlight.has(hash) || this.attachQueue.includes(hash)) return;
-        this.attachQueue.push(hash);
+        if (this.isAttachTracked(hash)) return;
+        this.attachQueue.push({ hash, attempts: 0 });
         this.attachPump();
     }
 
     private attachPump(): void {
         while (this.attachInFlight.size < MAX_ATTACH_IN_FLIGHT && this.attachQueue.length > 0) {
-            const hash = this.attachQueue.shift()!;
-            const attempts = (this.attachInFlight.get(hash) ?? 0) + 1;
-            this.attachInFlight.set(hash, attempts);
-            this.send({ t: 'attach-need', hash });
-            this.armAttachTimeout(hash);
+            const item = this.attachQueue.shift()!;
+            item.attempts++;
+            this.attachInFlight.set(item.hash, item);
+            this.send({ t: 'attach-need', hash: item.hash });
+            this.armAttachTimeout(item);
         }
     }
 
-    private armAttachTimeout(hash: string): void {
-        const existing = this.attachTimers.get(hash);
+    private armAttachTimeout(item: AttachItem): void {
+        const existing = this.attachTimers.get(item.hash);
         if (existing) clearTimeout(existing);
         this.attachTimers.set(
-            hash,
+            item.hash,
             setTimeout(() => {
-                this.attachTimers.delete(hash);
-                const attempts = this.attachInFlight.get(hash);
-                if (attempts === undefined) return;
-                this.attachInFlight.delete(hash);
-                if (attempts < MAX_ATTACH_ATTEMPTS) {
-                    this.attachQueue.push(hash);
+                this.attachTimers.delete(item.hash);
+                if (!this.attachInFlight.delete(item.hash)) return;
+                if (item.attempts < MAX_ATTACH_ATTEMPTS) {
+                    this.attachQueue.push(item);
                     this.attachPump();
                 } else {
-                    console.warn(`[sync] gave up pulling attachment ${hash} after ${attempts} attempts`);
+                    console.warn(
+                        `[sync] gave up pulling attachment ${item.hash} after ${item.attempts} attempts`,
+                    );
                 }
             }, ATTACH_TIMEOUT_MS),
         );
@@ -237,10 +251,22 @@ export class DocSyncProtocol {
         this.maybeFinish();
     }
 
-    private async reconcileEntry(entry: ManifestEntry, local: ManifestEntry | undefined): Promise<void> {
+    private async reconcileEntry(
+        entry: ManifestEntry,
+        local: ManifestEntry | undefined,
+    ): Promise<void> {
+        // `isDeleted` is a last-writer-wins register keyed on the lifecycle
+        // stamp, the same shape the title already uses. Branching on the flag
+        // alone could not express "I revived this after you deleted it", so a
+        // revived journal was re-deleted on the next manifest exchange.
+        const remoteStamp = lifecycleStamp(entry);
+        const localStamp = local ? lifecycleStamp(local) : -1;
+
         if (entry.isDeleted) {
-            if (!local || !local.isDeleted) {
-                await this.repo.applyDelete(entry.id, entry.deletedAt ?? Date.now());
+            // A tombstone for a document we have never seen is nothing to do:
+            // there is no row to mark, and we will not advertise it onward.
+            if (local && remoteStamp > localStamp) {
+                await this.repo.applyDelete(entry.id, entry.deletedAt ?? remoteStamp);
             }
             return;
         }
@@ -251,15 +277,22 @@ export class DocSyncProtocol {
             return;
         }
 
-        // We hold a tombstone for a doc the peer still has live: tombstone wins,
-        // our manifest will tell them to delete it. Nothing to pull.
-        if (local.isDeleted) return;
+        // We hold a tombstone the peer does not. Ours wins only if we observed
+        // it at least as late; otherwise the peer revived the document after
+        // our delete, so accept the revival and pull its content.
+        if (local.isDeleted) {
+            if (localStamp >= remoteStamp) return;
+            await this.repo.ensureDoc(entry);
+            this.enqueue({ id: entry.id, sv: '', attempts: 0 });
+            return;
+        }
 
         if (entry.titleUpdatedAt > local.titleUpdatedAt) {
             await this.repo.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
         }
 
-        const differ = !local.contentHash || !entry.contentHash || local.contentHash !== entry.contentHash;
+        const differ =
+            !local.contentHash || !entry.contentHash || local.contentHash !== entry.contentHash;
         if (differ) {
             const sv = await this.repo.localStateVector(entry.id);
             this.enqueue({ id: entry.id, sv, attempts: 0 });
@@ -295,7 +328,9 @@ export class DocSyncProtocol {
                     this.queue.push(item);
                     this.pump();
                 } else {
-                    console.warn(`[sync] gave up pulling ${item.id} after ${item.attempts} attempts`);
+                    console.warn(
+                        `[sync] gave up pulling ${item.id} after ${item.attempts} attempts`,
+                    );
                     this.settle();
                 }
             }, NEED_TIMEOUT_MS),
@@ -351,6 +386,8 @@ export class DocSyncProtocol {
     }
 
     private async onLiveCreated(entry: ManifestEntry): Promise<void> {
+        // ensureDoc clears a local tombstone when the peer's stamp is newer, so
+        // a create broadcast doubles as the revival signal.
         await this.repo.ensureDoc(entry);
         // Pull its content out-of-band; not tracked against the finish gate.
         this.send({ t: 'sync-need', id: entry.id, sv: '' });

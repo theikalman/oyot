@@ -24,6 +24,7 @@ function announceCreated(doc: Document): void {
         title: doc.title,
         titleUpdatedAt: doc.title_updated_at,
         createdAt: doc.created_at,
+        lifecycleUpdatedAt: doc.lifecycle_updated_at ?? doc.created_at,
     });
 }
 
@@ -56,7 +57,11 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
     const doc = await invoke<Document>('update_document', { docId, title });
     const existing = appStoreDoc(docId);
     if (existing) {
-        appStore.updateDocumentInList({ ...existing, title: doc.title, updated_at: doc.updated_at });
+        appStore.updateDocumentInList({
+            ...existing,
+            title: doc.title,
+            updated_at: doc.updated_at,
+        });
     }
     if (appStoreCurrentId() === docId) {
         appStore.setCurrentDocument(doc);

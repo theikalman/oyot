@@ -1,5 +1,6 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import { signalingStatus, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
 
     let signaling = $derived($signalingStatus);
@@ -36,15 +37,19 @@
 
     function color(t: Tone): string {
         switch (t) {
-            case 'synced': return 'var(--status-synced, #22c55e)';
-            case 'syncing': return 'var(--status-syncing, #eab308)';
-            case 'error': return 'var(--status-error, #ef4444)';
-            default: return 'var(--status-offline, #9ca3af)';
+            case 'synced':
+                return 'var(--status-synced, #22c55e)';
+            case 'syncing':
+                return 'var(--status-syncing, #eab308)';
+            case 'error':
+                return 'var(--status-error, #ef4444)';
+            default:
+                return 'var(--status-offline, #9ca3af)';
         }
     }
 
     function openSettings() {
-        goto('/settings/sync');
+        goto(resolve('/settings/sync'));
     }
 </script>
 
@@ -68,7 +73,9 @@
         cursor: pointer;
         font-size: 12px;
         color: var(--text-secondary);
-        transition: background-color 0.2s, border-color 0.2s;
+        transition:
+            background-color 0.2s,
+            border-color 0.2s;
     }
 
     .sync-status:hover {

@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import type { Snippet } from 'svelte';
     import { initSync, shutdownSync } from '$lib/sync';
 
@@ -24,7 +25,7 @@
     }
 
     function handleClose() {
-        goto('/');
+        goto(resolve('/'));
     }
 
     let pageTitle = $derived(() => {
@@ -46,8 +47,17 @@
     <header class="app-header">
         {#if canGoBack}
             <button class="header-btn back-btn" onclick={handleBack} title="Back">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
                 </svg>
             </button>
         {:else}
@@ -55,8 +65,17 @@
         {/if}
         <h1 class="header-title">{pageTitle()}</h1>
         <button class="header-btn close-btn" onclick={handleClose} title="Close">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 6L6 18M6 6l12 12"/>
+            <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M18 6L6 18M6 6l12 12" />
             </svg>
         </button>
     </header>

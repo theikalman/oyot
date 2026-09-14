@@ -22,7 +22,7 @@ In practice the automatic-only story is not enough:
 
 We also found a latent bug while wiring the button back up. The epoch tag from
 ADR 0002 decision 4 is a single per-session counter bumped on every local
-rebuild, but it was compared against the *remote's* counter:
+rebuild, but it was compared against the _remote's_ counter:
 
 ```
 if (env.epoch > 0 && env.epoch < session.epoch) { /* treat as stale */ }
@@ -31,7 +31,7 @@ if (env.epoch > 0 && env.epoch < session.epoch) { /* treat as stale */ }
 The two counters advance independently - each side bumps its own on its own
 rebuilds. Any time one side rebuilds more often than the other (which a manual
 reconnect does deliberately, and an asymmetric failure does incidentally), the
-higher-count side rejects the lower-count side's *current* offers and answers as
+higher-count side rejects the lower-count side's _current_ offers and answers as
 "stale" and no connection can form. Observed: local at epoch 11 dropping the
 peer's epoch-8 offers indefinitely, plus the peer's epoch-8 answer to local's own
 epoch-12 offer.
@@ -50,7 +50,7 @@ button on the sync settings page. Both stay live while a backoff retry is
 pending - that is the case the button exists for.
 
 **2. Track the epoch per direction.** `PeerSession` gains `peerEpoch`, the highest
-epoch seen *from* the peer. Incoming descriptions/candidates are stale only when
+epoch seen _from_ the peer. Incoming descriptions/candidates are stale only when
 `env.epoch < session.peerEpoch` (the peer's own counter went backwards);
 `session.epoch` is still bumped on every local rebuild and still sent on our
 outgoing messages so the peer can do the same check against us. `peerEpoch`
@@ -64,8 +64,8 @@ asymmetric-failure case that has nothing to do with the button. Per-direction
 tracking fixes both.
 
 **Drop the epoch check entirely and lean on perfect negotiation's signaling-state
-guards.** They catch a stale *answer* applied in the wrong state (it throws, we
-catch), but a stale *offer* from a superseded negotiation would still trigger a
+guards.** They catch a stale _answer_ applied in the wrong state (it throws, we
+catch), but a stale _offer_ from a superseded negotiation would still trigger a
 needless rollback churn. Keeping the check, corrected, is cheap.
 
 **Keep the button automatic-only (status hint, no action), per ADR 0002.**

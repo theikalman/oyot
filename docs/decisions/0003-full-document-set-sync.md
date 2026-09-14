@@ -31,13 +31,13 @@ best-effort live broadcasts, which an offline or newly-paired device never sees.
 
 **1. Two-phase reconciliation on every (re)connection, for the entire set.**
 
-- *Manifest.* Each peer sends one `sync-manifest` listing every document it knows
+- _Manifest._ Each peer sends one `sync-manifest` listing every document it knows
   - tombstones included - with a **content hash**, `title_updated_at`, and
-  `deleted_at`.
-- *Delta.* For each document whose hashes differ (or that the receiver lacks),
+    `deleted_at`.
+- _Delta._ For each document whose hashes differ (or that the receiver lacks),
   the receiver sends `sync-need { id, stateVector }`; the holder replies
   `sync-delta { id, update }` where `update = Y.encodeStateAsUpdate(doc,
-  stateVector)`. Both peers run both phases, so the set converges in both
+stateVector)`. Both peers run both phases, so the set converges in both
   directions. After a merge the hashes match and the next manifest is a no-op.
 
 The sync layer no longer has any notion of a "currently open document" - that

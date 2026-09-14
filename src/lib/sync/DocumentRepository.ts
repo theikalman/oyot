@@ -2,11 +2,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import * as Y from 'yjs';
 import type { Document, DocumentSummary } from '../types';
+import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
 import { contentHash } from './hash';
 import {
     base64ToBytes,
     bytesToBase64,
+    lifecycleStamp,
+    EMPTY_UPDATE_LEN,
     type AttachmentManifestEntry,
     type ManifestEntry,
 } from './protocol';
@@ -21,11 +24,9 @@ interface RawSyncEntry {
     title_updated_at: number;
     is_deleted: boolean;
     deleted_at: number | null;
-    content_hash: number[] | null;
+    lifecycle_updated_at: number;
+    content_hash: string | null; // base64
 }
-
-// Yjs' encoding of "no missing operations": a bare, empty update.
-const EMPTY_UPDATE_LEN = 2;
 
 function toSummary(doc: Document): DocumentSummary {
     return {
@@ -57,15 +58,16 @@ export class DocumentRepository {
             createdAt: r.created_at,
             isDeleted: r.is_deleted,
             deletedAt: r.deleted_at,
-            contentHash: r.content_hash ? bytesToBase64(Uint8Array.from(r.content_hash)) : null,
+            lifecycleUpdatedAt: r.lifecycle_updated_at,
+            contentHash: r.content_hash,
         }));
     }
 
     private async loadDoc(docId: string): Promise<Y.Doc> {
-        const res = await invoke<{ doc_id: string; state: number[] }>('get_yjs_state', { docId });
+        const res = await invoke<{ doc_id: string; state: string }>('get_yjs_state', { docId });
         const ydoc = new Y.Doc();
-        if (res.state && res.state.length > 0) {
-            Y.applyUpdate(ydoc, new Uint8Array(res.state));
+        if (res.state) {
+            Y.applyUpdate(ydoc, base64ToBytes(res.state));
         }
         return ydoc;
     }
@@ -90,8 +92,8 @@ export class DocumentRepository {
     // --- writes ----------------------------------------------------------
 
     // Merge an inbound update (delta or live edit) into local storage,
-    // regardless of whether the doc is open. Reuses save_yjs_update so it emits
-    // the 'sync-received' event the editor listens for.
+    // regardless of whether the doc is open. The 'remote' origin is what makes
+    // Rust emit 'sync-received', so an open editor picks the change up.
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
         const updateBytes = base64ToBytes(updateB64);
         const current = await this.loadDoc(docId);
@@ -100,39 +102,60 @@ export class DocumentRepository {
         const hash = await contentHash(merged);
         await invoke('save_yjs_update', {
             docId,
-            update: Array.from(updateBytes),
-            mergedState: Array.from(merged),
-            contentHash: Array.from(hash),
+            update: bytesToBase64(updateBytes),
+            mergedState: bytesToBase64(merged),
+            contentHash: bytesToBase64(hash),
+            origin: 'remote',
+            index: null,
         });
         appStore.markDocumentHasContent(docId);
     }
 
-    // Persist a locally-made update (editor save path).
-    async saveLocalUpdate(docId: string, mergedState: Uint8Array): Promise<void> {
+    // Persist a locally-made update (editor save path). 'local' suppresses the
+    // sync-received event: the editor that produced this already has it.
+    //
+    // `index` is what the editor extracted from the rendered document (text,
+    // links, todo counts). Only this path has it: the sync path merges a peer's
+    // update without ever rendering it, so it passes none and the derived rows
+    // are left for whenever that document is next opened and saved.
+    async saveLocalUpdate(
+        docId: string,
+        mergedState: Uint8Array,
+        index?: DocumentIndex,
+    ): Promise<void> {
         const hash = await contentHash(mergedState);
         await invoke('save_yjs_update', {
             docId,
-            update: Array.from(mergedState),
-            mergedState: Array.from(mergedState),
-            contentHash: Array.from(hash),
+            update: bytesToBase64(mergedState),
+            mergedState: bytesToBase64(mergedState),
+            contentHash: bytesToBase64(hash),
+            origin: 'local',
+            index: index ?? null,
         });
     }
 
     // Materialize a document row learned from a peer. Never clobbers a known row.
     async ensureDoc(entry: ManifestEntry): Promise<void> {
         const doc = await invoke<Document>('ensure_document', {
-            docId: entry.id,
-            docType: entry.docType,
-            title: entry.title,
-            createdAt: entry.createdAt,
-            updatedAt: entry.titleUpdatedAt,
-            titleUpdatedAt: entry.titleUpdatedAt,
+            entry: {
+                docId: entry.id,
+                docType: entry.docType,
+                title: entry.title,
+                createdAt: entry.createdAt,
+                updatedAt: entry.titleUpdatedAt,
+                titleUpdatedAt: entry.titleUpdatedAt,
+                lifecycleUpdatedAt: lifecycleStamp(entry),
+            },
         });
         appStore.addDocument(toSummary(doc));
     }
 
     async applyRename(docId: string, title: string, titleUpdatedAt: number): Promise<void> {
-        const changed = await invoke<boolean>('apply_remote_rename', { docId, title, titleUpdatedAt });
+        const changed = await invoke<boolean>('apply_remote_rename', {
+            docId,
+            title,
+            titleUpdatedAt,
+        });
         if (!changed) return;
         const existing = get(appStore).documents.find((d) => d.id === docId);
         if (existing) {
@@ -140,9 +163,12 @@ export class DocumentRepository {
         }
     }
 
-    async applyDelete(docId: string, deletedAt: number): Promise<void> {
-        await invoke('apply_remote_delete', { docId, deletedAt });
-        appStore.removeDocument(docId);
+    // Returns true if the tombstone won. A losing tombstone (we revived the
+    // document after the peer deleted it) must not remove it from the sidebar.
+    async applyDelete(docId: string, deletedAt: number): Promise<boolean> {
+        const applied = await invoke<boolean>('apply_remote_delete', { docId, deletedAt });
+        if (applied) appStore.removeDocument(docId);
+        return applied;
     }
 
     // --- attachments ---------------------------------------------------
@@ -165,9 +191,12 @@ export class DocumentRepository {
 
     // The bytes for a peer's `attach-need`, or null if we do not have them.
     async readAttachment(hash: string): Promise<{ mime: string; data: string } | null> {
-        const res = await invoke<{ mime_type: string; data: string } | null>('get_attachment_bytes', {
-            hash,
-        });
+        const res = await invoke<{ mime_type: string; data: string } | null>(
+            'get_attachment_bytes',
+            {
+                hash,
+            },
+        );
         return res ? { mime: res.mime_type, data: res.data } : null;
     }
 
@@ -189,7 +218,10 @@ export class DocumentRepository {
                 const state = Y.encodeStateAsUpdate(ydoc);
                 if (state.length <= EMPTY_UPDATE_LEN) continue;
                 const hash = await contentHash(state);
-                await invoke('set_content_hash', { docId: row.id, contentHash: Array.from(hash) });
+                await invoke('set_content_hash', {
+                    docId: row.id,
+                    contentHash: bytesToBase64(hash),
+                });
             } catch (e) {
                 console.warn(`[sync] hash backfill failed for ${row.id}:`, e);
             }

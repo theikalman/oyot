@@ -28,10 +28,7 @@ function safeDecode(s: string): string {
 //   - oyot-attachment://<hash>                             (current)
 //   - alt="oyot:<hash>"                                    (every version)
 //   - .../attachments/<hash>.<ext> baked asset URL         (legacy regression)
-export function attachmentHash(
-    src: string | null | undefined,
-    alt?: string | null,
-): string | null {
+export function attachmentHash(src: string | null | undefined, alt?: string | null): string | null {
     if (src && src.startsWith(ATTACHMENT_SCHEME)) {
         return src.slice(ATTACHMENT_SCHEME.length).toLowerCase() || null;
     }

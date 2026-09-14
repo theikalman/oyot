@@ -46,12 +46,12 @@ accepts the legacy forms directly, so an un-migrated node still renders.
 **3. Reconcile attachments over the data channel, mirroring the document
 protocol.** Protocol version bumps to **3**. New messages:
 
-| message | meaning |
-|---|---|
+| message           | meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
 | `attach-manifest` | every attachment the sender holds in full `{hash, mime, size}` |
-| `attach-need` | receiver requests one hash |
-| `attach-data` | holder replies with base64 bytes (framing layer chunks it) |
-| `attach-missing` | holder no longer has the bytes; stop asking |
+| `attach-need`     | receiver requests one hash                                     |
+| `attach-data`     | holder replies with base64 bytes (framing layer chunks it)     |
+| `attach-missing`  | holder no longer has the bytes; stop asking                    |
 
 Each peer sends `attach-manifest` on connect (right after `sync-manifest`) and
 again as a one-item list when a new image is inserted locally

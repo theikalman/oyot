@@ -6,7 +6,7 @@
         onDecline: () => void;
     }
 
-    let { from, displayName, onAccept, onDecline }: Props = $props();
+    let { displayName, onAccept, onDecline }: Props = $props();
 </script>
 
 <div class="modal-backdrop">

@@ -1,5 +1,9 @@
 import { Extension } from '@tiptap/core';
-import Suggestion, { type SuggestionProps, type SuggestionKeyDownProps, exitSuggestion } from '@tiptap/suggestion';
+import Suggestion, {
+    type SuggestionProps,
+    type SuggestionKeyDownProps,
+    exitSuggestion,
+} from '@tiptap/suggestion';
 import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type CommandSuggestion } from './CommandRegistry';
 import SlashSuggestionPopup from '../components/SlashSuggestionPopup.svelte';
@@ -19,7 +23,7 @@ export const SlashCommand = Extension.create({
             suggestion: {
                 char: '/',
                 startOfLine: false,
-            }
+            },
         };
     },
 
@@ -32,20 +36,28 @@ export const SlashCommand = Extension.create({
                 items: ({ query }: { query: string }) => {
                     return commandRegistry.filterCommands(query);
                 },
-                command: ({ editor, range, props }: { editor: Editor; range: Range; props: CommandSuggestion }) => {
+                command: ({
+                    editor,
+                    range,
+                    props,
+                }: {
+                    editor: Editor;
+                    range: Range;
+                    props: CommandSuggestion;
+                }) => {
                     const cmd = commandRegistry.getCommand(props.id);
                     if (cmd) {
                         cmd.onSelect({
                             editor,
                             range,
-                            props: {}
+                            props: {},
                         });
                     }
                 },
                 render: () => {
                     let popup: HTMLElement | null = null;
                     let state: PopupState = { items: [], selectedIndex: 0 };
-                    let selectedIndexStore: Writable<number> = writable(0);
+                    const selectedIndexStore: Writable<number> = writable(0);
                     let savedEditor: Editor | null = null;
                     let savedRange: Range | null = null;
 
@@ -88,19 +100,23 @@ export const SlashCommand = Extension.create({
                                 mount(SlashSuggestionPopup, {
                                     target: popup,
                                     props: {
-                                        items: state.items.map(item => ({
+                                        items: state.items.map((item) => ({
                                             id: item.id,
                                             title: item.title,
-                                            icon: item.icon
+                                            icon: item.icon,
                                         })),
                                         selectedIndexStore,
-                                        command: (item: { id: string; title: string; icon?: string }) => {
+                                        command: (item: {
+                                            id: string;
+                                            title: string;
+                                            icon?: string;
+                                        }) => {
                                             const cmd = commandRegistry.getCommand(item.id);
                                             if (cmd && props.range) {
                                                 cmd.onSelect({
                                                     editor: props.editor,
                                                     range: props.range,
-                                                    props: {}
+                                                    props: {},
                                                 });
                                             }
                                         },
@@ -108,8 +124,8 @@ export const SlashCommand = Extension.create({
                                             if (props.editor && props.editor.view) {
                                                 exitSuggestion(props.editor.view);
                                             }
-                                        }
-                                    }
+                                        },
+                                    },
                                 });
                             }
                         },
@@ -135,19 +151,23 @@ export const SlashCommand = Extension.create({
                                 mount(SlashSuggestionPopup, {
                                     target: popup,
                                     props: {
-                                        items: state.items.map(item => ({
+                                        items: state.items.map((item) => ({
                                             id: item.id,
                                             title: item.title,
-                                            icon: item.icon
+                                            icon: item.icon,
                                         })),
                                         selectedIndexStore,
-                                        command: (item: { id: string; title: string; icon?: string }) => {
+                                        command: (item: {
+                                            id: string;
+                                            title: string;
+                                            icon?: string;
+                                        }) => {
                                             const cmd = commandRegistry.getCommand(item.id);
                                             if (cmd && props.range) {
                                                 cmd.onSelect({
                                                     editor: props.editor,
                                                     range: props.range,
-                                                    props: {}
+                                                    props: {},
                                                 });
                                             }
                                         },
@@ -155,34 +175,39 @@ export const SlashCommand = Extension.create({
                                             if (props.editor && props.editor.view) {
                                                 exitSuggestion(props.editor.view);
                                             }
-                                        }
-                                    }
+                                        },
+                                    },
                                 });
                             }
                         },
 
                         onKeyDown: (props: SuggestionKeyDownProps) => {
                             if (props.event.key === 'ArrowUp') {
-                                state.selectedIndex = (state.selectedIndex - 1 + state.items.length) % state.items.length;
+                                state.selectedIndex =
+                                    (state.selectedIndex - 1 + state.items.length) %
+                                    state.items.length;
                                 selectedIndexStore.set(state.selectedIndex);
                                 return true;
                             }
 
                             if (props.event.key === 'ArrowDown') {
-                                state.selectedIndex = (state.selectedIndex + 1) % state.items.length;
+                                state.selectedIndex =
+                                    (state.selectedIndex + 1) % state.items.length;
                                 selectedIndexStore.set(state.selectedIndex);
                                 return true;
                             }
 
                             if (props.event.key === 'Enter') {
                                 if (state.items[state.selectedIndex]) {
-                                    const cmd = commandRegistry.getCommand(state.items[state.selectedIndex].id);
+                                    const cmd = commandRegistry.getCommand(
+                                        state.items[state.selectedIndex].id,
+                                    );
                                     const range = props.range ?? savedRange;
                                     if (cmd && savedEditor && range) {
                                         cmd.onSelect({
                                             editor: savedEditor,
                                             range,
-                                            props: {}
+                                            props: {},
                                         });
                                     }
                                 }
@@ -201,10 +226,10 @@ export const SlashCommand = Extension.create({
                             selectedIndexStore.set(0);
                             savedEditor = null;
                             savedRange = null;
-                        }
+                        },
                     };
-                }
-            })
+                },
+            }),
         ];
-    }
+    },
 });

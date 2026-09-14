@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 
-export function registerTodoCommand(editor: Editor): void {
+export function registerTodoCommand(_editor: Editor): void {
     const command: SlashCommand = {
         id: 'todo',
         label: 'Insert Todo',
@@ -17,17 +17,17 @@ export function registerTodoCommand(editor: Editor): void {
                 .insertContent({
                     type: 'taskItem',
                     attrs: {
-                        checked: false
+                        checked: false,
                     },
                     content: [
                         {
                             type: 'paragraph',
-                            content: []
-                        }
-                    ]
+                            content: [],
+                        },
+                    ],
                 })
                 .run();
-        }
+        },
     };
 
     commandRegistry.register(command);

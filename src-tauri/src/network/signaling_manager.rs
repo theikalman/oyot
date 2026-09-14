@@ -1,13 +1,17 @@
+use crate::crypto::{self, EnvelopeVerifier};
 use crate::db::AppState;
+use crate::identity::LocalIdentity;
 use crate::network::mqtt_client::{MqttEvent, MqttSignalingClient, SignalingMessage};
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
+
+// Topic plus payload, handed to the publish task that owns the live MQTT client.
+type PublishSender = mpsc::Sender<(String, Vec<u8>)>;
 
 #[derive(Debug, Clone)]
 struct PeerContext {
@@ -25,11 +29,11 @@ struct PairPayload {
 
 pub struct SignalingManager {
     mqtt_client: Arc<ParkingMutex<Option<MqttSignalingClient>>>,
-    node_id: Arc<ParkingMutex<String>>,
-    user_id: Arc<ParkingMutex<String>>,
-    display_name: Arc<ParkingMutex<String>>,
+    /// This device's identity and signing key. Every outgoing message is signed
+    /// with it, and `node_id` is the public half peers verify against.
+    identity: Arc<ParkingMutex<Option<LocalIdentity>>>,
     app_handle: Option<AppHandle>,
-    publish_tx: Arc<ParkingMutex<Option<mpsc::Sender<(String, Vec<u8>)>>>>,
+    publish_tx: Arc<ParkingMutex<Option<PublishSender>>>,
     // Peers we've explicitly agreed to pair with during this session (accepted a
     // pair-request from them, or had our pair-request accepted). Consulted when an
     // "offer" arrives from a node_id that isn't already in the persisted device_pairs
@@ -42,39 +46,63 @@ impl SignalingManager {
     pub fn new(app_handle: Option<AppHandle>) -> Self {
         Self {
             mqtt_client: Arc::new(ParkingMutex::new(None)),
-            node_id: Arc::new(ParkingMutex::new(String::new())),
-            user_id: Arc::new(ParkingMutex::new(String::new())),
-            display_name: Arc::new(ParkingMutex::new(String::new())),
+            identity: Arc::new(ParkingMutex::new(None)),
             app_handle,
             publish_tx: Arc::new(ParkingMutex::new(None)),
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
         }
     }
 
-    pub fn set_node_id(&self, node_id: String) {
-        *self.node_id.lock() = node_id;
-    }
-
-    pub fn set_user_id(&self, user_id: String) {
-        *self.user_id.lock() = user_id;
-    }
-
-    pub fn set_display_name(&self, name: String) {
-        *self.display_name.lock() = name;
+    pub fn set_identity(&self, identity: LocalIdentity) {
+        *self.identity.lock() = Some(identity);
     }
 
     pub fn get_node_id(&self) -> String {
-        self.node_id.lock().clone()
+        self.identity
+            .lock()
+            .as_ref()
+            .map(|i| i.public.node_id.clone())
+            .unwrap_or_default()
     }
 
-    #[allow(dead_code)]
-    pub fn get_user_id(&self) -> String {
-        self.user_id.lock().clone()
+    fn get_user_id(&self) -> String {
+        self.identity
+            .lock()
+            .as_ref()
+            .map(|i| i.public.user_id.clone())
+            .unwrap_or_default()
     }
 
-    #[allow(dead_code)]
-    pub fn get_display_name(&self) -> String {
-        self.display_name.lock().clone()
+    fn get_display_name(&self) -> String {
+        self.identity
+            .lock()
+            .as_ref()
+            .map(|i| i.public.display_name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Wraps a message in a signed envelope. Fails when no identity is loaded,
+    /// which would otherwise mean publishing something no peer can verify.
+    fn seal(&self, to: &str, msg_type: &str, payload: String) -> Result<SignalingMessage, String> {
+        let guard = self.identity.lock();
+        let me = guard
+            .as_ref()
+            .ok_or_else(|| "cannot sign: identity not loaded".to_string())?;
+
+        let from = me.public.node_id.clone();
+        let ts = crypto::now_ms();
+        let nonce = crypto::random_nonce();
+        let sig = crypto::sign(&me.signing_key, &from, to, msg_type, &payload, ts, &nonce);
+
+        Ok(SignalingMessage {
+            from,
+            to: Some(to.to_string()),
+            msg_type: msg_type.to_string(),
+            payload,
+            ts,
+            nonce,
+            sig,
+        })
     }
 
     /// Records that we've agreed to pair with `node_id` this session, so a subsequent
@@ -91,12 +119,16 @@ impl SignalingManager {
     }
 
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
-        eprintln!("[Signaling] connect() broker_url={} node_id={}", broker_url, node_id);
+        trace!(
+            "[Signaling] connect() broker_url={} node_id={}",
+            broker_url,
+            node_id
+        );
 
         // Tear down any previous client generation so its reconnect loop and publish
         // task stop instead of racing the new one.
         if let Some(old) = self.mqtt_client.lock().take() {
-            eprintln!("[Signaling] Shutting down previous MQTT client generation");
+            trace!("[Signaling] Shutting down previous MQTT client generation");
             old.shutdown();
         }
 
@@ -116,7 +148,7 @@ impl SignalingManager {
                 let client_opt = mqtt_client_clone.lock().clone();
                 if let Some(c) = client_opt {
                     if let Err(e) = c.publish(&topic, &payload).await {
-                        eprintln!("MQTT publish error: {}", e);
+                        warn_log!("MQTT publish error: {}", e);
                     }
                 }
             }
@@ -127,32 +159,72 @@ impl SignalingManager {
         let mut event_rx = client.subscribe_to_events();
         *self.mqtt_client.lock() = Some(client);
 
-        let user_id = self.user_id.clone();
+        let our_user_id = self.get_user_id();
         let node_id_str = node_id.to_string();
         let authorized_peers = self.authorized_peers.clone();
 
         if let Some(app_handle) = &self.app_handle {
             let app = app_handle.clone();
-            let user_id_clone = user_id.clone();
             let node_id_clone = node_id_str.clone();
+            // One verifier per client generation, so its replay history spans
+            // the whole session rather than a single message.
+            let mut verifier = EnvelopeVerifier::new();
             tokio::spawn(async move {
                 while let Ok(event) = event_rx.recv().await {
                     match event {
                         MqttEvent::Connected => {
-                            eprintln!("[Signaling] MQTT Connected");
+                            trace!("[Signaling] MQTT Connected");
                             let _ = app.emit("mqtt-status", "connected");
                         }
                         MqttEvent::Disconnected => {
                             let _ = app.emit("mqtt-status", "disconnected");
                         }
                         MqttEvent::Message { topic, msg } => {
-                            eprintln!("[Signaling] Received MQTT message on topic '{}': {:?}", topic, msg.msg_type);
-                            if msg.to.as_deref() == Some(node_id_clone.as_str()) {
-                                let uid = user_id_clone.lock().clone();
-                                Self::handle_message(&app, msg, uid, authorized_peers.clone()).await;
-                            } else {
-                                eprintln!("[Signaling] Ignoring message not addressed to us (to: {:?})", msg.to);
+                            trace!(
+                                "[Signaling] Received MQTT message on topic '{}': {:?}",
+                                topic,
+                                msg.msg_type
+                            );
+                            if msg.to.as_deref() != Some(node_id_clone.as_str()) {
+                                trace!(
+                                    "[Signaling] Ignoring message not addressed to us (to: {:?})",
+                                    msg.to
+                                );
+                                continue;
                             }
+
+                            // Before anything reads the payload: prove the
+                            // sender holds the secret key for the node_id it
+                            // claims, that the message is fresh, and that we
+                            // have not already processed it. The broker is
+                            // untrusted; anyone able to publish can set `from`
+                            // to whatever they like.
+                            if let Err(e) = verifier.verify(
+                                &msg.from,
+                                node_id_clone.as_str(),
+                                &msg.msg_type,
+                                &msg.payload,
+                                msg.ts,
+                                &msg.nonce,
+                                &msg.sig,
+                                crypto::now_ms(),
+                            ) {
+                                warn_log!(
+                                    "[Signaling] Rejecting {} from {}: {}",
+                                    msg.msg_type,
+                                    msg.from,
+                                    e
+                                );
+                                continue;
+                            }
+
+                            Self::handle_message(
+                                &app,
+                                msg,
+                                our_user_id.clone(),
+                                authorized_peers.clone(),
+                            )
+                            .await;
                         }
                     }
                 }
@@ -168,38 +240,48 @@ impl SignalingManager {
         our_user_id: String,
         authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
     ) {
-        eprintln!("[Signaling] handle_message() type={} from={} our_user_id={}", msg.msg_type, msg.from, our_user_id);
+        trace!(
+            "[Signaling] handle_message() type={} from={} our_user_id={}",
+            msg.msg_type,
+            msg.from,
+            our_user_id
+        );
         match msg.msg_type.as_str() {
-            "pair-request" => {
-                match serde_json::from_str::<PairPayload>(&msg.payload) {
-                    Ok(req) => {
-                        let _ = app.emit("mqtt-pair-request-received", serde_json::json!({
+            "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
+                Ok(req) => {
+                    let _ = app.emit(
+                        "mqtt-pair-request-received",
+                        serde_json::json!({
                             "from": msg.from,
                             "user_id": req.user_id,
                             "display_name": req.display_name,
-                        }));
-                    }
-                    Err(e) => eprintln!("[Signaling] Failed to parse pair-request payload: {}", e),
+                        }),
+                    );
                 }
-            }
-            "pair-response" => {
-                match serde_json::from_str::<PairPayload>(&msg.payload) {
-                    Ok(resp) => {
-                        let _ = app.emit("mqtt-pair-response-received", serde_json::json!({
+                Err(e) => warn_log!("[Signaling] Failed to parse pair-request payload: {}", e),
+            },
+            "pair-response" => match serde_json::from_str::<PairPayload>(&msg.payload) {
+                Ok(resp) => {
+                    let _ = app.emit(
+                        "mqtt-pair-response-received",
+                        serde_json::json!({
                             "from": msg.from,
                             "user_id": resp.user_id,
                             "display_name": resp.display_name,
                             "accepted": resp.accepted.unwrap_or(false),
-                        }));
-                    }
-                    Err(e) => eprintln!("[Signaling] Failed to parse pair-response payload: {}", e),
+                        }),
+                    );
                 }
-            }
+                Err(e) => warn_log!("[Signaling] Failed to parse pair-response payload: {}", e),
+            },
             "offer" => {
                 Self::handle_offer(app, msg, our_user_id, authorized_peers).await;
             }
             "answer" => {
-                eprintln!("[Signaling] Emitting mqtt-answer-received from={}", msg.from);
+                trace!(
+                    "[Signaling] Emitting mqtt-answer-received from={}",
+                    msg.from
+                );
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "sdp": msg.payload,
@@ -207,7 +289,10 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-answer-received", payload);
             }
             "ice-candidate" => {
-                eprintln!("[Signaling] Emitting mqtt-ice-candidate-received from={}", msg.from);
+                trace!(
+                    "[Signaling] Emitting mqtt-ice-candidate-received from={}",
+                    msg.from
+                );
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "candidate": msg.payload,
@@ -215,7 +300,10 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-ice-candidate-received", payload);
             }
             _ => {
-                eprintln!("[Signaling] Unknown message type '{}', ignoring", msg.msg_type);
+                warn_log!(
+                    "[Signaling] Unknown message type '{}', ignoring",
+                    msg.msg_type
+                );
             }
         }
     }
@@ -225,6 +313,7 @@ impl SignalingManager {
     ///    e.g. after an app restart) - reuses the stored room_id directly.
     /// 2. In-memory authorized_peers (a pairing handshake accepted earlier this session)
     ///    - derives room_id from the two real user_ids exchanged during that handshake.
+    ///
     /// If neither matches, the offer is from a node we never agreed to pair with and is
     /// dropped rather than auto-accepted.
     async fn handle_offer(
@@ -240,17 +329,33 @@ impl SignalingManager {
         };
 
         let (room_id, display_name) = if let Some(pair) = persisted {
-            eprintln!("[Signaling] Offer from already-paired node {} (trusted reconnect)", msg.from);
+            trace!(
+                "[Signaling] Offer from already-paired node {} (trusted reconnect)",
+                msg.from
+            );
             (pair.room_id, pair.peer_display_name)
         } else if let Some(ctx) = authorized_peers.lock().get(&msg.from).cloned() {
-            eprintln!("[Signaling] Offer from session-authorized node {}", msg.from);
-            (derive_room_id(&our_user_id, &ctx.user_id), ctx.display_name)
+            trace!(
+                "[Signaling] Offer from session-authorized node {}",
+                msg.from
+            );
+            (
+                pairing::derive_room_id(&our_user_id, &ctx.user_id),
+                ctx.display_name,
+            )
         } else {
-            eprintln!("[Signaling] Rejecting unsolicited offer from unauthorized node {}", msg.from);
+            warn_log!(
+                "[Signaling] Rejecting unsolicited offer from unauthorized node {}",
+                msg.from
+            );
             return;
         };
 
-        eprintln!("[Signaling] Emitting mqtt-offer-received from={} room_id={}", msg.from, room_id);
+        trace!(
+            "[Signaling] Emitting mqtt-offer-received from={} room_id={}",
+            msg.from,
+            room_id
+        );
         let payload = serde_json::json!({
             "from": msg.from,
             "sdp": msg.payload,
@@ -258,34 +363,6 @@ impl SignalingManager {
             "display_name": display_name,
         });
         let _ = app.emit("mqtt-offer-received", payload);
-    }
-
-    pub fn disconnect(&self) {
-        eprintln!("[Signaling] disconnect() called, tearing down MQTT client");
-        if let Some(old) = self.mqtt_client.lock().take() {
-            old.shutdown();
-        }
-        *self.publish_tx.lock() = None;
-        self.authorized_peers.lock().clear();
-    }
-
-    /// True only while a live MQTT session exists (post-ConnAck). False while
-    /// connecting, reconnecting after a drop, or fully disconnected.
-    pub fn is_connected(&self) -> bool {
-        self.mqtt_client
-            .lock()
-            .as_ref()
-            .map(|c| c.is_connected())
-            .unwrap_or(false)
-    }
-
-    /// Tri-state view for the frontend: "connected" | "connecting" | "disconnected".
-    pub fn mqtt_connection_status(&self) -> &'static str {
-        match &*self.mqtt_client.lock() {
-            None => "disconnected",
-            Some(c) if c.is_connected() => "connected",
-            Some(_) => "connecting",
-        }
     }
 
     async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
@@ -296,89 +373,141 @@ impl SignalingManager {
         }
     }
 
-    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<(), String> {
-        let node_id = self.node_id.lock().clone();
-        let user_id = self.user_id.lock().clone();
-        let display_name = self.display_name.lock().clone();
-        eprintln!("[Signaling] publish_pair_request() to peer_id={}", peer_id);
-        let payload = PairPayload { user_id, display_name, accepted: None };
-        let msg = SignalingMessage {
-            from: node_id,
-            to: Some(peer_id.to_string()),
-            msg_type: "pair-request".to_string(),
-            payload: serde_json::to_string(&payload).map_err(|e| e.to_string())?,
-        };
-        let topic = format!("signaling/{}/pair-request", peer_id);
+    /// Publish one signed message to a peer's node-scoped topic.
+    ///
+    /// Every outgoing message goes through here, so there is no path that
+    /// publishes an unsigned envelope.
+    async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
+        trace!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
+        let msg = self.seal(peer_id, msg_type, payload)?;
+        let topic = format!("signaling/{}/{}", peer_id, msg_type);
         let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
         self.send_publish(topic, bytes).await
+    }
+
+    fn pair_payload(&self, accepted: Option<bool>) -> Result<String, String> {
+        let payload = PairPayload {
+            user_id: self.get_user_id(),
+            display_name: self.get_display_name(),
+            accepted,
+        };
+        serde_json::to_string(&payload).map_err(|e| e.to_string())
+    }
+
+    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<(), String> {
+        let payload = self.pair_payload(None)?;
+        self.publish(peer_id, "pair-request", payload).await
     }
 
     pub async fn publish_pair_response(&self, peer_id: &str, accepted: bool) -> Result<(), String> {
-        let node_id = self.node_id.lock().clone();
-        let user_id = self.user_id.lock().clone();
-        let display_name = self.display_name.lock().clone();
-        eprintln!("[Signaling] publish_pair_response() to peer_id={} accepted={}", peer_id, accepted);
-        let payload = PairPayload { user_id, display_name, accepted: Some(accepted) };
-        let msg = SignalingMessage {
-            from: node_id,
-            to: Some(peer_id.to_string()),
-            msg_type: "pair-response".to_string(),
-            payload: serde_json::to_string(&payload).map_err(|e| e.to_string())?,
-        };
-        let topic = format!("signaling/{}/pair-response", peer_id);
-        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await
+        let payload = self.pair_payload(Some(accepted))?;
+        self.publish(peer_id, "pair-response", payload).await
     }
 
     pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
-        let node_id = self.node_id.lock().clone();
-        eprintln!("[Signaling] publish_offer() to peer_id={} from node_id={}", peer_id, node_id);
-        let msg = SignalingMessage {
-            from: node_id,
-            to: Some(peer_id.to_string()),
-            msg_type: "offer".to_string(),
-            payload: sdp.to_string(),
-        };
-        let topic = format!("signaling/{}/offer", peer_id);
-        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await
+        self.publish(peer_id, "offer", sdp.to_string()).await
     }
 
     pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
-        let node_id = self.node_id.lock().clone();
-        eprintln!("[Signaling] publish_answer() to peer_id={} from node_id={}", peer_id, node_id);
-        let msg = SignalingMessage {
-            from: node_id,
-            to: Some(peer_id.to_string()),
-            msg_type: "answer".to_string(),
-            payload: sdp.to_string(),
-        };
-        let topic = format!("signaling/{}/answer", peer_id);
-        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await
+        self.publish(peer_id, "answer", sdp.to_string()).await
     }
 
-    pub async fn publish_ice_candidate(&self, peer_id: &str, candidate: &str) -> Result<(), String> {
-        let node_id = self.node_id.lock().clone();
-        eprintln!("[Signaling] publish_ice_candidate() to peer_id={} from node_id={}", peer_id, node_id);
-        let msg = SignalingMessage {
-            from: node_id,
-            to: Some(peer_id.to_string()),
-            msg_type: "ice-candidate".to_string(),
-            payload: candidate.to_string(),
-        };
-        let topic = format!("signaling/{}/ice-candidate", peer_id);
-        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await
+    pub async fn publish_ice_candidate(
+        &self,
+        peer_id: &str,
+        candidate: &str,
+    ) -> Result<(), String> {
+        self.publish(peer_id, "ice-candidate", candidate.to_string())
+            .await
     }
 }
 
-fn derive_room_id(user_a: &str, user_b: &str) -> String {
-    let mut sorted = vec![user_a.to_string(), user_b.to_string()];
-    sorted.sort();
-    let combined = sorted.join(":");
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let result = hasher.finalize();
-    hex::encode(&result[..16])
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::EnvelopeVerifier;
+    use crate::identity::{LocalIdentity, UserIdentity};
+
+    fn manager_with_identity() -> (SignalingManager, String) {
+        let signing_key = crypto::generate_signing_key();
+        let node_id = crypto::encode_node_id(&signing_key.verifying_key());
+        let mgr = SignalingManager::new(None);
+        mgr.set_identity(LocalIdentity {
+            public: UserIdentity {
+                user_id: "u1".to_string(),
+                node_id: node_id.clone(),
+                display_name: "Laptop".to_string(),
+            },
+            signing_key,
+        });
+        (mgr, node_id)
+    }
+
+    // The unit tests in crypto cover the primitives; this covers the wiring,
+    // i.e. that what seal() produces is what a peer's verifier accepts.
+    #[test]
+    fn a_sealed_message_verifies_on_the_receiving_side() {
+        let (mgr, node_id) = manager_with_identity();
+        let msg = mgr
+            .seal("peer-node", "offer", "sdp-payload".to_string())
+            .unwrap();
+
+        assert_eq!(msg.from, node_id);
+        assert_eq!(msg.to.as_deref(), Some("peer-node"));
+        assert!(!msg.sig.is_empty() && !msg.nonce.is_empty());
+
+        let mut verifier = EnvelopeVerifier::new();
+        assert!(verifier
+            .verify(
+                &msg.from,
+                "peer-node",
+                &msg.msg_type,
+                &msg.payload,
+                msg.ts,
+                &msg.nonce,
+                &msg.sig,
+                crypto::now_ms(),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn a_sealed_message_does_not_verify_for_a_different_recipient() {
+        let (mgr, _) = manager_with_identity();
+        let msg = mgr.seal("peer-node", "offer", "sdp".to_string()).unwrap();
+
+        let mut verifier = EnvelopeVerifier::new();
+        assert!(
+            verifier
+                .verify(
+                    &msg.from,
+                    "someone-else",
+                    &msg.msg_type,
+                    &msg.payload,
+                    msg.ts,
+                    &msg.nonce,
+                    &msg.sig,
+                    crypto::now_ms(),
+                )
+                .is_err(),
+            "a message addressed to one peer must not verify for another"
+        );
+    }
+
+    #[test]
+    fn each_sealed_message_gets_a_fresh_nonce() {
+        let (mgr, _) = manager_with_identity();
+        let a = mgr.seal("peer", "offer", "x".to_string()).unwrap();
+        let b = mgr.seal("peer", "offer", "x".to_string()).unwrap();
+        assert_ne!(a.nonce, b.nonce, "a repeated nonce would read as a replay");
+    }
+
+    // Publishing unsigned would be worse than not publishing: the peer would
+    // reject it, and the failure would look like a network problem.
+    #[test]
+    fn sealing_without_an_identity_fails_rather_than_sending_unsigned() {
+        let mgr = SignalingManager::new(None);
+        let err = mgr.seal("peer", "offer", "sdp".to_string()).unwrap_err();
+        assert!(err.contains("identity not loaded"), "got: {err}");
+    }
 }

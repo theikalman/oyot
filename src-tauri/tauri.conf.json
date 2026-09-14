@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Oyot",
-  "version": "0.0.8-alpha",
+  "version": "0.0.9-alpha",
   "identifier": "com.ajiyakin.oyot",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -20,10 +20,10 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src 'self' https://* ws://* wss://* ws://localhost:* ws://127.0.0.1:* ws://0.0.0.0:* ws://192.168.1.103:*",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src 'self' ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": ["$APPDATA/attachments/**"]
       }
     }
   },
@@ -38,7 +38,7 @@
       "icons/icon.ico"
     ],
     "android": {
-      "versionCode": 1008
+      "versionCode": 1009
     },
     "macOS": {
       "minimumSystemVersion": "10.13"

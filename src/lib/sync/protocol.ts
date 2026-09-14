@@ -24,6 +24,11 @@ export interface ManifestEntry {
     createdAt: number;
     isDeleted: boolean;
     deletedAt: number | null;
+    // When this device last observed a change to `isDeleted`, in either
+    // direction. Makes the delete flag a last-writer-wins register so a
+    // revival can beat an older tombstone. Optional on the wire: a peer on an
+    // older build omits it, and `lifecycleStamp()` falls back.
+    lifecycleUpdatedAt?: number;
     // base64(SHA-256(merged Yjs state)); null when unknown (pre-migration row or
     // never-saved doc) - treated as "force a state-vector exchange".
     contentHash: string | null;
@@ -65,9 +70,27 @@ export type SyncMessage =
     // Holder no longer has the bytes - stop asking this connection.
     | { t: 'attach-missing'; hash: string };
 
+// The stamp to compare when deciding whether a tombstone or a revival is the
+// later observation. Falls back through the timestamps an older peer does send,
+// so a manifest without `lifecycleUpdatedAt` still orders sensibly.
+export function lifecycleStamp(entry: {
+    lifecycleUpdatedAt?: number;
+    deletedAt?: number | null;
+    titleUpdatedAt?: number;
+    createdAt?: number;
+}): number {
+    return (
+        entry.lifecycleUpdatedAt ?? entry.deletedAt ?? entry.titleUpdatedAt ?? entry.createdAt ?? 0
+    );
+}
+
 export function isSyncMessage(v: unknown): v is SyncMessage {
     return !!v && typeof v === 'object' && typeof (v as { t?: unknown }).t === 'string';
 }
+
+// Yjs' encoding of "no missing operations": a bare, empty update. An update
+// this short carries no content, so it is not worth persisting or sending.
+export const EMPTY_UPDATE_LEN = 2;
 
 // --- base64 <-> bytes (shared by the repository and the framing layer) --------
 
@@ -75,7 +98,10 @@ export function bytesToBase64(bytes: Uint8Array): string {
     let binary = '';
     const chunk = 0x2000;
     for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[]);
+        binary += String.fromCharCode.apply(
+            null,
+            bytes.subarray(i, i + chunk) as unknown as number[],
+        );
     }
     return btoa(binary);
 }

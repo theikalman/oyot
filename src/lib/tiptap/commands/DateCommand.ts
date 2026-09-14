@@ -1,7 +1,7 @@
-import type { Editor, Range } from '@tiptap/core';
+import type { Editor } from '@tiptap/core';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 
-export function registerDateCommand(editor: Editor): void {
+export function registerDateCommand(_editor: Editor): void {
     const command: SlashCommand = {
         id: 'date',
         label: 'Insert Date',
@@ -16,15 +16,11 @@ export function registerDateCommand(editor: Editor): void {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'long',
-                day: 'numeric'
+                day: 'numeric',
             });
 
-            editor.chain()
-                .focus()
-                .deleteRange(range)
-                .insertContent(formattedDate)
-                .run();
-        }
+            editor.chain().focus().deleteRange(range).insertContent(formattedDate).run();
+        },
     };
 
     commandRegistry.register(command);

@@ -1,4 +1,7 @@
 use crate::db::AppState;
+use crate::indexer;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,11 +18,13 @@ pub struct Document {
     pub title_updated_at: i64,
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
+    pub lifecycle_updated_at: i64,
 }
 
 // Column list backing `row_to_document`; keep the two in lockstep.
 const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, crdt_state, \
-     content_hash, COALESCE(title_updated_at, updated_at), is_deleted, deleted_at";
+     content_hash, COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
+     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at)";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DocumentSummary {
@@ -36,14 +41,6 @@ pub struct DocumentSummary {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IndexData {
     pub documents: Vec<DocumentSummary>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JournalEntry {
-    pub id: String,
-    pub doc_type: String,
-    pub title: String,
-    pub created_at: i64,
 }
 
 pub fn uuid_v4() -> String {
@@ -99,6 +96,7 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
         title_updated_at: row.get(7)?,
         is_deleted: is_deleted_int != 0,
         deleted_at: row.get(9)?,
+        lifecycle_updated_at: row.get(10)?,
     })
 }
 
@@ -109,13 +107,9 @@ fn current_timestamp() -> i64 {
         .as_millis() as i64
 }
 
-fn query_all_documents(db: &rusqlite::Connection, include_empty: bool) -> Result<IndexData, String> {
-    let content_filter = if include_empty {
-        ""
-    } else {
-        "AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-              OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))"
-    };
+fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData, String> {
+    let content_filter = "AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+              OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))";
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
                 CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
@@ -138,16 +132,7 @@ fn query_all_documents(db: &rusqlite::Connection, include_empty: bool) -> Result
 #[tauri::command]
 pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
     let db = state.db.lock();
-    query_all_documents(&db, false)
-}
-
-// Like get_all_documents but also returns documents that have no CRDT content
-// yet - e.g. one just learned from a paired device whose delta is still in
-// flight. The sidebar shows these with a "syncing" affordance.
-#[tauri::command]
-pub fn get_all_documents_full(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
-    let db = state.db.lock();
-    query_all_documents(&db, true)
+    query_all_documents(&db)
 }
 
 #[tauri::command]
@@ -171,7 +156,9 @@ pub struct DocSyncEntry {
     pub title_updated_at: i64,
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
-    pub content_hash: Option<Vec<u8>>,
+    pub lifecycle_updated_at: i64,
+    /// base64 of the content hash, matching how it crosses IPC elsewhere.
+    pub content_hash: Option<String>,
 }
 
 // The full document manifest a paired device sends on connect so the peer can
@@ -181,12 +168,16 @@ pub struct DocSyncEntry {
 // not filter out content-less or deleted rows.
 // See docs/decisions/0003-full-document-set-sync.md.
 #[tauri::command]
-pub fn list_document_sync_state(state: tauri::State<'_, AppState>) -> Result<Vec<DocSyncEntry>, String> {
+pub fn list_document_sync_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DocSyncEntry>, String> {
     let db = state.db.lock();
     let mut stmt = db
         .prepare(
             "SELECT id, type, title, created_at, updated_at, \
-                    COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, content_hash \
+                    COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
+                    COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
+                    content_hash \
              FROM documents",
         )
         .map_err(|e| e.to_string())?;
@@ -203,7 +194,8 @@ pub fn list_document_sync_state(state: tauri::State<'_, AppState>) -> Result<Vec
                 title_updated_at: row.get(5)?,
                 is_deleted: is_deleted_int != 0,
                 deleted_at: row.get(7)?,
-                content_hash: row.get(8)?,
+                lifecycle_updated_at: row.get(8)?,
+                content_hash: row.get::<_, Option<Vec<u8>>>(9)?.map(|h| BASE64.encode(h)),
             })
         })
         .map_err(|e| e.to_string())?
@@ -211,6 +203,20 @@ pub fn list_document_sync_state(state: tauri::State<'_, AppState>) -> Result<Vec
         .collect();
 
     Ok(entries)
+}
+
+// One document as a peer advertised it. Mirrors the frontend `ManifestEntry`;
+// grouped into a struct rather than passed as eight positional arguments.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureDocumentRequest {
+    pub doc_id: String,
+    pub doc_type: String,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub title_updated_at: Option<i64>,
+    pub lifecycle_updated_at: Option<i64>,
 }
 
 // Idempotently materializes a document row learned about from a peer (via
@@ -221,26 +227,49 @@ pub fn list_document_sync_state(state: tauri::State<'_, AppState>) -> Result<Vec
 #[tauri::command]
 pub fn ensure_document(
     state: tauri::State<'_, AppState>,
-    doc_id: String,
-    doc_type: String,
-    title: String,
-    created_at: i64,
-    updated_at: i64,
-    title_updated_at: Option<i64>,
+    entry: EnsureDocumentRequest,
 ) -> Result<Document, String> {
+    let EnsureDocumentRequest {
+        doc_id,
+        doc_type,
+        title,
+        created_at,
+        updated_at,
+        title_updated_at,
+        lifecycle_updated_at,
+    } = entry;
     let title_updated_at = title_updated_at.unwrap_or(updated_at);
+    let lifecycle_updated_at = lifecycle_updated_at.unwrap_or(created_at);
     {
         let db = state.db.lock();
+        // Insert what we do not have, and clear a local tombstone only when the
+        // peer's lifecycle stamp is newer than ours. Title and created_at are
+        // never overwritten here: apply_remote_rename owns the title, and the
+        // local row is authoritative for its own creation time.
         db.execute(
-            "INSERT OR IGNORE INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, created_at, updated_at, title_updated_at],
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                 is_deleted           = 0,
+                 deleted_at           = NULL,
+                 lifecycle_updated_at = excluded.lifecycle_updated_at
+             WHERE documents.is_deleted = 1
+               AND (documents.lifecycle_updated_at IS NULL
+                    OR documents.lifecycle_updated_at < excluded.lifecycle_updated_at)",
+            params![
+                &doc_id,
+                &doc_type,
+                &title,
+                created_at,
+                updated_at,
+                title_updated_at,
+                lifecycle_updated_at
+            ],
         )
         .map_err(|e| e.to_string())?;
-        db.execute(
-            "INSERT OR IGNORE INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
-            params![&doc_id, &title],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
 
     get_document(state, doc_id)
@@ -265,33 +294,47 @@ pub fn apply_remote_rename(
         )
         .map_err(|e| e.to_string())?;
     if changed > 0 {
-        db.execute(
-            "UPDATE document_index SET title = ? WHERE document_id = ?",
-            params![&title, &doc_id],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
     Ok(changed > 0)
 }
 
 // Applies a peer's deletion as a tombstone (the row is kept so the delete keeps
 // propagating). Idempotent; also drops the CRDT history like a local delete.
+// Returns true if the local row changed, i.e. the peer's tombstone was the
+// later observation. A losing tombstone leaves the document alone.
 #[tauri::command]
 pub fn apply_remote_delete(
     state: tauri::State<'_, AppState>,
     doc_id: String,
     deleted_at: i64,
-) -> Result<(), String> {
-    {
+) -> Result<bool, String> {
+    let applied = {
         let db = state.db.lock();
+        // Last-writer-wins: a tombstone only applies if the peer observed the
+        // delete later than whatever we last observed for this row. Otherwise a
+        // stale tombstone would undo a revival that happened after it.
         db.execute(
-            "UPDATE documents SET is_deleted = 1, deleted_at = COALESCE(deleted_at, ?) WHERE id = ?",
+            "UPDATE documents
+                SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1
+              WHERE id = ?2
+                AND (lifecycle_updated_at IS NULL OR lifecycle_updated_at < ?1)",
             params![deleted_at, &doc_id],
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+    };
+
+    // Only drop the CRDT history if the tombstone actually won. Doing it
+    // unconditionally would empty a document whose revival we had already
+    // accepted, while leaving the row live.
+    if applied > 0 {
+        {
+            let db = state.db.lock();
+            indexer::clear_document_index(&db, &doc_id)?;
+        }
+        state.snapshot.delete_document_data(&doc_id)?;
     }
-    state.snapshot.delete_document_data(&doc_id)?;
-    Ok(())
+    Ok(applied > 0)
 }
 
 #[tauri::command]
@@ -300,6 +343,10 @@ pub fn create_document(
     doc_type: String,
     title: String,
 ) -> Result<Document, String> {
+    // Journal ids are derived from the date so two devices creating the same
+    // day's entry converge on one row. That also means a deleted journal's
+    // tombstone still holds the id, so a plain INSERT would fail the primary
+    // key. Revive it instead.
     let doc_id = if doc_type == "journal" {
         format_journal_date(&title).unwrap_or_else(|| title.clone())
     } else {
@@ -310,19 +357,23 @@ pub fn create_document(
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            params![&doc_id, &doc_type, &title, now, now, now],
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?4, 0, NULL, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                 is_deleted           = 0,
+                 deleted_at           = NULL,
+                 updated_at           = excluded.updated_at,
+                 lifecycle_updated_at = excluded.lifecycle_updated_at",
+            params![&doc_id, &doc_type, &title, now],
         )
         .map_err(|e| e.to_string())?;
     }
 
     {
         let db = state.db.lock();
-        db.execute(
-            "INSERT INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
-            params![&doc_id, &title],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
 
     get_document(state, doc_id)
@@ -346,11 +397,7 @@ pub fn update_document(
 
     {
         let db = state.db.lock();
-        db.execute(
-            "UPDATE document_index SET title = ? WHERE document_id = ?",
-            params![&title, &doc_id],
-        )
-        .map_err(|e| e.to_string())?;
+        indexer::update_document_title(&db, &doc_id, &title)?;
     }
 
     get_document(state, doc_id)
@@ -361,10 +408,12 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
     let now = current_timestamp();
     let db = state.db.lock();
     db.execute(
-        "UPDATE documents SET is_deleted = 1, deleted_at = ? WHERE id = ?",
+        "UPDATE documents SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1 WHERE id = ?2",
         params![now, &doc_id],
     )
     .map_err(|e| e.to_string())?;
+
+    indexer::clear_document_index(&db, &doc_id)?;
 
     drop(db);
     state.snapshot.delete_document_data(&doc_id)?;
@@ -372,31 +421,53 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchHit {
+    pub id: String,
+    pub doc_type: String,
+    pub title: String,
+    /// A fragment of the body around the match, with the matched terms marked
+    /// by [ and ]. Empty when the match was in the title only.
+    pub snippet: String,
+}
+
+/// Full-text search over titles and bodies.
+///
+/// Previously a `LIKE '%q%'` over titles alone, which could not find anything
+/// the user had actually written. Bodies are indexed at save time (see
+/// `indexer`), because document content lives in the CRDT and is not otherwise
+/// queryable.
 #[tauri::command]
 pub fn search_documents(
     state: tauri::State<'_, AppState>,
     query: String,
-) -> Result<Vec<serde_json::Value>, String> {
-    let db = state.db.lock();
-    let search_pattern = format!("%{}%", query.to_lowercase());
+) -> Result<Vec<SearchHit>, String> {
+    let Some(match_query) = indexer::to_fts_query(&query) else {
+        return Ok(Vec::new());
+    };
 
+    let db = state.db.lock();
     let mut stmt = db
         .prepare(
-            "SELECT d.id, d.title FROM documents d
-         LEFT JOIN document_index i ON d.id = i.document_id
-         WHERE d.is_deleted = 0 AND (LOWER(d.title) LIKE ?)",
+            "SELECT d.id, d.type, d.title,
+                    snippet(document_search, 2, '[', ']', '…', 12) AS snippet
+               FROM document_search
+               JOIN documents d ON d.id = document_search.document_id
+              WHERE document_search MATCH ?1
+                AND d.is_deleted = 0
+              ORDER BY rank
+              LIMIT 50",
         )
         .map_err(|e| e.to_string())?;
 
-    let results: Vec<serde_json::Value> = stmt
-        .query_map(params![&search_pattern], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            Ok(serde_json::json!({
-                "id": id,
-                "title": title,
-                "line_content": ""
-            }))
+    let results: Vec<SearchHit> = stmt
+        .query_map(params![&match_query], |row| {
+            Ok(SearchHit {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                title: row.get(2)?,
+                snippet: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            })
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
@@ -405,25 +476,34 @@ pub fn search_documents(
     Ok(results)
 }
 
+/// Documents that link to `doc_id`.
+///
+/// This used to take a `_target_title` it ignored and return every non-deleted
+/// document, which made it look implemented while being a stub. It now reads
+/// the edge table the editor maintains on save.
 #[tauri::command]
 pub fn get_backlinks(
     state: tauri::State<'_, AppState>,
-    _target_title: String,
+    doc_id: String,
 ) -> Result<Vec<DocumentSummary>, String> {
     let db = state.db.lock();
-    let mut stmt = db.prepare(
-        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-                       OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
-                     THEN 1 ELSE 0 END as has_content
-         FROM documents d
-         LEFT JOIN document_index i ON d.id = i.document_id
-         WHERE d.is_deleted = 0"
-    )
-    .map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
+                    CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+                           OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
+                         THEN 1 ELSE 0 END as has_content
+               FROM document_links l
+               JOIN documents d ON d.id = l.source_id
+               LEFT JOIN document_index i ON d.id = i.document_id
+              WHERE l.target_id = ?1
+                AND d.is_deleted = 0
+              ORDER BY d.updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
 
     let backlinks: Vec<DocumentSummary> = stmt
-        .query_map([], row_to_document_summary)
+        .query_map(params![&doc_id], row_to_document_summary)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
@@ -432,63 +512,36 @@ pub fn get_backlinks(
 }
 
 #[tauri::command]
-pub fn get_journals(state: tauri::State<'_, AppState>) -> Result<Vec<JournalEntry>, String> {
-    let db = state.db.lock();
-    let mut stmt = db.prepare(
-        "SELECT id, type, title, created_at FROM documents WHERE type = 'journal' AND is_deleted = 0 ORDER BY created_at DESC"
-    ).map_err(|e| e.to_string())?;
-
-    let journals: Vec<JournalEntry> = stmt
-        .query_map([], |row| {
-            Ok(JournalEntry {
-                id: row.get(0)?,
-                doc_type: row.get(1)?,
-                title: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(journals)
-}
-
-#[tauri::command]
 pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<Document, String> {
     let today_title = get_today_date();
     let doc_id = format_journal_date(&today_title).unwrap_or_else(|| today_title.clone());
 
-    let existing = {
-        let db = state.db.lock();
-        db.query_row(
-            &format!("SELECT {DOCUMENT_COLUMNS} FROM documents WHERE type = 'journal' AND title = ? AND is_deleted = 0"),
-            params![&today_title],
-            row_to_document,
-        ).ok()
-    };
-
-    if let Some(doc) = existing {
-        return Ok(doc);
-    }
-
     let now = current_timestamp();
-    {
-        let db = state.db.lock();
-        db.execute(
-            "INSERT INTO documents (id, type, title, created_at, updated_at, title_updated_at) VALUES (?, 'journal', ?, ?, ?, ?)",
-            params![&doc_id, &today_title, now, now, now],
-        )
-        .map_err(|e| e.to_string())?;
-    }
 
+    // One upsert rather than SELECT-then-INSERT: the old form released the
+    // mutex between the two, and failed outright once the day's journal had
+    // been deleted, because the tombstone still owned the id. Failing here took
+    // the whole app down with it, since startup awaits this before it can show
+    // a document.
     {
         let db = state.db.lock();
         db.execute(
-            "INSERT INTO document_index (document_id, title, todo_count, completed_todo_count) VALUES (?, ?, 0, 0)",
-            params![&doc_id, &today_title],
+            "INSERT INTO documents
+                 (id, type, title, created_at, updated_at, title_updated_at,
+                  is_deleted, deleted_at, lifecycle_updated_at)
+             VALUES (?1, 'journal', ?2, ?3, ?3, ?3, 0, NULL, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+                 is_deleted           = 0,
+                 deleted_at           = NULL,
+                 lifecycle_updated_at = CASE
+                     WHEN documents.is_deleted = 1 THEN excluded.lifecycle_updated_at
+                     ELSE documents.lifecycle_updated_at
+                 END",
+            params![&doc_id, &today_title, now],
         )
         .map_err(|e| e.to_string())?;
+
+        indexer::update_document_title(&db, &doc_id, &today_title)?;
     }
 
     get_document(state, doc_id)

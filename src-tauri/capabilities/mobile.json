@@ -4,23 +4,12 @@
   "description": "Capability for the main window (Android and iOS)",
   "platforms": ["android", "iOS"],
   "windows": ["main"],
+  "comment": "See the note in default.json on why there are no fs permissions.",
   "permissions": [
     "core:default",
     "opener:default",
     "dialog:default",
-    "fs:default",
-    "fs:allow-read-text-file",
-    "fs:allow-exists",
     "os:default",
-    "barcode-scanner:default",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        { "path": "$HOME/**" },
-        { "path": "$DOCUMENT/**" },
-        { "path": "$DESKTOP/**" },
-        { "path": "**" }
-      ]
-    }
+    "barcode-scanner:default"
   ]
 }

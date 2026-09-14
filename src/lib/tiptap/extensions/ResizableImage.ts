@@ -54,7 +54,17 @@ export const ResizableImage = Image.extend({
     },
 
     addNodeView() {
-        return ({ node, getPos, HTMLAttributes, editor }: { node: any, getPos: any, HTMLAttributes: any, editor: any }) => {
+        return ({
+            node,
+            getPos,
+            HTMLAttributes,
+            editor,
+        }: {
+            node: any;
+            getPos: any;
+            HTMLAttributes: any;
+            editor: any;
+        }) => {
             const el = document.createElement('img');
             el.setAttribute('alt', HTMLAttributes.alt || node.attrs.alt || '');
 
@@ -102,7 +112,11 @@ export const ResizableImage = Image.extend({
                 onCommit: (width: number, height: number) => {
                     const pos = getPos();
                     if (pos === undefined) return;
-                    (editor as Editor).chain().setNodeSelection(pos).updateAttributes(this.name, { width, height }).run();
+                    (editor as Editor)
+                        .chain()
+                        .setNodeSelection(pos)
+                        .updateAttributes(this.name, { width, height })
+                        .run();
                 },
                 onUpdate: (updatedNode) => {
                     if (updatedNode.type.name !== node.type.name) return false;
@@ -110,8 +124,8 @@ export const ResizableImage = Image.extend({
                 },
                 options: {
                     preserveAspectRatio: true,
-                    min: { width: 50, height: 50 }
-                }
+                    min: { width: 50, height: 50 },
+                },
             });
 
             const dom = nodeView.dom as HTMLElement;
@@ -123,8 +137,10 @@ export const ResizableImage = Image.extend({
                 dom.style.opacity = '1';
                 (nodeView.wrapper as HTMLElement).style.visibility = '';
                 (nodeView.wrapper as HTMLElement).style.pointerEvents = '';
-                const handles = (nodeView.wrapper as HTMLElement).querySelectorAll('[data-resize-handle]');
-                handles.forEach(h => ((h as HTMLElement).style.pointerEvents = 'all'));
+                const handles = (nodeView.wrapper as HTMLElement).querySelectorAll(
+                    '[data-resize-handle]',
+                );
+                handles.forEach((h) => ((h as HTMLElement).style.pointerEvents = 'all'));
             };
 
             const anyView = nodeView as unknown as { destroy?: () => void };
@@ -168,9 +184,9 @@ export const ResizableImage = Image.extend({
                             }
                         }
                         return false;
-                    }
-                }
-            })
+                    },
+                },
+            }),
         ];
-    }
+    },
 });

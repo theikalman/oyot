@@ -62,25 +62,6 @@ impl DbSnapshot {
         Ok(id)
     }
 
-    pub fn get_all_updates(&self, doc_id: &str) -> Result<Vec<Vec<u8>>, String> {
-        let db = self.db.lock();
-        let mut stmt = db
-            .prepare("SELECT update_blob FROM yjs_updates WHERE document_id = ? ORDER BY id ASC")
-            .map_err(|e| e.to_string())?;
-
-        let rows = stmt
-            .query_map([doc_id], |row| row.get::<_, Vec<u8>>(0))
-            .map_err(|e| e.to_string())?;
-
-        let mut updates = Vec::new();
-        for row in rows {
-            if let Ok(blob) = row {
-                updates.push(blob);
-            }
-        }
-        Ok(updates)
-    }
-
     #[allow(dead_code)]
     pub fn get_snapshot(&self, doc_id: &str) -> Result<Option<Vec<u8>>, String> {
         let db = self.db.lock();
