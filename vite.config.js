@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import wasm from 'vite-plugin-wasm';
@@ -5,9 +7,19 @@ import topLevelAwait from 'vite-plugin-top-level-await';
 
 const host = process.env.TAURI_DEV_HOST;
 
+// The app shows its own version (see src/lib/version.ts), so bake it in here
+// rather than importing package.json into the bundle.
+const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),
+);
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
     plugins: [wasm(), topLevelAwait(), sveltekit()],
+
+    define: {
+        __APP_VERSION__: JSON.stringify(pkg.version),
+    },
 
     // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
     //

@@ -18,6 +18,8 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
+    import AboutDialog from './AboutDialog.svelte';
+    import { APP_VERSION } from '../version';
 
     function handleDocClick(doc: DocumentSummary) {
         invoke<Document>('get_document', { docId: doc.id })
@@ -216,6 +218,8 @@
             closeDeleteModal();
         }
     }
+
+    let showAbout = $state(false);
 
     function goToSettings() {
         goto(resolve('/settings'));
@@ -634,6 +638,13 @@
         </div>
 
         <div class="sidebar-footer">
+            <button
+                class="version-btn"
+                onclick={() => (showAbout = true)}
+                title="About Oyot and what's new"
+            >
+                v{APP_VERSION}
+            </button>
             <button class="settings-btn" onclick={goToSettings} title="Settings">
                 <svg
                     width="18"
@@ -762,6 +773,10 @@
             </div>
         </div>
     </div>
+{/if}
+
+{#if showAbout}
+    <AboutDialog onClose={() => (showAbout = false)} />
 {/if}
 
 <style>
@@ -1191,7 +1206,31 @@
         border-top: 1px solid var(--border-color);
         display: flex;
         align-items: center;
-        justify-content: flex-end;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .version-btn {
+        min-width: 0;
+        padding: 6px 8px;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        color: var(--text-muted);
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        transition:
+            background-color 0.15s,
+            color 0.15s;
+    }
+
+    .version-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
     }
 
     .settings-btn {
