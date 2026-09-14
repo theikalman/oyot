@@ -111,17 +111,23 @@ fn current_timestamp() -> i64 {
         .as_millis() as i64
 }
 
+// An empty Yjs document still encodes to two bytes, so "has content" is a
+// length test rather than a null test. Mirrors EMPTY_UPDATE_LEN on the
+// frontend, which is the same constant the save path checks before writing.
+const HAS_CONTENT: &str = "CASE WHEN length(d.crdt_state) > 2 THEN 1 ELSE 0 END";
+
 fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData, String> {
-    let content_filter = "AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-              OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))";
+    // No content filter. Requiring content to appear in the list meant a note
+    // created with a title but never typed in vanished on the next launch:
+    // still in the database, but unreachable, so it could not be opened,
+    // renamed or deleted. `has_content` is reported so the calendar can mark
+    // which days have an entry; it is not a reason to hide a row.
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-                       OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
-                     THEN 1 ELSE 0 END as has_content
+                {HAS_CONTENT} as has_content
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
-         WHERE d.is_deleted = 0 {content_filter}
+         WHERE d.is_deleted = 0
          ORDER BY d.created_at DESC"
     );
     let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
@@ -363,27 +369,17 @@ pub fn apply_remote_rename(
 }
 
 // Applies a peer's deletion as a tombstone (the row is kept so the delete keeps
-// propagating). Idempotent; also drops the CRDT history like a local delete.
-// Returns true if the local row changed, i.e. the peer's tombstone was the
-// later observation. A losing tombstone leaves the document alone.
+// propagating), dropping the content with it. Idempotent. Returns true if the
+// local row changed, i.e. the peer's tombstone was the later observation. A
+// losing tombstone leaves the document, and its content, alone.
 #[tauri::command]
 pub fn apply_remote_delete(
     state: tauri::State<'_, AppState>,
     doc_id: String,
     deleted_at: i64,
 ) -> Result<bool, String> {
-    let applied = {
-        let db = state.db.lock();
-        apply_tombstone_if_newer(&db, &doc_id, deleted_at)?
-    };
-
-    // Only drop the update log if the tombstone actually won. Doing it
-    // unconditionally would empty a document whose revival we had already
-    // accepted, while leaving the row live.
-    if applied {
-        state.snapshot.delete_document_data(&doc_id)?;
-    }
-    Ok(applied)
+    let db = state.db.lock();
+    apply_tombstone_if_newer(&db, &doc_id, deleted_at)
 }
 
 #[tauri::command]
@@ -512,7 +508,6 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
         let db = state.db.lock();
         tombstone_document(&db, &doc_id, now)?;
     }
-    state.snapshot.delete_document_data(&doc_id)?;
     Ok(now)
 }
 
@@ -585,9 +580,7 @@ pub fn get_backlinks(
     let mut stmt = db
         .prepare(
             "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                    CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-                           OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id)
-                         THEN 1 ELSE 0 END as has_content
+                    {HAS_CONTENT} as has_content
                FROM document_links l
                JOIN documents d ON d.id = l.source_id
                LEFT JOIN document_index i ON d.id = i.document_id
@@ -806,6 +799,61 @@ mod tests {
     fn a_tombstone_for_an_unknown_document_applies_to_nothing() {
         let db = db();
         assert!(!apply_tombstone_if_newer(&db, "never-heard-of-it", 600).unwrap());
+    }
+
+    // The regression: the list required a row in the update log, and only a
+    // save with content wrote one. A note created with a title but never
+    // typed in vanished on the next launch. It was still in the database and
+    // still synced, but there was no way to open, rename or delete it.
+    #[test]
+    fn a_document_with_no_content_still_appears_in_the_list() {
+        let db = db();
+        db.execute(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('empty', 'note', 'Untouched', 2, 2)",
+            [],
+        )
+        .unwrap();
+
+        let listed = query_all_documents(&db).unwrap();
+        let ids: Vec<&str> = listed.documents.iter().map(|d| d.id.as_str()).collect();
+        assert!(ids.contains(&"empty"), "got {ids:?}");
+    }
+
+    #[test]
+    fn has_content_reflects_the_column_the_content_lives_in() {
+        let db = db();
+        db.execute_batch(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('null', 'note', 'No state', 2, 2);
+             -- An empty Yjs document encodes to two bytes, never zero, so a
+             -- null test alone would report it as having content.
+             INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at)
+                 VALUES ('bare', 'note', 'Empty state', x'0000', 2, 2);
+             INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at)
+                 VALUES ('full', 'note', 'Written in', x'00010203', 2, 2);",
+        )
+        .unwrap();
+
+        let listed = query_all_documents(&db).unwrap();
+        let has = |id: &str| {
+            listed
+                .documents
+                .iter()
+                .find(|d| d.id == id)
+                .unwrap()
+                .has_content
+        };
+        assert!(has("full"), "a written-in document has content");
+        assert!(!has("null"), "no state at all");
+        assert!(!has("bare"), "the bare empty update is not content");
+    }
+
+    #[test]
+    fn a_deleted_document_stays_out_of_the_list() {
+        let db = db();
+        tombstone_document(&db, "d1", 900).unwrap();
+        assert!(query_all_documents(&db).unwrap().documents.is_empty());
     }
 
     fn tombstone_entry(id: &str) -> EnsureDocumentRequest {

@@ -4,7 +4,6 @@ mod logging;
 mod commands;
 mod crypto;
 mod db;
-mod db_snapshot;
 mod identity;
 mod indexer;
 mod network;
@@ -30,22 +29,6 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             is_deleted INTEGER DEFAULT 0,
             deleted_at INTEGER,
             lifecycle_updated_at INTEGER
-        );
-
-        CREATE TABLE IF NOT EXISTS yjs_updates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            document_id TEXT NOT NULL,
-            update_blob BLOB NOT NULL,
-            created_at INTEGER NOT NULL,
-            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS yjs_snapshots (
-            document_id TEXT PRIMARY KEY NOT NULL,
-            snapshot_blob BLOB NOT NULL,
-            last_update_id INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS document_index (
@@ -98,7 +81,6 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             PRIMARY KEY (user_id, peer_node_id)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_yjs_updates_doc ON yjs_updates(document_id);
         CREATE INDEX IF NOT EXISTS idx_device_pairs_room ON device_pairs(room_id);
         CREATE INDEX IF NOT EXISTS idx_device_pairs_user ON device_pairs(user_id);
         ",
@@ -118,7 +100,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -237,6 +219,25 @@ pub fn run_migrations(db: &Connection) -> Result<(), String> {
         .map_err(|e| format!("Migration v4 failed: {}", e))?;
 
         db.execute_batch("PRAGMA user_version = 4;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
+    // v5: drop the append-only update log. `yjs_updates` and `yjs_snapshots`
+    // were written on every save and read by nothing: content is loaded from
+    // `documents.crdt_state`, which `save_yjs_update` writes in the same call.
+    // The log cost a second full copy of the document per save, accumulating
+    // up to fifty before consolidation rewrote it a third time.
+    //
+    // Their one live use was answering "does this document have content", now
+    // a length check on the column that actually holds it.
+    if version < 5 {
+        db.execute_batch(
+            "DROP TABLE IF EXISTS yjs_updates;
+             DROP TABLE IF EXISTS yjs_snapshots;",
+        )
+        .map_err(|e| format!("Migration v5 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 5;")
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
@@ -583,54 +584,100 @@ mod migration_tests {
         assert_eq!(busy, 5000);
     }
 
-    // The ON DELETE CASCADE declared on yjs_updates and yjs_snapshots never
-    // fired, because foreign_keys was off. Nothing hard-deletes a document
-    // today (delete_document is a tombstone that clears content explicitly),
-    // so this is about the declaration finally meaning what it says.
+    // `ON DELETE CASCADE` never fired anywhere, because foreign_keys was off.
+    // `document_links` is where it still matters now that the update log is
+    // gone: a hard-deleted document must not leave edges behind pointing out
+    // of a row that no longer exists.
     #[test]
-    fn deleting_a_document_row_cascades_to_its_crdt_data() {
+    fn deleting_a_document_row_cascades_to_its_links() {
         let db = Connection::open_in_memory().unwrap();
         crate::db::configure_connection(&db).unwrap();
         setup_database_tables(&db).unwrap();
 
         db.execute_batch(
             "INSERT INTO documents (id, type, title, created_at, updated_at)
-                 VALUES ('d1', 'note', 'One', 1, 1);
-             INSERT INTO yjs_updates (document_id, update_blob, created_at)
-                 VALUES ('d1', x'0102', 1);
-             INSERT INTO yjs_snapshots (document_id, snapshot_blob, last_update_id, updated_at)
-                 VALUES ('d1', x'0304', 1, 1);",
+                 VALUES ('d1', 'note', 'One', 1, 1), ('d2', 'note', 'Two', 1, 1);
+             INSERT INTO document_links (source_id, target_id) VALUES ('d1', 'd2');",
         )
         .unwrap();
 
         db.execute("DELETE FROM documents WHERE id = 'd1'", [])
             .unwrap();
 
-        let updates: i64 = db
-            .query_row("SELECT COUNT(*) FROM yjs_updates", [], |r| r.get(0))
+        let links: i64 = db
+            .query_row("SELECT COUNT(*) FROM document_links", [], |r| r.get(0))
             .unwrap();
-        let snapshots: i64 = db
-            .query_row("SELECT COUNT(*) FROM yjs_snapshots", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(updates, 0);
-        assert_eq!(snapshots, 0);
+        assert_eq!(links, 0);
     }
 
-    // The flip side: content for a document we have never heard of is now
-    // refused rather than written as an orphan row that nothing would ever
-    // read. The sync layer already catches and logs this; the next manifest
-    // exchange materialises the row and pulls the content properly.
+    // The flip side: an edge out of a document we have never heard of is
+    // refused rather than written as an orphan row.
     #[test]
-    fn crdt_data_for_an_unknown_document_is_refused() {
+    fn a_link_from_an_unknown_document_is_refused() {
         let db = Connection::open_in_memory().unwrap();
         crate::db::configure_connection(&db).unwrap();
         setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('d2', 'note', 'Two', 1, 1)",
+            [],
+        )
+        .unwrap();
 
         let result = db.execute(
-            "INSERT INTO yjs_updates (document_id, update_blob, created_at) VALUES ('ghost', x'01', 1)",
+            "INSERT INTO document_links (source_id, target_id) VALUES ('ghost', 'd2')",
             [],
         );
-        assert!(result.is_err(), "an orphan update must not be accepted");
+        assert!(result.is_err(), "an orphan link must not be accepted");
+    }
+
+    // v5 retires the append-only update log. Nothing read it: content is
+    // loaded from `documents.crdt_state`, written by the same call that used
+    // to append to the log.
+    #[test]
+    fn migrating_to_v5_drops_the_update_log_and_keeps_the_content() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        // Recreate the v4 shape, since the base schema no longer has it.
+        db.execute_batch(
+            "CREATE TABLE yjs_updates (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 document_id TEXT NOT NULL,
+                 update_blob BLOB NOT NULL,
+                 created_at INTEGER NOT NULL
+             );
+             CREATE TABLE yjs_snapshots (
+                 document_id TEXT PRIMARY KEY NOT NULL,
+                 snapshot_blob BLOB NOT NULL,
+                 last_update_id INTEGER NOT NULL,
+                 updated_at INTEGER NOT NULL
+             );
+             INSERT INTO documents (id, type, title, crdt_state, created_at, updated_at)
+                 VALUES ('d1', 'note', 'One', x'0102', 1, 1);
+             INSERT INTO yjs_updates (document_id, update_blob, created_at)
+                 VALUES ('d1', x'0102', 1);
+             PRAGMA user_version = 4;",
+        )
+        .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        assert!(!table_exists(&db, "yjs_updates"));
+        assert!(!table_exists(&db, "yjs_snapshots"));
+
+        let state: Option<Vec<u8>> = db
+            .query_row(
+                "SELECT crdt_state FROM documents WHERE id = 'd1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            state,
+            Some(vec![1, 2]),
+            "the log was the redundant copy, not the content"
+        );
     }
 
     // Mirrors pairing::save_pair. The transport calls it on every transition to

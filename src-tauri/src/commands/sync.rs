@@ -92,9 +92,6 @@ pub async fn save_yjs_update(
         update.len(),
         merged_state.len()
     );
-    let db_snapshot = state.snapshot.clone();
-    db_snapshot.append_update(&doc_id, &update)?;
-
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -126,8 +123,6 @@ pub async fn save_yjs_update(
             None => indexer::update_document_title(&db, &doc_id, &title)?,
         }
     }
-
-    let _ = db_snapshot.check_and_consolidate(&doc_id, &merged_state);
 
     // Only a peer's update needs to reach an open editor. This used to fire on
     // every save, including the editor's own: the editor listened, saw its own
