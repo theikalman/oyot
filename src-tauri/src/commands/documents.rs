@@ -13,8 +13,6 @@ pub struct Document {
     pub title: String,
     pub created_at: i64,
     pub updated_at: i64,
-    pub crdt_state: Option<Vec<u8>>,
-    pub content_hash: Option<Vec<u8>>,
     pub title_updated_at: i64,
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
@@ -22,8 +20,16 @@ pub struct Document {
 }
 
 // Column list backing `row_to_document`; keep the two in lockstep.
-const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, crdt_state, \
-     content_hash, COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
+//
+// Deliberately without `crdt_state` and `content_hash`. Both are blobs, both
+// serialise to IPC as a JSON array of numbers at roughly 3.6 bytes per byte,
+// and neither has a reader: the editor gets its state from `get_yjs_state`
+// (base64, and registered as the open copy in the same step) and the sync
+// manifest carries its own base64 hash on `DocSyncEntry`. Sending them here
+// meant every click in the sidebar shipped several times the document's size
+// for nothing.
+const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, \
+     COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
      COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at)";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -84,19 +90,17 @@ fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSumm
 }
 
 fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
-    let is_deleted_int: i64 = row.get(8)?;
+    let is_deleted_int: i64 = row.get(6)?;
     Ok(Document {
         id: row.get(0)?,
         doc_type: row.get(1)?,
         title: row.get(2)?,
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
-        crdt_state: row.get(5)?,
-        content_hash: row.get(6)?,
-        title_updated_at: row.get(7)?,
+        title_updated_at: row.get(5)?,
         is_deleted: is_deleted_int != 0,
-        deleted_at: row.get(9)?,
-        lifecycle_updated_at: row.get(10)?,
+        deleted_at: row.get(7)?,
+        lifecycle_updated_at: row.get(8)?,
     })
 }
 
