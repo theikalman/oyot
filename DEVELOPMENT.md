@@ -79,7 +79,32 @@ Run `make help` for a list of all available commands:
 - `make clean` - Clean build artifacts
 - `make check` - Run TypeScript and Rust checks
 - `make fmt` - Format code
+- `make lint` - Run the eslint and clippy linters
+- `make test` - Run the frontend and Rust test suites
+- `make verify` - Everything CI runs: format, lint, typecheck, test
 - `make clippy` - Run Rust linter
+
+## Quality checks
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request, in two jobs:
+
+| Job      | Checks                                                        |
+| -------- | ------------------------------------------------------------- |
+| Frontend | `prettier --check`, `eslint`, `svelte-check`, `vitest`        |
+| Rust     | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` |
+
+`make verify` runs the same set locally and is the fastest way to know a
+push will pass. Run it before opening a pull request.
+
+Both linters are enforced at zero errors. `@typescript-eslint/no-explicit-any`
+is the one rule left at warning level: the sync layer deliberately parses
+`unknown` off the wire, and the Tiptap node-view signatures mirror the
+library's own typing.
+
+Formatting is not negotiable in CI, so run `make fmt` before committing.
+Prettier config lives in `.prettierrc`, eslint in `eslint.config.js`, and
+rustfmt uses the default profile.
 
 ## Project Structure
 

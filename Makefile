@@ -1,4 +1,4 @@
-.PHONY: help install dev build run clean check fmt clippy \
+.PHONY: help install dev build run clean check fmt lint test verify clippy \
         release release-android release-android-aab release-ios release-tag install-android \
         mqtt-up mqtt-down mqtt-logs
 
@@ -32,6 +32,8 @@ help:
 	@echo "  make clean            - Clean build artifacts"
 	@echo "  make check            - Run TypeScript and Rust checks"
 	@echo "  make fmt              - Format code"
+	@echo "  make lint             - Run the eslint and clippy linters"
+	@echo "  make verify           - Everything CI runs: format, lint, typecheck, test"
 	@echo "  make clippy           - Run Rust linter"
 	@echo ""
 	@echo "MQTT broker commands:"
@@ -98,6 +100,24 @@ check:
 fmt:
 	npm run format
 	cd src-tauri && cargo fmt
+
+lint:
+	npm run lint
+	cd src-tauri && cargo clippy --all-targets -- -D warnings
+
+test:
+	npm test
+	cd src-tauri && cargo test
+
+# Mirrors .github/workflows/ci.yml. Run this before pushing.
+verify:
+	npm run format:check
+	npm run lint
+	npm run check
+	npm test
+	cd src-tauri && cargo fmt --check
+	cd src-tauri && cargo clippy --all-targets -- -D warnings
+	cd src-tauri && cargo test
 
 clippy:
 	cd src-tauri && cargo clippy -- -D warnings
