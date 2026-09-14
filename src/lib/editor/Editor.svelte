@@ -20,10 +20,9 @@
 
     interface Props {
         debounceMs?: number;
-        autoSave?: boolean;
     }
 
-    let { debounceMs = DEFAULT_DEBOUNCE_MS, autoSave = true }: Props = $props();
+    let { debounceMs = DEFAULT_DEBOUNCE_MS }: Props = $props();
 
     let current = $derived($currentDocument);
     let editorInstance = $state<EditorType | null>(null);
@@ -62,10 +61,6 @@
         }
     }
 
-    function handleContentChange() {
-        saveService?.triggerSave();
-    }
-
     function handleLocalUpdate(update: Uint8Array) {
         saveService?.recordUpdate(update);
     }
@@ -85,7 +80,9 @@
         const snapshot = Y.encodeStateAsUpdate(doc);
         // Read the index here, while the editor still exists.
         const index = editorInstance ? extractDocumentIndex(editorInstance.state.doc) : undefined;
-        void persistSnapshot(docId, snapshot, delta ?? snapshot, index);
+        // Nothing awaits this; persistSnapshot rethrows after reporting, so
+        // swallow here rather than leave an unhandled rejection on a teardown.
+        void persistSnapshot(docId, snapshot, delta, index).catch(() => {});
     }
 
     async function handleOpenDocument(event: Event) {
@@ -154,9 +151,7 @@
 
         <EditorInstance
             document={current}
-            {autoSave}
             onEditorReady={handleEditorReady}
-            onContentChange={handleContentChange}
             onBeforeTeardown={handleBeforeTeardown}
             onLocalUpdate={handleLocalUpdate}
         />

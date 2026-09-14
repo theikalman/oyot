@@ -43,9 +43,7 @@
 
     interface Props {
         document: any | null;
-        autoSave?: boolean;
         onEditorReady?: (editor: EditorType, ydoc: any) => void;
-        onContentChange?: () => void;
         // Called with the outgoing document's id and ydoc immediately before
         // the editor behind them is destroyed, so a pending save can be
         // flushed while the state that produced it is still live.
@@ -56,14 +54,7 @@
         onLocalUpdate?: (update: Uint8Array) => void;
     }
 
-    let {
-        document,
-        autoSave = true,
-        onEditorReady,
-        onContentChange,
-        onBeforeTeardown,
-        onLocalUpdate,
-    }: Props = $props();
+    let { document, onEditorReady, onBeforeTeardown, onLocalUpdate }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
@@ -147,11 +138,6 @@
             ],
             content: initialContent,
             editable: true,
-            onUpdate: () => {
-                if (autoSave && editor) {
-                    onContentChange?.();
-                }
-            },
         });
 
         ed.view.dom.addEventListener('click', handleImageClick);
@@ -161,6 +147,10 @@
         registerTodoCommand(ed);
         registerImageCommand(ed);
 
+        // The only thing that schedules a save. Tiptap's `onUpdate` used to do
+        // it as well, which meant a peer's edit landing in this document
+        // scheduled a save whose "delta" was the whole document, sent straight
+        // back to the peer that had just sent it.
         newYDoc.on('update', (update: Uint8Array, origin: unknown) => {
             if (origin === REMOTE_ORIGIN) return;
             onLocalUpdate?.(update);

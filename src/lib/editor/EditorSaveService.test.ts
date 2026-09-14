@@ -147,17 +147,24 @@ describe('EditorSaveService', () => {
         expect(broadcast).toHaveLength(0);
     });
 
-    it('a save broadcasts the same content it persisted', async () => {
+    it('a save broadcasts the edit it recorded', async () => {
+        const ydoc = docWith('shared');
         const svc = new EditorSaveService();
         svc.setDocument(asDocument('doc'));
-        svc.setYDoc(docWith('shared'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(6, '!');
+        svc.recordUpdate(updates[0]);
 
         await svc.flushNow();
 
         expect(broadcast).toHaveLength(1);
         expect(broadcast[0].docId).toBe('doc');
-        const decoded = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        expect(textOf(decoded)).toBe('shared');
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, saved[0].state);
+        expect(peer.getText('content').toString()).toBe('shared!');
     });
 
     it('a failed save reports instead of rejecting the caller', async () => {
@@ -239,18 +246,19 @@ describe('delta broadcasting', () => {
         expect(peer.getText('content').toString()).toBe('base one two');
     });
 
-    it('falls back to the full state when nothing was recorded', async () => {
-        // The teardown and visibility paths can fire without a recorded update;
-        // sending the whole document is wasteful but correct.
+    it('writes but sends nothing when no local edit was recorded', async () => {
+        // The regression this guards: falling back to the whole document here
+        // meant a peer's edit arriving in the open document triggered a save
+        // that sent the entire document straight back to that peer, once per
+        // remote keystroke batch.
         const svc = new EditorSaveService();
         svc.setDocument(asDocument('doc'));
         svc.setYDoc(docWith('content'));
 
         await svc.flushNow();
 
-        expect(broadcast).toHaveLength(1);
-        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        expect(sent).toEqual(saved[0].state);
+        expect(saved).toHaveLength(1);
+        expect(broadcast).toHaveLength(0);
     });
 
     it('does not carry a pending delta across a document switch', async () => {
@@ -306,19 +314,28 @@ describe('persistSnapshot', () => {
 
     it('writes and broadcasts exactly what it was handed', async () => {
         const state = Y.encodeStateAsUpdate(docWith('captured'));
-        await persistSnapshot('doc-x', state);
+        await persistSnapshot('doc-x', state, state);
 
         expect(saved).toEqual([{ docId: 'doc-x', state }]);
         expect(broadcast[0].docId).toBe('doc-x');
     });
 
+    it('writes without broadcasting when handed no delta', async () => {
+        const state = Y.encodeStateAsUpdate(docWith('captured'));
+        await persistSnapshot('doc-x', state, null);
+
+        expect(saved).toHaveLength(1);
+        expect(broadcast).toHaveLength(0);
+    });
+
     it('skips an empty snapshot', async () => {
-        await persistSnapshot('doc-x', new Uint8Array());
+        await persistSnapshot('doc-x', new Uint8Array(), null);
         expect(saved).toHaveLength(0);
     });
 
     it('skips the bare empty Yjs update', async () => {
-        await persistSnapshot('doc-x', Y.encodeStateAsUpdate(new Y.Doc()));
+        const empty = Y.encodeStateAsUpdate(new Y.Doc());
+        await persistSnapshot('doc-x', empty, empty);
         expect(saved).toHaveLength(0);
         expect(broadcast).toHaveLength(0);
     });

@@ -25,21 +25,27 @@ export interface SaveServiceOptions {
 // the incoming document's empty state under the outgoing document's id.
 //
 // `snapshot` is the whole merged state, because `crdt_state` is a materialised
-// column. `delta` is only what changed, which is all a peer needs; passing the
-// snapshot as the delta is a correct but wasteful fallback. Losing a live delta
-// is not a correctness problem either way: the manifest exchange on every
-// (re)connect is what guarantees convergence, and live messages are a latency
-// optimisation on top of it (ADR 0003).
+// column. `delta` is only what changed locally, which is all a peer needs, and
+// `null` means nothing changed locally and there is nothing to send.
+//
+// A null delta must not fall back to broadcasting the snapshot. The editor
+// saves for reasons other than the user typing -- a peer's edit arriving in
+// the open document is one -- and sending the whole document back in response
+// echoes every peer's own edit at it, once per remote keystroke batch.
+//
+// Skipping a live message is not a correctness problem: the manifest exchange
+// on every (re)connect is what guarantees convergence, and live messages are a
+// latency optimisation on top of it (ADR 0003).
 export async function persistSnapshot(
     docId: string,
     snapshot: Uint8Array,
-    delta: Uint8Array = snapshot,
+    delta: Uint8Array | null,
     index?: DocumentIndex,
 ): Promise<void> {
     if (snapshot.length <= EMPTY_UPDATE_LEN) return;
     try {
         await documentRepository.saveLocalUpdate(docId, snapshot, index);
-        if (delta.length > EMPTY_UPDATE_LEN) {
+        if (delta && delta.length > EMPTY_UPDATE_LEN) {
             broadcastLocalUpdate(docId, bytesToBase64(delta));
         }
         appStore.markDocumentHasContent(docId);
@@ -134,8 +140,9 @@ export class EditorSaveService {
         if (snapshot.length <= EMPTY_UPDATE_LEN) return null;
 
         // Read both synchronously, before the returned promise is awaited: the
-        // caller may be tearing this editor down.
-        const delta = this.takePendingDelta() ?? snapshot;
+        // caller may be tearing this editor down. A null delta is the normal
+        // case for a save that no local edit prompted.
+        const delta = this.takePendingDelta();
         const index = this.readIndex?.() ?? undefined;
 
         this.onSaving?.();
