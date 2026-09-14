@@ -464,7 +464,22 @@ function wireDataChannel(channel: RTCDataChannel, session: PeerSession): void {
         },
     };
 
-    const proto = new DocSyncProtocol(repo, (m) => session.framed?.send(m), sink);
+    // A send that never reached the channel is worth knowing about: the peer
+    // will never answer it, and without this it looked exactly like a peer
+    // that chose not to.
+    const proto = new DocSyncProtocol(
+        repo,
+        (m) => {
+            void session.framed?.send(m).then((sent) => {
+                if (!sent) {
+                    console.warn(
+                        `[sync] [${session.peerNodeId}] could not send '${(m as { t?: string }).t}'`,
+                    );
+                }
+            });
+        },
+        sink,
+    );
     const framed = attachFraming(channel, (m) => {
         if (isSyncMessage(m)) {
             void proto
