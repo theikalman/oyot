@@ -5,6 +5,7 @@ import { get } from 'svelte/store';
 import {
     syncStore,
     pendingPairRequest,
+    pairingState,
     signalingStatus,
     pairedDevices,
     connectedPeers,
@@ -726,11 +727,29 @@ export async function initiateOffer(
     });
 }
 
+// How long to wait for the other device to answer a pair request.
+//
+// Long enough that someone has to walk to the other device and tap Accept,
+// short enough that an unanswered request does not look like a hung app.
+// Without it the button read "Requesting..." until the app was restarted, and
+// the id the user typed had already been cleared from the field, so there was
+// nothing to retry with.
+const PAIR_REQUEST_TIMEOUT_MS = 90_000;
+let pairRequestTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPairRequestTimer(): void {
+    if (pairRequestTimer) {
+        clearTimeout(pairRequestTimer);
+        pairRequestTimer = null;
+    }
+}
+
 export async function sendPairRequest(peerNodeId: string): Promise<void> {
     if (!identity) {
         console.warn('[sync] sendPairRequest() called before identity was loaded, aborting');
         return;
     }
+    clearPairRequestTimer();
     syncStore.setPairingState('requesting');
     try {
         log.debug(`[sync] sendPairRequest() -> ${peerNodeId}`);
@@ -738,7 +757,16 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     } catch (e) {
         console.error('[sync] Failed to send pair request:', e);
         syncStore.setPairingState(null);
+        throw e;
     }
+
+    pairRequestTimer = setTimeout(() => {
+        pairRequestTimer = null;
+        if (get(pairingState) === 'requesting') {
+            log.debug(`[sync] pair request to ${peerNodeId} went unanswered`);
+            syncStore.setPairingState('timed-out');
+        }
+    }, PAIR_REQUEST_TIMEOUT_MS);
 }
 
 export async function respondToPairRequest(accept: boolean): Promise<void> {
@@ -856,6 +884,7 @@ async function setupEventListeners(): Promise<void> {
     }>('mqtt-pair-response-received', async (event) => {
         const { from, user_id, display_name, accepted } = event.payload;
         log.debug(`[sync] event: mqtt-pair-response-received from=${from} accepted=${accepted}`);
+        clearPairRequestTimer();
         if (accepted) {
             syncStore.setPairingState(null);
             await initiateOffer(from, user_id, display_name);
@@ -953,6 +982,7 @@ export function shutdownSync(): void {
     );
     cleanupFns.forEach((fn) => fn());
     cleanupFns = [];
+    clearPairRequestTimer();
     disconnectAll();
     suppressReconnect.clear();
 }

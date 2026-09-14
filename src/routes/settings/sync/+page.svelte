@@ -134,7 +134,15 @@
     }
 
     async function handlePair(nodeId: string) {
-        await sendPairRequest(nodeId);
+        try {
+            await sendPairRequest(nodeId);
+        } catch (e) {
+            // Publishing the request can fail outright, for instance when the
+            // broker connection dropped between rendering the form and
+            // pressing the button. Nothing said so before.
+            console.error('Failed to send pair request:', e);
+            toasts.error('Could not reach the broker to send that request');
+        }
     }
 
     async function handleAcceptPairRequest() {
@@ -153,13 +161,25 @@
         await reconnectPeer(peerNodeId);
     }
 
-    async function handleRemovePeer(peerNodeId: string) {
+    // Unpairing means the two devices stop syncing and have to be paired again
+    // by reading an id off one of them, so it is worth a question first.
+    let removeTarget = $state<DevicePair | null>(null);
+
+    function handleRemovePeer(peerNodeId: string) {
+        removeTarget = paired.find((p) => p.peer_node_id === peerNodeId) ?? null;
+    }
+
+    async function confirmRemovePeer() {
+        const target = removeTarget;
+        if (!target) return;
         try {
-            await invoke('remove_pair', { peerNodeId });
+            await invoke('remove_pair', { peerNodeId: target.peer_node_id });
             const updated = await invoke<DevicePair[]>('list_paired_devices');
             syncStore.setPairedDevices(updated);
+            removeTarget = null;
         } catch (e) {
             console.error('Failed to remove pair:', e);
+            toasts.error('Could not remove that device');
         }
     }
 
@@ -227,6 +247,17 @@
 
     {#if isConnected}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
+    {:else}
+        <!-- Pairing needs the broker, so the form cannot work here. It used to
+             vanish with no explanation, which reads as a missing feature
+             rather than a prerequisite. -->
+        <section class="section">
+            <h2>Pair a Device</h2>
+            <p class="section-note">
+                Connect to a broker first. Pairing is arranged through it, so there is nothing this
+                device can do until it is reachable.
+            </p>
+        </section>
     {/if}
 
     <ConnectedPeerList
@@ -245,9 +276,95 @@
             onDecline={handleDeclinePairRequest}
         />
     {/if}
+
+    {#if removeTarget}
+        <div class="modal-backdrop" role="presentation" onclick={() => (removeTarget = null)}>
+            <div
+                class="modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="remove-title"
+                tabindex="-1"
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => e.key === 'Escape' && (removeTarget = null)}
+            >
+                <h3 id="remove-title">Remove "{removeTarget.peer_display_name}"?</h3>
+                <p class="modal-note">
+                    The two devices stop syncing. Pairing them again means reading one device's ID
+                    off the other. Documents already synced are kept.
+                </p>
+                <div class="modal-actions">
+                    <button class="btn-secondary" onclick={() => (removeTarget = null)}>
+                        Cancel
+                    </button>
+                    <button class="btn-danger" onclick={confirmRemovePeer}>Remove</button>
+                </div>
+            </div>
+        </div>
+    {/if}
 </div>
 
 <style>
+    .section-note {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--text-muted);
+    }
+    .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .modal {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+    }
+    .modal h3 {
+        margin: 0 0 12px 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    .modal-note {
+        margin: 0 0 20px 0;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--text-secondary);
+    }
+    .modal-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+    }
+    .btn-secondary {
+        padding: 8px 16px;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    .btn-danger {
+        padding: 8px 16px;
+        background: var(--status-error);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
     .notice {
         display: flex;
         align-items: flex-start;
