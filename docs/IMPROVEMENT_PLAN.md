@@ -821,6 +821,13 @@ Tests in `signaling_manager.rs`:
 
 ## Phase 6 - Performance
 
+> **Status: done.** 6.3 uses base64 rather than `tauri::ipc::Response` raw
+> bytes: base64 takes the encoding from 3.57x to 1.33x, and the remaining 0.33
+> needs a response shape that cannot be exercised without a running app. 6.4
+> uses a `#[cfg]`-gated macro instead of `tauri-plugin-log`, which would have
+> added a plugin, its registration and a capability permission for what is one
+> `cfg`.
+
 ### 6.1 Stop the self-inflicted reload on every save
 
 This is the largest single win and it is nearly free.
