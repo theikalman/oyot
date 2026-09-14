@@ -188,6 +188,9 @@ export class DocumentRepository {
                 index,
             });
             appStore.markDocumentHasContent(docId);
+            if (index) {
+                appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
+            }
         });
     }
 

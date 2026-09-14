@@ -49,6 +49,9 @@ export async function persistSnapshot(
             broadcastLocalUpdate(docId, bytesToBase64(delta));
         }
         appStore.markDocumentHasContent(docId);
+        if (index) {
+            appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
+        }
     } catch (error) {
         console.error(`[EditorSaveService] [${docId}] Failed to save document:`, error);
         toasts.error('Failed to save document');

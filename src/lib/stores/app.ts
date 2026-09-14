@@ -23,6 +23,20 @@ function createAppStore() {
                 currentDocument:
                     s.currentDocument?.id === updatedDoc.id ? s.currentDocument : s.currentDocument,
             })),
+        // Task counts are derived from the document's content, so they can
+        // only change when something writes that content. Loading them once at
+        // startup and never again meant the sidebar badge was whatever it had
+        // been when the app opened, however many tasks had been ticked since.
+        setDocumentCounts: (docId: string, todoCount: number, completedTodoCount: number) =>
+            update((s) => ({
+                ...s,
+                documents: s.documents.map((d) =>
+                    d.id === docId &&
+                    (d.todo_count !== todoCount || d.completed_todo_count !== completedTodoCount)
+                        ? { ...d, todo_count: todoCount, completed_todo_count: completedTodoCount }
+                        : d,
+                ),
+            })),
         markDocumentHasContent: (docId: string) =>
             update((s) => ({
                 ...s,

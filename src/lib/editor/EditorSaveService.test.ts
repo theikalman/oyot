@@ -19,8 +19,13 @@ vi.mock('$lib/sync', () => ({
     },
 }));
 
+const counts: Array<{ docId: string; todo: number; done: number }> = [];
 vi.mock('$lib/stores/app', () => ({
-    appStore: { markDocumentHasContent: () => {} },
+    appStore: {
+        markDocumentHasContent: () => {},
+        setDocumentCounts: (docId: string, todo: number, done: number) =>
+            counts.push({ docId, todo, done }),
+    },
 }));
 
 vi.mock('$lib/services/toast', () => ({
@@ -51,6 +56,7 @@ describe('EditorSaveService', () => {
     beforeEach(() => {
         saved.length = 0;
         broadcast.length = 0;
+        counts.length = 0;
         saveShouldThrow = false;
         vi.useFakeTimers();
     });
@@ -167,6 +173,25 @@ describe('EditorSaveService', () => {
         expect(peer.getText('content').toString()).toBe('shared!');
     });
 
+    // The sidebar badge read whatever the counts had been when the app
+    // opened, however many tasks had been ticked since: nothing pushed the
+    // new numbers into the store after a save.
+    it('pushes the task counts it extracted into the store', async () => {
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(docWith('two tasks'));
+        svc.setIndexReader(() => ({
+            text: 'two tasks',
+            linkTargets: [],
+            todoCount: 2,
+            completedTodoCount: 1,
+        }));
+
+        await svc.flushNow();
+
+        expect(counts).toEqual([{ docId: 'doc', todo: 2, done: 1 }]);
+    });
+
     it('a failed save reports instead of rejecting the caller', async () => {
         saveShouldThrow = true;
         const svc = new EditorSaveService();
@@ -184,6 +209,7 @@ describe('delta broadcasting', () => {
     beforeEach(() => {
         saved.length = 0;
         broadcast.length = 0;
+        counts.length = 0;
         saveShouldThrow = false;
         vi.useFakeTimers();
     });
