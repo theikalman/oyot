@@ -598,6 +598,11 @@ phones. Measure the APK before and after; expect a meaningful reduction.
 
 ## Phase 4 - Dead code removal
 
+> **Status: done.** Landed as three commits rather than six: 4.1, 4.2 and 4.3
+> are causally linked (removing the stack orphans the commands, and an
+> intermediate state would fail `clippy -D warnings`), and 4.6's two halves went
+> with the changes that made them dead.
+
 Do this before Phase 5. Removing the obsolete WebRTC stack shrinks the surface
 that the signing work has to reason about, and several Phase 0.2 clippy warnings
 live in files that disappear here.

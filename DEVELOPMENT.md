@@ -139,21 +139,36 @@ unencrypted and unauthenticated. That is the largest open gap; see
 
 ```
 oyot/
-├── src/                    # SvelteKit frontend
+├── src/                     # SvelteKit frontend
 │   ├── lib/
-│   │   ├── components/      # UI components (Editor, Sidebar)
-│   │   ├── stores/         # Svelte stores for state management
-│   │   └── types.ts        # TypeScript type definitions
-│   └── routes/             # SvelteKit routes
-├── src-tauri/              # Rust backend
-│   ├── src/                # Tauri commands and backend logic
-│   ├── gen/android/        # Generated Android project (committed)
-│   ├── gen/apple/          # Generated iOS/Xcode project (committed)
-│   ├── Cargo.toml          # Rust dependencies
-│   └── tauri.conf.json     # Tauri configuration
-├── package.json            # Node dependencies
-└── Makefile                # Build commands
+│   │   ├── components/      # Sidebar, toasts, sync status
+│   │   ├── editor/          # Tiptap editor, save service, Yjs helpers
+│   │   ├── settings/        # Pairing and sync settings UI
+│   │   ├── services/        # Document actions, theme, toasts
+│   │   ├── stores/          # Svelte stores (app state, sync state)
+│   │   ├── sync/            # Peer sync: transport, protocol, framing
+│   │   ├── tiptap/          # Editor extensions, slash commands, nodes
+│   │   └── types.ts         # Shared type definitions
+│   └── routes/              # SvelteKit routes (SPA, ssr disabled)
+├── src-tauri/               # Rust backend
+│   ├── src/
+│   │   ├── commands/        # Tauri commands, the only frontend surface
+│   │   ├── network/         # MQTT client and signaling manager
+│   │   ├── db.rs            # Connection setup and AppState
+│   │   └── lib.rs           # Schema, migrations, command registration
+│   ├── capabilities/        # Plugin ACLs for the webview
+│   ├── gen/android/         # Generated Android project (committed)
+│   ├── gen/apple/           # Generated iOS/Xcode project (committed)
+│   ├── Cargo.toml           # Rust dependencies and release profile
+│   └── tauri.conf.json      # Tauri configuration, CSP, asset scope
+├── docs/decisions/          # Architecture decision records
+├── package.json             # Node dependencies
+└── Makefile                 # Build commands
 ```
+
+WebRTC lives entirely in the frontend (`src/lib/sync/transport.ts`). Rust owns
+the database, the attachment store, the MQTT signaling transport and identity;
+it does not participate in the peer connection itself.
 
 ## Tech Stack
 
