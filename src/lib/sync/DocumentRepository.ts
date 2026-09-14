@@ -5,6 +5,7 @@ import type { Document, DocumentSummary } from '../types';
 import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
 import { contentHash } from './hash';
+import { createWriteQueue } from './writeQueue';
 import {
     base64ToBytes,
     bytesToBase64,
@@ -46,6 +47,13 @@ function toSummary(doc: Document): DocumentSummary {
 // through here, and the in-memory document store is kept in step so the sidebar
 // reflects a converging set live.
 export class DocumentRepository {
+    // Writes to one document are serialised. Both write paths below are
+    // read-modify-write over a column that `save_yjs_update` overwrites
+    // outright, and the data channel hands us messages without waiting for the
+    // previous one to finish, so without this two updates to the same document
+    // both start from the same base and one of them is silently dropped.
+    private write = createWriteQueue();
+
     // --- reads -------------------------------------------------------------
 
     async listSyncState(): Promise<ManifestEntry[]> {
@@ -96,19 +104,21 @@ export class DocumentRepository {
     // Rust emit 'sync-received', so an open editor picks the change up.
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
         const updateBytes = base64ToBytes(updateB64);
-        const current = await this.loadDoc(docId);
-        Y.applyUpdate(current, updateBytes);
-        const merged = Y.encodeStateAsUpdate(current);
-        const hash = await contentHash(merged);
-        await invoke('save_yjs_update', {
-            docId,
-            update: bytesToBase64(updateBytes),
-            mergedState: bytesToBase64(merged),
-            contentHash: bytesToBase64(hash),
-            origin: 'remote',
-            index: null,
+        return this.write(docId, async () => {
+            const current = await this.loadDoc(docId);
+            Y.applyUpdate(current, updateBytes);
+            const merged = Y.encodeStateAsUpdate(current);
+            const hash = await contentHash(merged);
+            await invoke('save_yjs_update', {
+                docId,
+                update: bytesToBase64(updateBytes),
+                mergedState: bytesToBase64(merged),
+                contentHash: bytesToBase64(hash),
+                origin: 'remote',
+                index: null,
+            });
+            appStore.markDocumentHasContent(docId);
         });
-        appStore.markDocumentHasContent(docId);
     }
 
     // Persist a locally-made update (editor save path). 'local' suppresses the
@@ -123,14 +133,16 @@ export class DocumentRepository {
         mergedState: Uint8Array,
         index?: DocumentIndex,
     ): Promise<void> {
-        const hash = await contentHash(mergedState);
-        await invoke('save_yjs_update', {
-            docId,
-            update: bytesToBase64(mergedState),
-            mergedState: bytesToBase64(mergedState),
-            contentHash: bytesToBase64(hash),
-            origin: 'local',
-            index: index ?? null,
+        return this.write(docId, async () => {
+            const hash = await contentHash(mergedState);
+            await invoke('save_yjs_update', {
+                docId,
+                update: bytesToBase64(mergedState),
+                mergedState: bytesToBase64(mergedState),
+                contentHash: bytesToBase64(hash),
+                origin: 'local',
+                index: index ?? null,
+            });
         });
     }
 
