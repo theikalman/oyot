@@ -2,7 +2,7 @@ use crate::db::AppState;
 use crate::indexer;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
@@ -34,8 +34,16 @@ pub fn get_yjs_state(
         db.query_row(
             "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
             params![&doc_id],
-            |row| row.get(0),
+            |row| row.get::<_, Option<Vec<u8>>>(0),
         )
+        // Two legitimately empty cases: no such row (missing or tombstoned),
+        // and a row that has no content yet. A query that actually failed is
+        // not one of them. Collapsing all three into "empty document" meant a
+        // transient SQLITE_BUSY read as an empty document, which the editor
+        // then saved back over the real content.
+        .optional()
+        .map_err(|e| format!("failed to read state for {doc_id}: {e}"))?
+        .flatten()
         .unwrap_or_default()
     };
     trace!(
