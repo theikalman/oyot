@@ -6,6 +6,11 @@ import * as Y from 'yjs';
 // addProseMirrorPlugins returned [], plus four exported functions -- was never
 // imported anywhere.
 
+// Marks a Yjs transaction as "this came from a peer, not from the user typing".
+// The editor's update listener skips these, so a merge from the sync layer is
+// not immediately rebroadcast to the peer that sent it.
+export const REMOTE_ORIGIN = 'oyot:remote';
+
 export function loadYjsDocFromState(state: Uint8Array): Y.Doc {
     const doc = new Y.Doc();
     if (state.length > 0) {

@@ -14,6 +14,7 @@
         type EditorSaveService,
     } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
+    import { REMOTE_ORIGIN } from './yjs';
     import * as Y from 'yjs';
 
     interface Props {
@@ -50,6 +51,10 @@
         saveService?.triggerSave();
     }
 
+    function handleLocalUpdate(update: Uint8Array) {
+        saveService?.recordUpdate(update);
+    }
+
     // EditorInstance is about to destroy the editor behind `doc`. Encode now,
     // synchronously, and let the write land in the background: once the editor
     // is gone the ydoc can no longer be read.
@@ -61,7 +66,9 @@
     // document nobody edited.
     function handleBeforeTeardown(docId: string, doc: Y.Doc) {
         if (!saveService?.hasPendingWrite()) return;
-        void persistSnapshot(docId, Y.encodeStateAsUpdate(doc));
+        const delta = saveService.takePendingDelta();
+        const snapshot = Y.encodeStateAsUpdate(doc);
+        void persistSnapshot(docId, snapshot, delta ?? snapshot);
     }
 
     async function reloadCurrentDocument() {
@@ -75,7 +82,7 @@
                 `[Editor] [${current.id}] Fetched state: ${stateResult.state?.length ?? 0} bytes, ydoc present=${!!ydoc}`,
             );
             if (stateResult.state && stateResult.state.length > 0 && ydoc) {
-                Y.applyUpdate(ydoc, new Uint8Array(stateResult.state));
+                Y.applyUpdate(ydoc, new Uint8Array(stateResult.state), REMOTE_ORIGIN);
                 console.log(`[Editor] [${current.id}] Applied fetched state to editor ydoc`);
             }
         } catch (error) {
@@ -155,6 +162,7 @@
             onEditorReady={handleEditorReady}
             onContentChange={handleContentChange}
             onBeforeTeardown={handleBeforeTeardown}
+            onLocalUpdate={handleLocalUpdate}
         />
     {:else}
         <div class="empty-state">

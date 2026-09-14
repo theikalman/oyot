@@ -24,7 +24,12 @@
     } from '$lib/tiptap';
     import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
     import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import { loadYjsDocFromState, createInitialContent, createCollaborationExtension } from './yjs';
+    import {
+        loadYjsDocFromState,
+        createInitialContent,
+        createCollaborationExtension,
+        REMOTE_ORIGIN,
+    } from './yjs';
 
     const ScrollOnFocus = Extension.create({
         name: 'scrollOnFocus',
@@ -47,6 +52,10 @@
         // the editor behind them is destroyed, so a pending save can be
         // flushed while the state that produced it is still live.
         onBeforeTeardown?: (docId: string, ydoc: Y.Doc) => void;
+        // Every local change to the document, as a Yjs update. Changes merged
+        // from a peer are tagged REMOTE_ORIGIN and skipped, so a merge is not
+        // rebroadcast to the peer that sent it.
+        onLocalUpdate?: (update: Uint8Array) => void;
     }
 
     let {
@@ -55,6 +64,7 @@
         onEditorReady,
         onContentChange,
         onBeforeTeardown,
+        onLocalUpdate,
     }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
@@ -142,6 +152,11 @@
         registerDateCommand(ed);
         registerTodoCommand(ed);
         registerImageCommand(ed);
+
+        newYDoc.on('update', (update: Uint8Array, origin: unknown) => {
+            if (origin === REMOTE_ORIGIN) return;
+            onLocalUpdate?.(update);
+        });
 
         ydoc = newYDoc;
         editor = ed;

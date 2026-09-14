@@ -173,6 +173,130 @@ describe('EditorSaveService', () => {
     });
 });
 
+describe('delta broadcasting', () => {
+    beforeEach(() => {
+        saved.length = 0;
+        broadcast.length = 0;
+        saveShouldThrow = false;
+        vi.useFakeTimers();
+    });
+    afterEach(() => vi.useRealTimers());
+
+    // Peers only need what changed; the full state is what goes to disk,
+    // because crdt_state is a materialised column.
+    it('broadcasts only the recorded edits, not the whole document', async () => {
+        const ydoc = docWith('a long pre-existing body of text');
+        // A peer that already has this document, i.e. shares its history. A
+        // lookalike doc with the same text would not do: it has different
+        // client ids, so a delta would have nothing to attach to.
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
+
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        // Capture the update Yjs emits for one small edit.
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(0, '!');
+        expect(updates).toHaveLength(1);
+
+        svc.recordUpdate(updates[0]);
+        await svc.flushNow();
+
+        const persisted = saved[0].state;
+        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
+        expect(sent.length).toBeLessThan(persisted.length);
+
+        // And the delta still carries the edit.
+        Y.applyUpdate(peer, sent);
+        expect(peer.getText('content').toString()).toBe(ydoc.getText('content').toString());
+    });
+
+    it('coalesces several edits into one delta', async () => {
+        const ydoc = docWith('base');
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
+
+        const svc = new EditorSaveService({ debounceMs: 50 });
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(4, ' one');
+        ydoc.getText('content').insert(8, ' two');
+        expect(updates).toHaveLength(2);
+        for (const u of updates) svc.recordUpdate(u);
+
+        await vi.advanceTimersByTimeAsync(50);
+
+        // Two edits, one broadcast carrying both.
+        expect(broadcast).toHaveLength(1);
+        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
+        Y.applyUpdate(peer, sent);
+        expect(peer.getText('content').toString()).toBe('base one two');
+    });
+
+    it('falls back to the full state when nothing was recorded', async () => {
+        // The teardown and visibility paths can fire without a recorded update;
+        // sending the whole document is wasteful but correct.
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(docWith('content'));
+
+        await svc.flushNow();
+
+        expect(broadcast).toHaveLength(1);
+        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
+        expect(sent).toEqual(saved[0].state);
+    });
+
+    it('does not carry a pending delta across a document switch', async () => {
+        const ydoc = docWith('first');
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc-a'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(0, 'x');
+        svc.recordUpdate(updates[0]);
+
+        // Switching documents must drop it: broadcasting one document's edit
+        // under another's id would corrupt the peer's copy.
+        svc.setDocument(asDocument('doc-b'));
+        expect(svc.takePendingDelta()).toBeNull();
+    });
+
+    it('a delta is consumed once', async () => {
+        const ydoc = docWith('base');
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(0, 'y');
+        svc.recordUpdate(updates[0]);
+
+        expect(svc.takePendingDelta()).not.toBeNull();
+        expect(svc.takePendingDelta()).toBeNull();
+    });
+
+    it('recordUpdate after destroy is ignored', () => {
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(docWith('x'));
+        svc.destroy();
+
+        svc.recordUpdate(new Uint8Array([1, 2, 3]));
+        expect(svc.hasPendingWrite()).toBe(false);
+        expect(svc.takePendingDelta()).toBeNull();
+    });
+});
+
 describe('persistSnapshot', () => {
     beforeEach(() => {
         saved.length = 0;
