@@ -17,3 +17,18 @@ export function openDocument(docId: string): Promise<void> {
 export function openHome(): Promise<void> {
     return goto(resolve('/'));
 }
+
+// Open a document with the cursor on one of its todos.
+//
+// The target rides in the URL rather than in a store, for the same reason the
+// document id does: a link to a particular line stays a link, survives a
+// reload, and the back button undoes it. `ordinal` is the item's place among
+// the document's task items, which is how the todo index addresses one.
+export function openDocumentAtTodo(docId: string, ordinal: number): Promise<void> {
+    return goto(resolve(`/doc/[id]?todo=${ordinal}`, { id: docId }));
+}
+
+// The todo index: every task item in every note and journal.
+export function openTodos(): Promise<void> {
+    return goto(resolve('/todos'));
+}

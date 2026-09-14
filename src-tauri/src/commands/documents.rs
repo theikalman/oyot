@@ -633,6 +633,11 @@ pub struct TodoHit {
 /// different keys. A journal is named for its day, so it belongs in date order:
 /// editing last month's entry should not lift it above this morning's. A note
 /// has no date, so recency is all there is to go on.
+///
+/// The id is a tiebreaker rather than decoration. The page groups rows by
+/// walking them in order, which needs one document's rows to be contiguous,
+/// and two notes saved in the same millisecond would otherwise be free to
+/// interleave and appear as four half-groups.
 pub fn query_all_todos(db: &Connection) -> Result<Vec<TodoHit>, String> {
     let mut stmt = db
         .prepare(
@@ -643,6 +648,7 @@ pub fn query_all_todos(db: &Connection) -> Result<Vec<TodoHit>, String> {
               ORDER BY d.type ASC,
                        CASE WHEN d.type = 'journal' THEN d.title END DESC,
                        CASE WHEN d.type = 'note' THEN d.updated_at END DESC,
+                       d.id ASC,
                        t.ordinal ASC",
         )
         .map_err(|e| e.to_string())?;

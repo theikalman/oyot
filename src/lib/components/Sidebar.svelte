@@ -9,7 +9,8 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
-    import { openDocument, openHome } from '../services/navigation';
+    import { openDocument, openHome, openTodos } from '../services/navigation';
+    import { page } from '$app/state';
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
     import { createSearch, type SearchHit } from '../search/searchStore.svelte';
@@ -82,6 +83,22 @@
             document.removeEventListener('visibilitychange', refresh);
         };
     });
+
+    // Everything still to do, across every note and journal. The counts are
+    // already kept current in the document store by the save and merge paths,
+    // so the badge costs no query of its own.
+    let openTodoCount = $derived(
+        $documents.reduce(
+            (n: number, d: DocumentSummary) => n + (d.todo_count - d.completed_todo_count),
+            0,
+        ),
+    );
+    let onTodosPage = $derived(page.url.pathname === '/todos');
+
+    function goToTodos() {
+        void openTodos();
+        dismissOnSmallScreen();
+    }
 
     let currentDocId = $derived($appStore.currentDocument?.id);
     let currentJournalTitle = $derived(
@@ -335,6 +352,30 @@
                     {/if}
                 </div>
             {:else}
+                <nav class="sidebar-nav">
+                    <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="m7.5 12 3 3 6-6" />
+                            <path
+                                d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
+                            />
+                        </svg>
+                        <span class="nav-label">Todos</span>
+                        {#if openTodoCount > 0}
+                            <span class="nav-count">{openTodoCount}</span>
+                        {/if}
+                    </button>
+                </nav>
+
                 <div class="sidebar-section">
                     {#if showCalendar}
                         <JournalCalendar
@@ -735,6 +776,53 @@
         -webkit-line-clamp: 2;
         line-clamp: 2;
         -webkit-box-orient: vertical;
+    }
+
+    /* ── Sidebar nav ── */
+    .sidebar-nav {
+        padding: 12px 12px 0;
+    }
+
+    .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 8px;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-family: inherit;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .nav-item:hover {
+        background: var(--bg-hover);
+    }
+
+    .nav-item.active {
+        background: var(--accent-bg);
+        color: var(--accent-color);
+    }
+
+    .nav-label {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .nav-count {
+        flex-shrink: 0;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+    }
+
+    .nav-item.active .nav-count {
+        color: var(--accent-color);
     }
 
     .add-doc-btn {

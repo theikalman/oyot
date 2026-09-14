@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     addMonths,
+    formatJournalTitle,
     isSameDay,
     journalTitleFor,
     journalTitleForDay,
@@ -84,5 +85,39 @@ describe('isSameDay', () => {
 
     it('is false for a blank cell', () => {
         expect(isSameDay(new Date(2026, 8, 1), null, today)).toBe(false);
+    });
+});
+
+describe('formatJournalTitle', () => {
+    const today = new Date(2026, 8, 14); // 14 Sep 2026
+
+    it('names today and yesterday', () => {
+        expect(formatJournalTitle('2026-09-14', today)).toBe('Today');
+        expect(formatJournalTitle('2026-09-13', today)).toBe('Yesterday');
+    });
+
+    // Crossing a month boundary is where subtracting a day by arithmetic on
+    // the day number alone would produce the 0th of September.
+    it('names yesterday across a month boundary', () => {
+        expect(formatJournalTitle('2026-08-31', new Date(2026, 8, 1))).toBe('Yesterday');
+    });
+
+    it('spells out any other date', () => {
+        expect(formatJournalTitle('2026-09-01', today)).toBe('1 Sep 2026');
+        expect(formatJournalTitle('2025-12-25', today)).toBe('25 Dec 2025');
+    });
+
+    // The title is only a date because the code that creates journals makes it
+    // one. Anything else is still somebody's heading and has to stay readable.
+    it('leaves a title that is not a date alone', () => {
+        expect(formatJournalTitle('Groceries', today)).toBe('Groceries');
+        expect(formatJournalTitle('2026-9-1', today)).toBe('2026-9-1');
+        expect(formatJournalTitle('', today)).toBe('');
+    });
+
+    // `new Date(2026, 1, 31)` is the 3rd of March, so a naive parse would
+    // render this as "3 Mar 2026" and claim a day the title never named.
+    it('leaves an impossible date alone', () => {
+        expect(formatJournalTitle('2026-02-31', today)).toBe('2026-02-31');
     });
 });
