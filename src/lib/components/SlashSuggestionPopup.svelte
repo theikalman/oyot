@@ -1,44 +1,58 @@
+<script lang="ts" module>
+    export interface PopupItem {
+        id: string;
+        title: string;
+        icon?: string;
+    }
+</script>
+
 <script lang="ts">
     import type { Writable } from 'svelte/store';
 
+    // Both are stores rather than plain props, so the extension can mount this
+    // once and update it, instead of mounting a replacement on every keystroke.
     interface Props {
-        items: Array<{ id: string; title: string; icon?: string }>;
-        selectedIndexStore: Writable<number>;
-        command: (item: { id: string; title: string; icon?: string }) => void;
-        onClose: () => void;
+        items: Writable<PopupItem[]>;
+        selectedIndex: Writable<number>;
+        onCommand: (id: string) => void;
+        /**
+         * What the user has typed to narrow the list, when the caller supports
+         * filtering. Shown above the results so there is some sign of what is
+         * being filtered by; the caret is still in the editor.
+         */
+        queryLabel?: Writable<string>;
     }
 
-    let { items, selectedIndexStore, command }: Props = $props();
+    let { items, selectedIndex, onCommand, queryLabel }: Props = $props();
 
     let listElement: HTMLUListElement | undefined = $state();
 
     $effect(() => {
-        if (listElement && $selectedIndexStore >= 0) {
-            const selectedItem = listElement.children[$selectedIndexStore] as HTMLElement;
-            if (selectedItem) {
-                selectedItem.scrollIntoView({ block: 'nearest' });
-            }
+        if (listElement && $selectedIndex >= 0) {
+            const selectedItem = listElement.children[$selectedIndex] as HTMLElement;
+            selectedItem?.scrollIntoView({ block: 'nearest' });
         }
     });
 </script>
 
 <div class="suggestion-popup">
-    {#if items.length === 0}
+    {#if queryLabel && $queryLabel}
+        <div class="suggestion-query">Filtering: {$queryLabel}</div>
+    {/if}
+    {#if $items.length === 0}
         <div class="suggestion-empty">No results</div>
     {:else}
         <ul class="suggestion-list" bind:this={listElement}>
-            {#each items as item, index (item.id)}
+            {#each $items as item, index (item.id)}
                 <li
                     class="suggestion-item"
-                    class:selected={index === $selectedIndexStore}
+                    class:selected={index === $selectedIndex}
                     role="option"
-                    aria-selected={index === $selectedIndexStore}
-                    onmouseenter={() => {
-                        selectedIndexStore.set(index);
-                    }}
-                    onclick={() => command(item)}
+                    aria-selected={index === $selectedIndex}
+                    onmouseenter={() => selectedIndex.set(index)}
+                    onclick={() => onCommand(item.id)}
                     onkeydown={(e) => {
-                        if (e.key === 'Enter') command(item);
+                        if (e.key === 'Enter') onCommand(item.id);
                     }}
                 >
                     <!--
@@ -57,9 +71,18 @@
         </ul>
     {/if}
 </div>
-;
 
 <style>
+    .suggestion-query {
+        padding: 6px 12px;
+        font-size: 12px;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
     .suggestion-popup {
         position: fixed;
         z-index: 1000;

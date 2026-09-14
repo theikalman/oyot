@@ -6,13 +6,12 @@ import Suggestion, {
 } from '@tiptap/suggestion';
 import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type CommandSuggestion } from './CommandRegistry';
-import SlashSuggestionPopup from '../components/SlashSuggestionPopup.svelte';
-import { mount } from 'svelte';
-import { writable, type Writable } from 'svelte/store';
+import SlashSuggestionPopup, { type PopupItem } from '../components/SlashSuggestionPopup.svelte';
+import { mount, unmount } from 'svelte';
+import { get, writable } from 'svelte/store';
 
-interface PopupState {
-    items: CommandSuggestion[];
-    selectedIndex: number;
+function toPopupItem(item: CommandSuggestion): PopupItem {
+    return { id: item.id, title: item.title, icon: item.icon };
 }
 
 export const SlashCommand = Extension.create({
@@ -33,9 +32,7 @@ export const SlashCommand = Extension.create({
                 editor: this.editor,
                 char: this.options.suggestion.char,
                 startOfLine: this.options.suggestion.startOfLine,
-                items: ({ query }: { query: string }) => {
-                    return commandRegistry.filterCommands(query);
-                },
+                items: ({ query }: { query: string }) => commandRegistry.filterCommands(query),
                 command: ({
                     editor,
                     range,
@@ -45,187 +42,116 @@ export const SlashCommand = Extension.create({
                     range: Range;
                     props: CommandSuggestion;
                 }) => {
-                    const cmd = commandRegistry.getCommand(props.id);
-                    if (cmd) {
-                        cmd.onSelect({
-                            editor,
-                            range,
-                            props: {},
-                        });
-                    }
+                    commandRegistry.getCommand(props.id)?.onSelect({ editor, range, props: {} });
                 },
                 render: () => {
                     let popup: HTMLElement | null = null;
-                    let state: PopupState = { items: [], selectedIndex: 0 };
-                    const selectedIndexStore: Writable<number> = writable(0);
-                    let savedEditor: Editor | null = null;
-                    let savedRange: Range | null = null;
+                    // The mounted component, so it can be taken down again.
+                    // `onUpdate` fires on every keystroke and used to mount a
+                    // fresh one each time without ever unmounting: the DOM was
+                    // replaced, but each component's effects and store
+                    // subscriptions lived on for the life of the editor.
+                    let view: Record<string, unknown> | null = null;
+
+                    // One source of truth for the selection. It used to be
+                    // held both here and in a store, and hovering updated only
+                    // the store, so Enter ran whichever item the arrow keys had
+                    // last landed on rather than the one under the cursor.
+                    const items = writable<PopupItem[]>([]);
+                    const selectedIndex = writable(0);
+
+                    // Read at call time rather than captured, because the
+                    // component is mounted once and outlives any single
+                    // suggestion callback.
+                    let current: { editor: Editor; range: Range } | null = null;
+
+                    function runCommand(id: string): void {
+                        if (!current) return;
+                        commandRegistry.getCommand(id)?.onSelect({
+                            editor: current.editor,
+                            range: current.range,
+                            props: {},
+                        });
+                    }
+
+                    function place(props: SuggestionProps<CommandSuggestion>): void {
+                        const rect = props.clientRect?.();
+                        if (!rect || !popup) return;
+                        popup.style.left = `${rect.left}px`;
+                        popup.style.top = `${rect.bottom + 8}px`;
+                    }
+
+                    function sync(props: SuggestionProps<CommandSuggestion>): void {
+                        current = { editor: props.editor, range: props.range };
+                        items.set((props.items as CommandSuggestion[]).map(toPopupItem));
+                        selectedIndex.set(0);
+                        place(props);
+                    }
+
+                    function close(): void {
+                        if (current?.editor.view) exitSuggestion(current.editor.view);
+                    }
 
                     return {
                         onBeforeStart: (props: SuggestionProps<CommandSuggestion>) => {
-                            if (!popup) {
-                                popup = document.createElement('div');
-                                popup.className = 'slash-command-popup';
-                            }
-
-                            const rect = props.clientRect?.();
-                            if (rect) {
-                                popup.style.position = 'fixed';
-                                popup.style.left = `${rect.left}px`;
-                                popup.style.top = `${rect.bottom + 8}px`;
-                                popup.style.zIndex = '1000';
-                            }
-
+                            popup = document.createElement('div');
+                            popup.className = 'slash-command-popup';
+                            popup.style.position = 'fixed';
+                            popup.style.zIndex = '1000';
+                            place(props);
                             document.body.appendChild(popup);
+
+                            view = mount(SlashSuggestionPopup, {
+                                target: popup,
+                                props: { items, selectedIndex, onCommand: runCommand },
+                            });
                         },
 
-                        onStart: (props: SuggestionProps<CommandSuggestion>) => {
-                            state.items = props.items as CommandSuggestion[];
-                            state.selectedIndex = 0;
-                            selectedIndexStore.set(0);
-                            savedEditor = props.editor;
-                            savedRange = props.range;
-
-                            const rect = props.clientRect?.();
-                            if (rect && popup) {
-                                popup.style.left = `${rect.left}px`;
-                                popup.style.top = `${rect.bottom + 8}px`;
-                            }
-
-                            while (popup?.firstChild) {
-                                popup.removeChild(popup.firstChild);
-                            }
-
-                            if (popup) {
-                                mount(SlashSuggestionPopup, {
-                                    target: popup,
-                                    props: {
-                                        items: state.items.map((item) => ({
-                                            id: item.id,
-                                            title: item.title,
-                                            icon: item.icon,
-                                        })),
-                                        selectedIndexStore,
-                                        command: (item: {
-                                            id: string;
-                                            title: string;
-                                            icon?: string;
-                                        }) => {
-                                            const cmd = commandRegistry.getCommand(item.id);
-                                            if (cmd && props.range) {
-                                                cmd.onSelect({
-                                                    editor: props.editor,
-                                                    range: props.range,
-                                                    props: {},
-                                                });
-                                            }
-                                        },
-                                        onClose: () => {
-                                            if (props.editor && props.editor.view) {
-                                                exitSuggestion(props.editor.view);
-                                            }
-                                        },
-                                    },
-                                });
-                            }
-                        },
-
-                        onUpdate: (props: SuggestionProps<CommandSuggestion>) => {
-                            state.items = props.items as CommandSuggestion[];
-                            state.selectedIndex = 0;
-                            selectedIndexStore.set(0);
-                            savedEditor = props.editor;
-                            savedRange = props.range;
-
-                            const rect = props.clientRect?.();
-                            if (rect && popup) {
-                                popup.style.left = `${rect.left}px`;
-                                popup.style.top = `${rect.bottom + 8}px`;
-                            }
-
-                            while (popup?.firstChild) {
-                                popup.removeChild(popup.firstChild);
-                            }
-
-                            if (popup) {
-                                mount(SlashSuggestionPopup, {
-                                    target: popup,
-                                    props: {
-                                        items: state.items.map((item) => ({
-                                            id: item.id,
-                                            title: item.title,
-                                            icon: item.icon,
-                                        })),
-                                        selectedIndexStore,
-                                        command: (item: {
-                                            id: string;
-                                            title: string;
-                                            icon?: string;
-                                        }) => {
-                                            const cmd = commandRegistry.getCommand(item.id);
-                                            if (cmd && props.range) {
-                                                cmd.onSelect({
-                                                    editor: props.editor,
-                                                    range: props.range,
-                                                    props: {},
-                                                });
-                                            }
-                                        },
-                                        onClose: () => {
-                                            if (props.editor && props.editor.view) {
-                                                exitSuggestion(props.editor.view);
-                                            }
-                                        },
-                                    },
-                                });
-                            }
-                        },
+                        onStart: sync,
+                        onUpdate: sync,
 
                         onKeyDown: (props: SuggestionKeyDownProps) => {
-                            if (props.event.key === 'ArrowUp') {
-                                state.selectedIndex =
-                                    (state.selectedIndex - 1 + state.items.length) %
-                                    state.items.length;
-                                selectedIndexStore.set(state.selectedIndex);
+                            const list = get(items);
+                            const key = props.event.key;
+
+                            if (key === 'Escape') {
+                                close();
                                 return true;
                             }
 
-                            if (props.event.key === 'ArrowDown') {
-                                state.selectedIndex =
-                                    (state.selectedIndex + 1) % state.items.length;
-                                selectedIndexStore.set(state.selectedIndex);
+                            // With nothing to choose from, every key belongs to
+                            // the editor. Arrow keys used to compute a modulo
+                            // of zero and store NaN, and Enter claimed the
+                            // keystroke without doing anything, swallowing the
+                            // newline.
+                            if (list.length === 0) return false;
+
+                            if (key === 'ArrowUp') {
+                                selectedIndex.update((i) => (i - 1 + list.length) % list.length);
                                 return true;
                             }
-
-                            if (props.event.key === 'Enter') {
-                                if (state.items[state.selectedIndex]) {
-                                    const cmd = commandRegistry.getCommand(
-                                        state.items[state.selectedIndex].id,
-                                    );
-                                    const range = props.range ?? savedRange;
-                                    if (cmd && savedEditor && range) {
-                                        cmd.onSelect({
-                                            editor: savedEditor,
-                                            range,
-                                            props: {},
-                                        });
-                                    }
-                                }
+                            if (key === 'ArrowDown') {
+                                selectedIndex.update((i) => (i + 1) % list.length);
                                 return true;
                             }
-
+                            if (key === 'Enter') {
+                                const chosen = list[get(selectedIndex)];
+                                if (chosen) runCommand(chosen.id);
+                                return true;
+                            }
                             return false;
                         },
 
                         onExit: () => {
-                            if (popup && popup.parentNode) {
-                                popup.parentNode.removeChild(popup);
+                            if (view) {
+                                void unmount(view);
+                                view = null;
                             }
+                            popup?.remove();
                             popup = null;
-                            state = { items: [], selectedIndex: 0 };
-                            selectedIndexStore.set(0);
-                            savedEditor = null;
-                            savedRange = null;
+                            current = null;
+                            items.set([]);
+                            selectedIndex.set(0);
                         },
                     };
                 },
