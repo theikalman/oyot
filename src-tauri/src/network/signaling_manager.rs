@@ -423,3 +423,93 @@ impl SignalingManager {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::EnvelopeVerifier;
+    use crate::identity::{LocalIdentity, UserIdentity};
+
+    fn manager_with_identity() -> (SignalingManager, String) {
+        let signing_key = crypto::generate_signing_key();
+        let node_id = crypto::encode_node_id(&signing_key.verifying_key());
+        let mgr = SignalingManager::new(None);
+        mgr.set_identity(LocalIdentity {
+            public: UserIdentity {
+                user_id: "u1".to_string(),
+                node_id: node_id.clone(),
+                display_name: "Laptop".to_string(),
+            },
+            signing_key,
+        });
+        (mgr, node_id)
+    }
+
+    // The unit tests in crypto cover the primitives; this covers the wiring,
+    // i.e. that what seal() produces is what a peer's verifier accepts.
+    #[test]
+    fn a_sealed_message_verifies_on_the_receiving_side() {
+        let (mgr, node_id) = manager_with_identity();
+        let msg = mgr
+            .seal("peer-node", "offer", "sdp-payload".to_string())
+            .unwrap();
+
+        assert_eq!(msg.from, node_id);
+        assert_eq!(msg.to.as_deref(), Some("peer-node"));
+        assert!(!msg.sig.is_empty() && !msg.nonce.is_empty());
+
+        let mut verifier = EnvelopeVerifier::new();
+        assert!(verifier
+            .verify(
+                &msg.from,
+                "peer-node",
+                &msg.msg_type,
+                &msg.payload,
+                msg.ts,
+                &msg.nonce,
+                &msg.sig,
+                crypto::now_ms(),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn a_sealed_message_does_not_verify_for_a_different_recipient() {
+        let (mgr, _) = manager_with_identity();
+        let msg = mgr.seal("peer-node", "offer", "sdp".to_string()).unwrap();
+
+        let mut verifier = EnvelopeVerifier::new();
+        assert!(
+            verifier
+                .verify(
+                    &msg.from,
+                    "someone-else",
+                    &msg.msg_type,
+                    &msg.payload,
+                    msg.ts,
+                    &msg.nonce,
+                    &msg.sig,
+                    crypto::now_ms(),
+                )
+                .is_err(),
+            "a message addressed to one peer must not verify for another"
+        );
+    }
+
+    #[test]
+    fn each_sealed_message_gets_a_fresh_nonce() {
+        let (mgr, _) = manager_with_identity();
+        let a = mgr.seal("peer", "offer", "x".to_string()).unwrap();
+        let b = mgr.seal("peer", "offer", "x".to_string()).unwrap();
+        assert_ne!(a.nonce, b.nonce, "a repeated nonce would read as a replay");
+    }
+
+    // Publishing unsigned would be worse than not publishing: the peer would
+    // reject it, and the failure would look like a network problem.
+    #[test]
+    fn sealing_without_an_identity_fails_rather_than_sending_unsigned() {
+        let mgr = SignalingManager::new(None);
+        let err = mgr.seal("peer", "offer", "sdp".to_string()).unwrap_err();
+        assert!(err.contains("identity not loaded"), "got: {err}");
+    }
+}
