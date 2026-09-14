@@ -8,6 +8,7 @@
     import type { Editor as EditorType } from '@tiptap/core';
     import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
+    import Backlinks from './Backlinks.svelte';
     import {
         createSaveService,
         persistSnapshot,
@@ -16,6 +17,7 @@
     } from './EditorSaveService';
     import { loadDocument } from '$lib/services/documents';
     import { REMOTE_ORIGIN } from './yjs';
+    import { extractDocumentIndex } from './documentIndex';
     import { base64ToBytes } from '$lib/sync/protocol';
     import * as Y from 'yjs';
 
@@ -31,6 +33,10 @@
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
     let unlistenSyncEvent: (() => void) | null = null;
+    // Bumped after a save so the backlinks panel re-reads: a link added in this
+    // document changes what other documents' panels show, and this one's too if
+    // the save also removed a link.
+    let indexRevision = $state(0);
     let unlistenCloseRequested: (() => void) | null = null;
 
     function handleEditorReady(editor: EditorType, doc: Y.Doc) {
@@ -41,7 +47,19 @@
             saveService.destroy();
         }
 
-        saveService = createSaveService({ debounceMs });
+        saveService = createSaveService({
+            debounceMs,
+            onSaved: () => {
+                indexRevision++;
+            },
+        });
+
+        // Only the editor can read the rendered document, so it supplies the
+        // index the save path records: text for search, link targets, todo
+        // counts. Read lazily at flush time so it reflects the final state.
+        saveService.setIndexReader(() =>
+            editorInstance ? extractDocumentIndex(editorInstance.state.doc) : null,
+        );
 
         if (current) {
             saveService.setDocument(current);
@@ -70,7 +88,9 @@
         if (!saveService?.hasPendingWrite()) return;
         const delta = saveService.takePendingDelta();
         const snapshot = Y.encodeStateAsUpdate(doc);
-        void persistSnapshot(docId, snapshot, delta ?? snapshot);
+        // Read the index here, while the editor still exists.
+        const index = editorInstance ? extractDocumentIndex(editorInstance.state.doc) : undefined;
+        void persistSnapshot(docId, snapshot, delta ?? snapshot, index);
     }
 
     async function reloadCurrentDocument() {
@@ -163,6 +183,8 @@
             onBeforeTeardown={handleBeforeTeardown}
             onLocalUpdate={handleLocalUpdate}
         />
+
+        <Backlinks docId={current.id} revision={indexRevision} />
     {:else}
         <div class="empty-state">
             <p>Select a file to edit</p>
