@@ -197,4 +197,30 @@
         display: flex;
         flex-direction: column;
     }
+
+    /* The reconnect button in a device menu. Shared shape with the
+       document menus, which live in DocumentList. */
+    .doc-menu-item {
+        text-align: left;
+        padding: 6px 8px;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+
+    .doc-menu-item:hover {
+        background: var(--bg-hover);
+    }
+
+    .doc-menu-item:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .doc-menu-item:disabled:hover {
+        background: transparent;
+    }
 </style>
