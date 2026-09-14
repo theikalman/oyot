@@ -132,7 +132,12 @@ impl SignalingManager {
         }
     }
 
-    pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
+    pub async fn connect(
+        &self,
+        broker_url: &str,
+        node_id: &str,
+        credentials: Option<(String, String)>,
+    ) -> Result<(), String> {
         trace!(
             "[Signaling] connect() broker_url={} node_id={}",
             broker_url,
@@ -146,7 +151,7 @@ impl SignalingManager {
             old.shutdown();
         }
 
-        let client = MqttSignalingClient::new(broker_url, node_id).await?;
+        let client = MqttSignalingClient::new(broker_url, node_id, credentials).await?;
         // Topic subscription now happens inside the client's poll loop on every
         // ConnAck, so it is replayed automatically after a reconnect.
 

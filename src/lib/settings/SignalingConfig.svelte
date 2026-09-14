@@ -6,10 +6,12 @@
         status: SignalingStatus;
         /** Why the connection failed, when `status` is 'error'. */
         error: string | null;
-        onSave: (url: string) => void;
+        username: string | null;
+        password: string | null;
+        onSave: (settings: { url: string; username: string; password: string }) => void;
     }
 
-    let { signalingUrl, status, error, onSave }: Props = $props();
+    let { signalingUrl, status, error, username, password, onSave }: Props = $props();
 
     // A boolean could not tell "still trying" from "tried and failed", so a
     // wrong address or a rejected login read as an ordinary disconnection and
@@ -25,7 +27,23 @@
     // both of these on every run, so any store update -- a reconnect, a status
     // change -- wiped whatever was half-typed in the box.
     let inputUrl = $state('');
+    let inputUser = $state('');
+    let inputPass = $state('');
     let isEditing = $state(false);
+    let urlError = $state<string | null>(null);
+
+    // Checked here so a typo is caught before it is stored. The same parse
+    // runs in Rust, which is the authority; this is only to answer sooner and
+    // in the field the user is looking at.
+    const SCHEMES = ['mqtt://', 'mqtts://', 'tcp://', 'ssl://'];
+
+    function schemeProblem(url: string): string | null {
+        const scheme = url.match(/^[a-z0-9+.-]+:\/\//i)?.[0];
+        if (!scheme) return null; // no scheme is allowed, and means mqtt://
+        return SCHEMES.includes(scheme.toLowerCase())
+            ? null
+            : `${scheme} is not a broker address. Use ${SCHEMES.join(', ')} or a bare host.`;
+    }
 
     // Deliberately not $state: the effect must not re-run when this is written,
     // and it must not treat `isEditing` as a dependency either.
@@ -36,14 +54,19 @@
         if (incoming === lastSeenUrl) return;
         lastSeenUrl = incoming;
         inputUrl = incoming ?? '';
+        inputUser = username ?? '';
+        inputPass = password ?? '';
         // With no broker configured there is nothing to display, so open
         // straight into the form.
         isEditing = !incoming;
     });
 
     function handleSave() {
-        if (!inputUrl.trim()) return;
-        onSave(inputUrl.trim());
+        const url = inputUrl.trim();
+        if (!url) return;
+        urlError = schemeProblem(url);
+        if (urlError) return;
+        onSave({ url, username: inputUser.trim(), password: inputPass });
         isEditing = false;
     }
 </script>
@@ -63,7 +86,33 @@
                 placeholder="mqtt://localhost:1883"
                 bind:value={inputUrl}
                 class="input"
+                aria-label="Broker address"
             />
+            <div class="credentials">
+                <input
+                    type="text"
+                    placeholder="Username (optional)"
+                    bind:value={inputUser}
+                    class="input"
+                    autocomplete="off"
+                    aria-label="Broker username"
+                />
+                <input
+                    type="password"
+                    placeholder="Password (optional)"
+                    bind:value={inputPass}
+                    class="input"
+                    autocomplete="off"
+                    aria-label="Broker password"
+                />
+            </div>
+            <p class="hint">
+                Leave the username and password empty unless your broker requires them. A
+                development broker started with <code>docker compose up -d</code> does not.
+            </p>
+            {#if urlError}
+                <p class="status-detail error">{urlError}</p>
+            {/if}
             <button type="submit" class="btn-primary" disabled={!inputUrl.trim()}>
                 Save & Connect
             </button>
@@ -97,7 +146,30 @@
     }
     .signaling-form {
         display: flex;
+        flex-direction: column;
         gap: 8px;
+    }
+    .credentials {
+        display: flex;
+        gap: 8px;
+    }
+    .credentials .input {
+        min-width: 0;
+    }
+    .hint {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-muted);
+    }
+    .hint code {
+        font-family: monospace;
+        background: var(--code-bg);
+        padding: 1px 4px;
+        border-radius: 3px;
+    }
+    .status-detail.error {
+        color: var(--status-error);
     }
     .input {
         flex: 1;

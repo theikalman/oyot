@@ -154,7 +154,11 @@ impl Clone for MqttSignalingClient {
 }
 
 impl MqttSignalingClient {
-    pub async fn new(broker_url: &str, node_id: &str) -> Result<Self, String> {
+    pub async fn new(
+        broker_url: &str,
+        node_id: &str,
+        credentials: Option<(String, String)>,
+    ) -> Result<Self, String> {
         let url = broker_url.trim();
         let BrokerUrl { host, port, tls } = parse_broker_url(url)?;
 
@@ -168,6 +172,13 @@ impl MqttSignalingClient {
 
         let mut mqtt_options = rumqttc::MqttOptions::new(node_id, &host, port);
         mqtt_options.set_keep_alive(std::time::Duration::from_secs(30));
+        if let Some((username, password)) = credentials {
+            // A broker that requires authentication rejected every connection
+            // before this, and the reference configuration in the repository
+            // was one, so following the documentation produced a broker the
+            // app could not use.
+            mqtt_options.set_credentials(username, password);
+        }
         if tls {
             // Signaling is signed end to end, so TLS is not what makes a
             // message trustworthy. It is what stops the broker operator, or

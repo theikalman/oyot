@@ -2,14 +2,31 @@ use crate::db::AppState;
 use tauri::State;
 
 #[tauri::command]
-pub async fn mqtt_connect(state: State<'_, AppState>, broker_url: String) -> Result<(), String> {
+pub async fn mqtt_connect(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    broker_url: String,
+) -> Result<(), String> {
     let node_id = state.signaling_manager.get_node_id();
     trace!(
         "[cmd] mqtt_connect broker_url={} node_id={}",
         broker_url,
         node_id
     );
-    let result = state.signaling_manager.connect(&broker_url, &node_id).await;
+    let credentials = {
+        let stored = crate::commands::config::get_mqtt_credentials(app);
+        match (stored.username, stored.password) {
+            (Some(u), Some(p)) => Some((u, p)),
+            // A username with no password is not something a broker accepts,
+            // so treat a half-filled pair as none rather than failing to
+            // connect for a reason the user cannot see.
+            _ => None,
+        }
+    };
+    let result = state
+        .signaling_manager
+        .connect(&broker_url, &node_id, credentials)
+        .await;
     if let Err(e) = &result {
         warn_log!("[cmd] mqtt_connect FAILED: {}", e);
     }

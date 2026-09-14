@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - Rust 1.75+ (install via [rustup](https://rustup.rs))
 - Platform build dependencies for Tauri (see below)
 
@@ -137,16 +137,33 @@ signature over all of its fields. `src-tauri/src/crypto.rs` holds the format and
 the verifier; messages are checked in the MQTT event loop before anything reads
 the payload. The broker is therefore untrusted infrastructure: it relays
 messages it cannot forge, alter or replay. See
-[ADR 0009](decisions/0009-authenticated-signaling.md).
+[ADR 0009](docs/decisions/0009-authenticated-signaling.md).
 
 The signature answers "is this really that device". Whether we want to talk to
 that device is still the pairing check against `device_pairs`, and both must
 pass.
 
-`mqtts://` is supported and preferred for any broker beyond localhost; the
-reference `mosquitto.conf` also requires authentication and restricts each
-device to its own topic subtree. Neither is what makes a message trustworthy,
-but they keep pairing traffic and SDP off the wire in the clear.
+### Running a broker
+
+`docker compose up -d` starts `mosquitto/config/mosquitto.conf`, which is the
+development configuration: anonymous, listening on every interface. Both are
+deliberate. The point of running it is to pair two of your own devices, so
+localhost binding will not do, and requiring a password file before the app
+can connect at all is friction for no security gain: the signatures are what
+make a message trustworthy, and pairing still means confirming the other
+device's id by hand.
+
+What the broker can still do is read. It sees who is pairing with whom and the
+SDP inside, so do not expose the development configuration beyond a network
+you trust.
+
+For anything more than that, start from `mosquitto.prod.conf.example` and
+`acl.example`. Together they add authentication, a per-device rule so no
+account can subscribe outside its own topic subtree, and a place to put TLS
+certificates. Enter the username and password in Settings > Sync on each
+device, and point it at `mqtts://host:8883`. Credentials are stored in the
+same plaintext `config.json` as the rest of the configuration, alongside the
+signing key.
 
 The secret key lives in the app database rather than the OS keychain. Anything
 that can read it can already read the notes, so this is coherent rather than
@@ -194,7 +211,7 @@ it does not participate in the peer connection itself.
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap (rich text editing)
 - **Backend**: Rust, Tauri 2.0
 - **Database**: SQLite (rusqlite)
-- **Rust Crates**: walkdir, regex, ignore, glob, serde, chrono
+- **Rust Crates**: rusqlite, rumqttc, ed25519-dalek, serde, chrono, sha2
 
 ---
 

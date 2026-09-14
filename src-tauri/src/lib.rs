@@ -341,6 +341,8 @@ pub fn run() {
             save_theme,
             get_mqtt_broker_url,
             save_mqtt_broker_url,
+            get_mqtt_credentials,
+            save_mqtt_credentials,
             save_image,
             import_image_from_path,
             cleanup_orphaned_images,

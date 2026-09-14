@@ -51,9 +51,54 @@ pub fn get_mqtt_broker_url(app: tauri::AppHandle) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Rejects a URL the client could not connect with, rather than storing it and
+/// leaving the user to work out why nothing happens.
 #[tauri::command]
 pub fn save_mqtt_broker_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    crate::network::mqtt_client::parse_broker_url(&url)?;
     let mut json = read_config(&app);
     json["mqtt_broker_url"] = serde_json::json!(url);
+    write_config(&app, json)
+}
+
+/// Broker credentials, for a broker that requires authentication.
+///
+/// Kept as separate fields rather than embedded in the URL: a password in a
+/// URL ends up in every log line that prints the URL, and it makes parsing
+/// host and port ambiguous. Stored in the same plaintext `config.json` as
+/// everything else, which is the same posture as the signing key and is
+/// documented as such.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct BrokerCredentials {
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_mqtt_credentials(app: tauri::AppHandle) -> BrokerCredentials {
+    let json = read_config(&app);
+    let read = |key: &str| {
+        json.get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    BrokerCredentials {
+        username: read("mqtt_username"),
+        password: read("mqtt_password"),
+    }
+}
+
+#[tauri::command]
+pub fn save_mqtt_credentials(
+    app: tauri::AppHandle,
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<(), String> {
+    let mut json = read_config(&app);
+    // An empty field means "no credentials", so it clears rather than storing
+    // an empty username the broker would reject.
+    json["mqtt_username"] = serde_json::json!(username.filter(|s| !s.trim().is_empty()));
+    json["mqtt_password"] = serde_json::json!(password.filter(|s| !s.is_empty()));
     write_config(&app, json)
 }

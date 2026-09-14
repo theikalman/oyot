@@ -36,8 +36,12 @@ be trusted:
   after being apart without a central copy to fall back on.
 
 You need a broker reachable by both devices. `docker compose up -d` starts one
-locally for development; see [DEVELOPMENT.md](./DEVELOPMENT.md) for configuring
-authentication and TLS for anything beyond that.
+for development: anonymous, on every interface, so a laptop and a phone on the
+same network can both reach it. That is deliberate rather than lax, because
+the signatures above are what make a message trustworthy, not the broker. It
+does still see who is pairing with whom, so do not expose it beyond a network
+you trust; see [DEVELOPMENT.md](./DEVELOPMENT.md) for the hardened
+configuration, with authentication, per-device topic rules and TLS.
 
 The design decisions behind all of this, including what each one gives up, are
 in [docs/decisions](./docs/decisions).

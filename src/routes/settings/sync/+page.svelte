@@ -23,6 +23,7 @@
         disconnectPeer,
         reconnectPeer,
     } from '$lib/sync';
+    import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
     import { SignalingConfig } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
@@ -37,9 +38,18 @@
     let pairState = $state<PairingState>(null);
     let signalingUrl = $state<string | null>(null);
     let signalingErr = $state<string | null>(null);
+    let brokerUser = $state<string | null>(null);
+    let brokerPass = $state<string | null>(null);
     let copySuccess = $state(false);
 
     onMount(() => {
+        void invoke<{ username: string | null; password: string | null }>('get_mqtt_credentials')
+            .then((c) => {
+                brokerUser = c.username;
+                brokerPass = c.password;
+            })
+            .catch((e) => console.error('Failed to read broker credentials:', e));
+
         const un1 = identity.subscribe((v) => {
             localIdentity = v;
         });
@@ -88,15 +98,30 @@
         }
     }
 
-    async function handleSaveSignalingUrl(newUrl: string) {
+    async function handleSaveSignalingUrl(settings: {
+        url: string;
+        username: string;
+        password: string;
+    }) {
+        const { url, username, password } = settings;
         try {
-            log.debug('handleSaveSignalingUrl', newUrl);
+            log.debug('handleSaveSignalingUrl', url);
 
-            await invoke('save_mqtt_broker_url', { url: newUrl });
-            syncStore.setSignalingUrl(newUrl);
-            await invoke('mqtt_connect', { brokerUrl: newUrl });
+            // Saving the URL validates it in Rust, so an address the client
+            // could never connect with is rejected here rather than stored
+            // and left to fail silently later.
+            await invoke('save_mqtt_broker_url', { url });
+            await invoke('save_mqtt_credentials', {
+                username: username || null,
+                password: password || null,
+            });
+            syncStore.setSignalingUrl(url);
+            brokerUser = username || null;
+            brokerPass = password || null;
+            await invoke('mqtt_connect', { brokerUrl: url });
         } catch (e) {
-            console.error('Failed to save MQTT URL:', e);
+            console.error('Failed to save MQTT settings:', e);
+            toasts.error(typeof e === 'string' ? e : 'Could not save the broker settings');
         }
     }
 
@@ -191,7 +216,14 @@
         onRename={handleRename}
     />
 
-    <SignalingConfig {signalingUrl} {status} error={signalingErr} onSave={handleSaveSignalingUrl} />
+    <SignalingConfig
+        {signalingUrl}
+        {status}
+        error={signalingErr}
+        username={brokerUser}
+        password={brokerPass}
+        onSave={handleSaveSignalingUrl}
+    />
 
     {#if isConnected}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
