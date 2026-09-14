@@ -16,6 +16,7 @@ type Args = unknown[];
 
 export const log = {
     /** Tracing. Dev builds only. */
+    // eslint-disable-next-line no-console -- this is the one place it belongs
     debug: DEV ? (...args: Args) => console.log(...args) : () => {},
     /** Something unexpected that the app recovered from. Always emitted. */
     warn: (...args: Args) => console.warn(...args),

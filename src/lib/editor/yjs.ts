@@ -6,23 +6,6 @@ import * as Y from 'yjs';
 // Y.Doc as the open copy in the same queued step, so the sync layer can apply a
 // peer's edit straight into it.
 
-export function createInitialContent(title: string): object {
-    return {
-        type: 'doc',
-        content: [
-            {
-                type: 'heading',
-                attrs: { level: 1 },
-                content: [{ type: 'text', text: title }],
-            },
-            {
-                type: 'paragraph',
-                content: [],
-            },
-        ],
-    };
-}
-
 export function createCollaborationExtension(ydoc: Y.Doc, fieldName: string = 'content') {
     return Collaboration.configure({
         document: ydoc,

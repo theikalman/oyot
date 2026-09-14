@@ -16,6 +16,11 @@ export default ts.config(
             // with type guards; `any` in the Tiptap node-view signatures mirrors the
             // library's own typing. Warn so new ones are visible, do not block.
             '@typescript-eslint/no-explicit-any': 'warn',
+            // `console.log` is tracing, and tracing must not ship: `log.debug`
+            // folds away in a production build. `warn` and `error` are kept,
+            // because a user reporting a problem should have something to
+            // read, which is exactly what `log.warn`/`log.error` forward to.
+            'no-console': ['error', { allow: ['warn', 'error'] }],
             '@typescript-eslint/no-unused-vars': [
                 'error',
                 { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },

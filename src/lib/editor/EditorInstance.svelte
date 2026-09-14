@@ -14,8 +14,7 @@
         registerTodoCommand,
         registerImageCommand,
     } from '$lib/tiptap';
-    import { ImageExtension } from '$lib/tiptap/extensions/ImageExtension';
-    import { createInitialContent, createCollaborationExtension } from './yjs';
+    import { createCollaborationExtension } from './yjs';
     import { REMOTE_ORIGIN } from './origin';
     import { unregisterOpenDoc } from './openDocs';
     import { documentRepository } from '$lib/sync';
@@ -92,9 +91,6 @@
         // since then has already made stale.
         const newYDoc = await documentRepository.openDocument(docId);
 
-        const title = document?.title ?? 'Untitled';
-        let initialContent: object = createInitialContent(title) as object;
-
         const collabExt = createCollaborationExtension(newYDoc, 'content');
 
         const ed = new Editor({
@@ -107,23 +103,28 @@
                 // Collaboration declares priority 1000, so it leads the plugin
                 // order wherever it sits in this list.
                 collabExt,
-                ImageExtension,
                 Placeholder.configure({
                     placeholder: 'Start writing...',
                 }),
                 SlashCommand,
                 ScrollOnFocus,
             ],
-            content: initialContent,
+            // No initial content. The collaboration binding replaces the
+            // document with the Yjs fragment as soon as the editor is
+            // constructed, so anything passed here was discarded before it
+            // could be seen. A new document starts empty, which is what it
+            // did in practice anyway.
             editable: true,
         });
 
         ed.view.dom.addEventListener('click', handleImageClick);
 
-        registerDocumentLinkCommand(ed);
-        registerDateCommand(ed);
-        registerTodoCommand(ed);
-        registerImageCommand(ed);
+        // These register into a module-level registry, not into `ed`. They
+        // took an editor argument that none of them used.
+        registerDocumentLinkCommand();
+        registerDateCommand();
+        registerTodoCommand();
+        registerImageCommand();
 
         // The only thing that schedules a save. Tiptap's `onUpdate` used to do
         // it as well, which meant a peer's edit landing in this document

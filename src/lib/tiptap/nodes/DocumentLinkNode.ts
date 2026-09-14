@@ -7,14 +7,6 @@ export interface DocumentLinkOptions {
     HTMLAttributes: Record<string, unknown>;
 }
 
-declare module '@tiptap/core' {
-    interface Commands<ReturnType> {
-        documentLink: {
-            setDocumentLink: (attributes: { targetId: string; title: string }) => ReturnType;
-        };
-    }
-}
-
 export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
     name: 'documentLink',
 
@@ -150,19 +142,6 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
                 dom,
                 destroy: () => unsubscribe(),
             };
-        };
-    },
-
-    addCommands() {
-        return {
-            setDocumentLink:
-                (attributes) =>
-                ({ commands }) => {
-                    return commands.insertContent({
-                        type: this.name,
-                        attrs: attributes,
-                    });
-                },
         };
     },
 });
