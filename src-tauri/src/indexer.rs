@@ -7,7 +7,7 @@
 //! `get_backlinks` had no edge table and returned every document, and search
 //! could only match titles.
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 /// What the editor extracted from a document, as it arrives over IPC.
 #[derive(Debug, Default, serde::Deserialize)]
@@ -35,9 +35,32 @@ pub fn update_document_title(
     )
     .map_err(|e| e.to_string())?;
 
+    // An UPDATE here only ever touched documents that already had a row, and
+    // the only thing that creates one is a save with content. A document that
+    // arrived from a peer, or was created and never typed in, therefore had no
+    // row at all and could not be found by search even by its exact title.
+    //
+    // FTS5 has no unique index for ON CONFLICT to target, so insert-or-replace
+    // is a delete and an insert, carrying over whatever body a previous index
+    // pass recorded.
+    let body: String = db
+        .query_row(
+            "SELECT body FROM document_search WHERE document_id = ?",
+            params![doc_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+
     db.execute(
-        "UPDATE document_search SET title = ?2 WHERE document_id = ?1",
-        params![doc_id, title],
+        "DELETE FROM document_search WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO document_search (document_id, title, body) VALUES (?1, ?2, ?3)",
+        params![doc_id, title, body],
     )
     .map_err(|e| e.to_string())?;
 
@@ -292,6 +315,63 @@ mod tests {
             .unwrap();
         assert_eq!(stitle, "Renamed");
         assert_eq!(body, "the body");
+    }
+
+    // The regression this guards: a document whose content this device has
+    // never rendered -- one pulled from a peer, or created and not yet typed
+    // in -- had no search row, because only a save with content wrote one and
+    // the title path could only UPDATE. It was unfindable even by exact title.
+    #[test]
+    fn a_document_with_no_body_is_searchable_by_title() {
+        let db = db();
+        update_document_title(&db, "a", "Quarterly review").unwrap();
+
+        let q = to_fts_query("quarterly").unwrap();
+        let hits: Vec<String> = db
+            .prepare("SELECT document_id FROM document_search WHERE document_search MATCH ?")
+            .unwrap()
+            .query_map([&q], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(hits, vec!["a"]);
+    }
+
+    #[test]
+    fn repeated_title_updates_keep_one_search_row() {
+        let db = db();
+        update_document_title(&db, "a", "First").unwrap();
+        update_document_title(&db, "a", "Second").unwrap();
+        update_document_title(&db, "a", "Third").unwrap();
+
+        let (rows, title): (i64, String) = db
+            .query_row(
+                "SELECT COUNT(*), MAX(title) FROM document_search WHERE document_id = 'a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(title, "Third");
+    }
+
+    // A rename must not throw away the body a previous save indexed, which a
+    // blind delete-and-insert would.
+    #[test]
+    fn a_rename_after_indexing_keeps_the_body_searchable() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &index("pineapple", &[], 0, 0)).unwrap();
+        update_document_title(&db, "a", "Renamed").unwrap();
+
+        let q = to_fts_query("pineapple").unwrap();
+        let hits: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM document_search WHERE document_search MATCH ?",
+                [&q],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "the body survives a title-only update");
     }
 
     // FTS5 MATCH has its own syntax; raw user input is not valid query text.
