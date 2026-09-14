@@ -22,6 +22,7 @@
     import { snippetParts } from '../search/snippet';
     import { createSearch, type SearchHit } from '../search/searchStore.svelte';
     import AboutDialog from './AboutDialog.svelte';
+    import Modal from './Modal.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
 
@@ -640,83 +641,60 @@
 </button>
 
 {#if showModal}
-    <div class="modal-overlay" role="presentation" onclick={closeModal}>
-        <div
-            class="modal-content"
-            role="dialog"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.key === 'Escape' && closeModal()}
-        >
-            <h3>New Note</h3>
-            <input
-                type="text"
-                bind:value={newDocTitle}
-                placeholder="Enter file name..."
-                class="modal-input"
-                onkeydown={(e) => e.key === 'Enter' && createDocument()}
-            />
-            {#if createError}
-                <p class="modal-error">{createError}</p>
-            {/if}
-            <div class="modal-actions">
-                <button class="modal-btn" onclick={createDocument}>OK</button>
-            </div>
-        </div>
-    </div>
+    <Modal title="New Note" onClose={closeModal}>
+        <input
+            type="text"
+            bind:value={newDocTitle}
+            placeholder="Enter file name..."
+            class="modal-input"
+            onkeydown={(e) => e.key === 'Enter' && createDocument()}
+        />
+        {#if createError}
+            <p class="modal-error">{createError}</p>
+        {/if}
+        {#snippet actions()}
+            <button class="modal-btn" onclick={createDocument}>OK</button>
+        {/snippet}
+    </Modal>
 {/if}
 
 {#if renameDoc}
-    <div class="modal-overlay" role="presentation" onclick={closeRenameModal}>
-        <div
-            class="modal-content"
-            role="dialog"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.key === 'Escape' && closeRenameModal()}
-        >
-            <h3>Rename</h3>
-            <input
-                type="text"
-                bind:value={renameTitle}
-                placeholder="Enter file name..."
-                class="modal-input"
-                onkeydown={(e) => e.key === 'Enter' && confirmRename()}
-            />
-            {#if renameError}
-                <p class="modal-error">{renameError}</p>
-            {/if}
-            <div class="modal-actions">
-                <button class="modal-btn secondary" onclick={closeRenameModal}>Cancel</button>
-                <button class="modal-btn" onclick={confirmRename}>Rename</button>
-            </div>
-        </div>
-    </div>
+    <Modal title="Rename" onClose={closeRenameModal}>
+        <input
+            type="text"
+            bind:value={renameTitle}
+            placeholder="Enter file name..."
+            class="modal-input"
+            onkeydown={(e) => e.key === 'Enter' && confirmRename()}
+        />
+        {#if renameError}
+            <p class="modal-error">{renameError}</p>
+        {/if}
+        {#snippet actions()}
+            <button class="modal-btn secondary" data-secondary onclick={closeRenameModal}>
+                Cancel
+            </button>
+            <button class="modal-btn" onclick={confirmRename}>Rename</button>
+        {/snippet}
+    </Modal>
 {/if}
 
 {#if deleteDoc}
-    <div class="modal-overlay" role="presentation" onclick={closeDeleteModal}>
-        <div
-            class="modal-content"
-            role="dialog"
-            tabindex="-1"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.key === 'Escape' && closeDeleteModal()}
-        >
-            <h3>Delete "{deleteDoc.title}"?</h3>
-            <p class="modal-warning">
-                This can't be undone. If this note has been synchronized to other devices, it will
-                be deleted there too.
-            </p>
-            {#if deleteError}
-                <p class="modal-error">{deleteError}</p>
-            {/if}
-            <div class="modal-actions">
-                <button class="modal-btn secondary" onclick={closeDeleteModal}>Cancel</button>
-                <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
-            </div>
-        </div>
-    </div>
+    <Modal title={`Delete "${deleteDoc.title}"?`} onClose={closeDeleteModal}>
+        <p class="modal-warning">
+            This can't be undone. If this note has been synchronized to other devices, it will be
+            deleted there too.
+        </p>
+        {#if deleteError}
+            <p class="modal-error">{deleteError}</p>
+        {/if}
+        {#snippet actions()}
+            <button class="modal-btn secondary" data-secondary onclick={closeDeleteModal}>
+                Cancel
+            </button>
+            <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
+        {/snippet}
+    </Modal>
 {/if}
 
 {#if showAbout}
@@ -1225,34 +1203,6 @@
     }
 
     /* ── Modals ── */
-    .modal-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.45);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-    }
-
-    .modal-content {
-        background: var(--bg-primary);
-        padding: 20px;
-        border-radius: 8px;
-        min-width: 300px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-        color: var(--text-primary);
-    }
-
-    .modal-content h3 {
-        margin: 0 0 12px 0;
-        font-size: 16px;
-        color: var(--text-primary);
-    }
-
     .modal-input {
         width: 100%;
         padding: 8px 12px;
@@ -1279,13 +1229,6 @@
         font-size: 13px;
         color: var(--text-secondary);
         line-height: 1.4;
-    }
-
-    .modal-actions {
-        margin-top: 12px;
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
     }
 
     .modal-btn {

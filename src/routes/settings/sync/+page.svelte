@@ -29,6 +29,7 @@
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
     import { PairingDialog } from '$lib/settings';
+    import Modal from '$lib/components/Modal.svelte';
 
     let localIdentity: UserIdentity | null = $state(null);
     let status = $state<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
@@ -278,29 +279,21 @@
     {/if}
 
     {#if removeTarget}
-        <div class="modal-backdrop" role="presentation" onclick={() => (removeTarget = null)}>
-            <div
-                class="modal"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="remove-title"
-                tabindex="-1"
-                onclick={(e) => e.stopPropagation()}
-                onkeydown={(e) => e.key === 'Escape' && (removeTarget = null)}
-            >
-                <h3 id="remove-title">Remove "{removeTarget.peer_display_name}"?</h3>
-                <p class="modal-note">
-                    The two devices stop syncing. Pairing them again means reading one device's ID
-                    off the other. Documents already synced are kept.
-                </p>
-                <div class="modal-actions">
-                    <button class="btn-secondary" onclick={() => (removeTarget = null)}>
-                        Cancel
-                    </button>
-                    <button class="btn-danger" onclick={confirmRemovePeer}>Remove</button>
-                </div>
-            </div>
-        </div>
+        <Modal
+            title={`Remove "${removeTarget.peer_display_name}"?`}
+            onClose={() => (removeTarget = null)}
+        >
+            <p class="modal-note">
+                The two devices stop syncing. Pairing them again means reading one device's ID off
+                the other. Documents already synced are kept.
+            </p>
+            {#snippet actions()}
+                <button class="btn-secondary" data-secondary onclick={() => (removeTarget = null)}>
+                    Cancel
+                </button>
+                <button class="btn-danger" onclick={confirmRemovePeer}>Remove</button>
+            {/snippet}
+        </Modal>
     {/if}
 </div>
 
@@ -311,40 +304,11 @@
         line-height: 1.6;
         color: var(--text-muted);
     }
-    .modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-    }
-    .modal {
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 24px;
-        max-width: 400px;
-        width: 90%;
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-    }
-    .modal h3 {
-        margin: 0 0 12px 0;
-        font-size: 18px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
     .modal-note {
         margin: 0 0 20px 0;
         font-size: 13px;
         line-height: 1.6;
         color: var(--text-secondary);
-    }
-    .modal-actions {
-        display: flex;
-        gap: 8px;
-        justify-content: flex-end;
     }
     .btn-secondary {
         padding: 8px 16px;
