@@ -25,6 +25,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0012](0012-deletion-propagates-transitively.md)                | A deletion is complete, and propagates through devices that never held the document | Accepted |
 | [0013](0013-derived-rows-are-built-wherever-content-arrives.md) | Build derived rows wherever content arrives, not only where it is typed             | Accepted |
 | [0014](0014-the-merged-blob-is-the-only-content-store.md)       | The merged blob is the only content store                                           | Accepted |
+| [0015](0015-the-url-is-the-open-document.md)                    | The URL says which document is open, and the shell owns startup                     | Accepted |
 
 ## Format
 
