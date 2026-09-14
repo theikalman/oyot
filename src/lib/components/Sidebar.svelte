@@ -28,6 +28,7 @@
     // here meant the URL never changed, so there was nothing to go back to.
     function handleDocClick(doc: DocumentSummary) {
         void openDocument(doc.id);
+        dismissOnSmallScreen();
     }
 
     let searchInput = $state('');
@@ -42,9 +43,51 @@
     }
 
     let collapsed = $state(isSmallScreen());
+    let small = $state(isSmallScreen());
     let showCalendar = $state(false);
 
+    // Follow the viewport rather than sampling it once at startup. Rotating a
+    // tablet or resizing a window left the sidebar in whatever state it had
+    // been in when the app opened.
+    $effect(() => {
+        if (typeof window === 'undefined') return;
+        const mq = window.matchMedia(SMALL_SCREEN_QUERY);
+        const onChange = (e: MediaQueryListEvent) => {
+            small = e.matches;
+            collapsed = e.matches;
+        };
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    });
+
+    // On a phone the sidebar covers the editor rather than sitting beside it,
+    // so picking something has to get it out of the way. Expanded, it left
+    // about 125px of a 375px screen to write in.
+    function dismissOnSmallScreen() {
+        if (small) collapsed = true;
+    }
+
     let currentDate = $state(new Date());
+
+    // Recomputed rather than read from `new Date()` at render time, so an app
+    // left open overnight stops calling yesterday "today".
+    let today = $state(new Date());
+
+    $effect(() => {
+        const refresh = () => {
+            const now = new Date();
+            if (now.toDateString() !== today.toDateString()) today = now;
+        };
+        // A minute is close enough to midnight, and cheaper to reason about
+        // than a timer that has to reschedule itself. The visibility check
+        // covers a device that was asleep across the boundary.
+        const timer = setInterval(refresh, 60_000);
+        document.addEventListener('visibilitychange', refresh);
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener('visibilitychange', refresh);
+        };
+    });
 
     let currentDocId = $derived($appStore.currentDocument?.id);
     let currentJournalTitle = $derived(
@@ -52,6 +95,9 @@
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
+    let journalsNewestFirst = $derived(
+        [...journals].sort((a, b) => b.title.localeCompare(a.title)),
+    );
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
@@ -146,6 +192,7 @@
 
     function openSearchHit(hit: SearchHit) {
         void openDocument(hit.id);
+        dismissOnSmallScreen();
     }
 
     let createError = $state<string | null>(null);
@@ -349,15 +396,17 @@
         try {
             const doc = await createJournalForDateAction(dateTitle);
             await openDocument(doc.id);
+            dismissOnSmallScreen();
         } catch (err) {
             console.error('[Sidebar] Failed to create journal for date:', dateTitle, err);
             toasts.error('Could not open that day');
         }
     }
 
+    // Reads the tracked date, not a fresh one, so the highlight moves when
+    // the day does rather than whenever something else happens to re-render.
     function isToday(day: number | null): boolean {
         if (day === null) return false;
-        const today = new Date();
         return (
             day === today.getDate() &&
             currentDate.getMonth() === today.getMonth() &&
@@ -391,7 +440,70 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar" class:collapsed>
+<!-- One row, used by both lists. Journals had no list at all before, and
+     duplicating seventy lines of markup to give them one is how the two
+     quietly drift apart. -->
+{#snippet documentRow(doc: DocumentSummary)}
+    <li class="doc-item">
+        <button
+            class="doc-btn"
+            class:current={currentDocId === doc.id}
+            onclick={() => handleDocClick(doc)}
+        >
+            <span class="doc-type"
+                ><svg
+                    width="16"
+                    height="16"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    ><path
+                        stroke="#A1A1A1"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="1.5"
+                        d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
+                    /></svg
+                ></span
+            >
+            {doc.title}
+            {#if doc.todo_count > 0}
+                <span
+                    class="todo-badge"
+                    class:done={doc.completed_todo_count === doc.todo_count}
+                    title="{doc.completed_todo_count} of {doc.todo_count} done"
+                >
+                    {doc.completed_todo_count}/{doc.todo_count}
+                </span>
+            {/if}
+        </button>
+        <button class="doc-menu-btn" onclick={(e) => toggleMenu(e, doc.id)} title="Note options">
+            <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle
+                    cx="12"
+                    cy="19"
+                    r="1"
+                /></svg
+            >
+        </button>
+        {#if openMenuId === doc.id}
+            <div class="doc-menu">
+                <button class="doc-menu-item" onclick={() => startRename(doc)}>Rename</button>
+                <button class="doc-menu-item danger" onclick={() => startDelete(doc)}>Delete</button
+                >
+            </div>
+        {/if}
+    </li>
+    \n{/snippet}\n\n
+<aside class="sidebar" class:collapsed class:overlay={small && !collapsed}>
     <div class="sidebar-header">
         {#if !collapsed}
             <input
@@ -539,6 +651,15 @@
                             >
                         </button>
                     </h3>
+                    <!-- Journals were reachable only through the calendar,
+                         which is hidden by default, and could not be renamed
+                         or deleted at all. Newest first: the one you want is
+                         almost always a recent one. -->
+                    <ul class="doc-list">
+                        {#each journalsNewestFirst as doc (doc.id)}
+                            {@render documentRow(doc)}
+                        {/each}
+                    </ul>
                 </div>
 
                 <div class="sidebar-section">
@@ -548,73 +669,7 @@
                     </h3>
                     <ul class="doc-list">
                         {#each notes as doc (doc.id)}
-                            <li class="doc-item">
-                                <button
-                                    class="doc-btn"
-                                    class:current={currentDocId === doc.id}
-                                    onclick={() => handleDocClick(doc)}
-                                >
-                                    <span class="doc-type"
-                                        ><svg
-                                            width="16"
-                                            height="16"
-                                            xmlns="http://www.w3.org/2000/svg"
-                                            fill="none"
-                                            viewBox="0 0 24 24"
-                                            ><path
-                                                stroke="#A1A1A1"
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                stroke-width="1.5"
-                                                d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
-                                            /></svg
-                                        ></span
-                                    >
-                                    {doc.title}
-                                    {#if doc.todo_count > 0}
-                                        <span
-                                            class="todo-badge"
-                                            class:done={doc.completed_todo_count === doc.todo_count}
-                                            title="{doc.completed_todo_count} of {doc.todo_count} done"
-                                        >
-                                            {doc.completed_todo_count}/{doc.todo_count}
-                                        </span>
-                                    {/if}
-                                </button>
-                                <button
-                                    class="doc-menu-btn"
-                                    onclick={(e) => toggleMenu(e, doc.id)}
-                                    title="Note options"
-                                >
-                                    <svg
-                                        width="16"
-                                        height="16"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><circle cx="12" cy="5" r="1" /><circle
-                                            cx="12"
-                                            cy="12"
-                                            r="1"
-                                        /><circle cx="12" cy="19" r="1" /></svg
-                                    >
-                                </button>
-                                {#if openMenuId === doc.id}
-                                    <div class="doc-menu">
-                                        <button
-                                            class="doc-menu-item"
-                                            onclick={() => startRename(doc)}>Rename</button
-                                        >
-                                        <button
-                                            class="doc-menu-item danger"
-                                            onclick={() => startDelete(doc)}>Delete</button
-                                        >
-                                    </div>
-                                {/if}
-                            </li>
+                            {@render documentRow(doc)}
                         {/each}
                     </ul>
                 </div>
@@ -732,8 +787,15 @@
     {/if}
 </aside>
 
+{#if small && !collapsed}
+    <!-- Tapping away closes it, which is the only way out on a phone once the
+         sidebar covers the editor. -->
+    <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
+{/if}
+
 <button
-    class="toggle-btn collapsed"
+    class="toggle-btn"
+    class:collapsed
     onclick={() => (collapsed = !collapsed)}
     title={collapsed ? 'Expand' : 'Collapse'}
 >
@@ -806,7 +868,7 @@
             onclick={(e) => e.stopPropagation()}
             onkeydown={(e) => e.key === 'Escape' && closeRenameModal()}
         >
-            <h3>Rename Note</h3>
+            <h3>Rename</h3>
             <input
                 type="text"
                 bind:value={renameTitle}
@@ -872,6 +934,24 @@
         display: none;
     }
 
+    /* Over the editor, not beside it. As a column on a 375px screen it left
+       about 125px to write in. */
+    .sidebar.overlay {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 120;
+        box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+    }
+
+    .sidebar-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 110;
+        background: rgba(0, 0, 0, 0.35);
+    }
+
     .toggle-btn {
         width: 40px;
         height: 40px;
@@ -914,10 +994,6 @@
     .toggle-btn.collapsed svg {
         width: 20px;
         height: 20px;
-    }
-
-    .sidebar.collapsed .search-input {
-        display: none;
     }
 
     .sidebar-header {
