@@ -354,6 +354,9 @@ on revived.
 
 ## Phase 2 - Sync layer correctness
 
+> **Status: done.** The drain backstop abandons the whole message rather than
+> retrying per chunk; see the note in 2.2.
+
 ### 2.1 Attachment retry gives up
 
 **File:** `src/lib/sync/channel/DocSyncProtocol.ts:143`
