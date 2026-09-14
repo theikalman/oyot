@@ -12,6 +12,9 @@ measurable once the dead paths are gone.
 Effort estimates are rough working time for someone already familiar with the
 codebase.
 
+**All seven phases have landed.** Each phase heading below records what changed
+from the plan as written, and why.
+
 | Phase | Theme                              | Items | Effort |
 | ----- | ---------------------------------- | ----- | ------ |
 | 0     | CI and tooling guardrails          | 3     | ~2h    |
@@ -930,6 +933,13 @@ logging node ids and full SDP payloads. After Phase 5 those become key material.
 ---
 
 ## Phase 7 - Feature gaps and docs
+
+> **Status: done.** 7.1, 7.3 and 7.4's todo counts turned out to be one problem,
+> not three: document content lives in the CRDT and is not queryable from SQL,
+> so all three needed the same save-time extraction. Built once, in
+> `src/lib/editor/documentIndex.ts` and `src-tauri/src/indexer.rs`. FTS5 is
+> available in the bundled SQLite, so search covers bodies rather than the
+> planned interim title-only step.
 
 ### 7.1 `get_backlinks` ignores its argument
 
