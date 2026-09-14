@@ -1,5 +1,5 @@
 .PHONY: help install dev build run clean check fmt lint test verify clippy \
-        release release-android release-android-aab release-ios release-tag install-android \
+        release release-android release-android-aab release-ios release-tag bump install-android \
         mqtt-up mqtt-down mqtt-logs
 
 # Only apply the custom Rust path on macOS (Apple Silicon); not needed on CI
@@ -48,7 +48,8 @@ help:
 	@echo "  make release-android            - Build Android APK → dist/android/"
 	@echo "  make release-android-aab        - Build Android AAB (Play Store) → dist/android/"
 	@echo "  make release-ios                - Build iOS IPA → dist/ios/"
-	@echo "  make release-tag VERSION=x.y.z  - Push git tag → triggers full CI"
+	@echo "  make bump VERSION=x.y.z         - Set the version everywhere it is written"
+	@echo "  make release-tag VERSION=x.y.z  - Push git tag → triggers the release build"
 
 install:
 	npm install --force
@@ -146,6 +147,7 @@ verify:
 	npm run lint
 	npm run check
 	npm test
+	npm run build
 	cd src-tauri && cargo fmt --check
 	cd src-tauri && cargo clippy --all-targets -- -D warnings
 	cd src-tauri && cargo test
@@ -221,12 +223,35 @@ release-ios:
 		-exec cp {} dist/ios/ \; 2>/dev/null || true
 	@echo "iOS artifacts → dist/ios/"
 
+# The version lives in five files. Writing them by hand is how the Android
+# versionCode gets left behind, which Play only tells you about after the
+# build has already run.
+bump:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make bump VERSION=1.2.3"; \
+		exit 1; \
+	fi
+	./scripts/bump-version.sh $(VERSION)
+
 release-tag:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "Usage: make release-tag VERSION=1.2.3"; \
 		exit 1; \
 	fi
+	@# Tagging a commit whose package.json says something else produces a
+	@# release whose artifacts disagree with their own tag.
+	@actual=$$(node -p 'require("./package.json").version'); \
+	if [ "$$actual" != "$(VERSION)" ]; then \
+		echo "ERROR: package.json says $$actual, not $(VERSION)."; \
+		echo "  Run: make bump VERSION=$(VERSION)"; \
+		exit 1; \
+	fi
+	@test -z "$$(git status --porcelain)" || { \
+		echo "ERROR: the working tree is dirty. Commit the version bump first."; \
+		exit 1; \
+	}
+	npm test
 	git tag v$(VERSION)
 	git push origin v$(VERSION)
-	@echo "Tag v$(VERSION) pushed — GitHub Actions will build all platforms."
+	@echo "Tag v$(VERSION) pushed — GitHub Actions will build the release."
 	@echo "Monitor progress at: https://github.com/$$(git remote get-url origin | sed 's/.*github.com[:/]//' | sed 's/\.git$$//')/actions"

@@ -10,8 +10,11 @@ function read(file: string): string {
     return readFileSync(resolve(root, file), 'utf8');
 }
 
-// The version is written down in four places. The app shows one of them, so a
-// bump that misses any of the others would have the app lie about itself.
+// The version is written down in five places. The app shows one of them, so a
+// bump that misses any of the others would have the app lie about itself, and
+// a missed Android versionCode is rejected by Play only after the build has
+// already run. `make bump` writes all five; these tests are what catch a hand
+// edit that did not.
 describe('app version', () => {
     it('matches package.json', () => {
         const pkg = JSON.parse(read('package.json'));
@@ -30,6 +33,26 @@ describe('app version', () => {
 
     it('is the newest changelog entry', () => {
         expect(RELEASES[0].version).toBe(APP_VERSION);
+    });
+
+    // Android will not accept an upload whose versionCode repeats or lowers a
+    // published one, so it has to move with the version and it has to be
+    // derived the same way every time.
+    it('matches the Android versionCode', () => {
+        const conf = JSON.parse(read('src-tauri/tauri.conf.json'));
+        const [, major, minor, patch] = APP_VERSION.match(/^(\d+)\.(\d+)\.(\d+)/) ?? [];
+        expect(major, `could not read a version out of ${APP_VERSION}`).toBeDefined();
+
+        const expected = 1000 + Number(major) * 10000 + Number(minor) * 100 + Number(patch);
+        expect(conf.bundle.android.versionCode).toBe(expected);
+    });
+
+    it('keeps the versionCode scheme monotonic', () => {
+        // The scheme only increases while minor and patch stay below 100.
+        // `scripts/bump-version.sh` refuses to go past that, and this says why.
+        const [, , minor, patch] = APP_VERSION.match(/^(\d+)\.(\d+)\.(\d+)/) ?? [];
+        expect(Number(minor)).toBeLessThan(100);
+        expect(Number(patch)).toBeLessThan(100);
     });
 });
 

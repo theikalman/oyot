@@ -81,7 +81,7 @@ Run `make help` for a list of all available commands:
 - `make fmt` - Format code
 - `make lint` - Run the eslint and clippy linters
 - `make test` - Run the frontend and Rust test suites
-- `make verify` - Everything CI runs: format, lint, typecheck, test
+- `make verify` - Everything CI runs: format, lint, typecheck, test, build
 - `make clippy` - Run Rust linter
 
 ## Quality checks
@@ -89,10 +89,10 @@ Run `make help` for a list of all available commands:
 `.github/workflows/ci.yml` runs on every push to `main` and every pull
 request, in two jobs:
 
-| Job      | Checks                                                        |
-| -------- | ------------------------------------------------------------- |
-| Frontend | `prettier --check`, `eslint`, `svelte-check`, `vitest`        |
-| Rust     | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test` |
+| Job      | Checks                                                               |
+| -------- | -------------------------------------------------------------------- |
+| Frontend | `prettier --check`, `eslint`, `svelte-check`, `vitest`, `vite build` |
+| Rust     | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`        |
 
 `make verify` runs the same set locally and is the fastest way to know a
 push will pass. Run it before opening a pull request.
@@ -240,31 +240,56 @@ it does not participate in the peer connection itself.
 
 ## Releasing
 
-The app supports 5 platforms: **macOS, Windows, Linux, Android, and iOS**.
+The app builds for **macOS, Windows, Linux, Android, and iOS**.
 
-- `make release` builds a release for **the current platform only** and puts artifacts in `dist/`.
-- `make release-tag VERSION=x.y.z` pushes a git tag that triggers **GitHub Actions to build all 5 platforms** in parallel and publishes a draft GitHub Release.
+- `make release` builds for **the current platform only** and puts artifacts
+  in `dist/`. The per-platform targets below do the same for Android and iOS.
+- `make release-tag VERSION=x.y.z` pushes a git tag, which triggers GitHub
+  Actions and publishes a draft GitHub Release.
+
+**CI currently builds Android only.** The desktop and iOS jobs are commented
+out in `.github/workflows/release.yml`. Everything else is built locally with
+the targets below and attached to the draft by hand. Uncommenting those jobs
+is what it would take to change that; until then a tag produces one artifact,
+not five.
 
 ### Bumping the version
 
-The version lives in four places, and `src/lib/version.test.ts` fails when they
-disagree. Change all four in the same commit:
+```bash
+make bump VERSION=0.1.0
+```
 
-1. `package.json`
-2. `src-tauri/tauri.conf.json` (and `bundle.android.versionCode`)
-3. `src-tauri/Cargo.toml` (run `cargo check` to refresh `Cargo.lock`)
-4. `src/lib/changelog.ts` — add a new entry at the top of `RELEASES`
+That writes the four mechanical places: `package.json`,
+`src-tauri/tauri.conf.json` (both the version and `bundle.android.versionCode`),
+`src-tauri/Cargo.toml`, and `Cargo.lock`.
 
-The sidebar footer shows the version from `package.json`, and clicking it opens
-the About dialog with the changelog, so a release with no entry ships a dialog
-that says nothing about it.
+The versionCode is derived as `1000 + major*10000 + minor*100 + patch`, which
+keeps it increasing as long as minor and patch stay below 100. Play refuses an
+upload whose versionCode repeats or lowers a published one, and it tells you
+after the build has run, so the script computes it rather than leaving it to be
+remembered.
+
+One thing is left to you: **add an entry at the top of `RELEASES` in
+`src/lib/changelog.ts`**. An entry is a sentence about what changed and nothing
+can write it for you. `src/lib/version.test.ts` fails until it exists, which is
+how you are reminded; it also checks every other place the version is written,
+so a hand edit that misses one does not get past `npm test`.
+
+The sidebar footer shows the version, and clicking it opens the About dialog
+with the changelog, so a release with no entry ships a dialog that says nothing
+about it.
+
+`make release-tag` refuses to tag if `package.json` disagrees with the version
+you gave it, if the working tree is dirty, or if the tests fail.
 
 ### Quick release (all platforms via CI)
 
 ```bash
+make bump VERSION=1.0.0
+# edit src/lib/changelog.ts, then commit
 make release-tag VERSION=1.0.0
 # → pushes tag v1.0.0
-# → GitHub Actions builds Mac/Win/Linux/Android/iOS in parallel
+# → GitHub Actions builds the Android artifacts
 # → draft release appears at github.com/<you>/oyot/releases
 ```
 
@@ -390,10 +415,10 @@ Output is placed in `dist/` (gitignored - release binaries are not committed).
 
 ### Artifact locations after build
 
-| Platform | Local path                       | CI artifact    |
-| -------- | -------------------------------- | -------------- |
-| macOS    | `dist/mac/*.dmg`                 | GitHub Release |
-| Windows  | `dist/windows/*.msi`, `*.exe`    | GitHub Release |
-| Linux    | `dist/linux/*.deb`, `*.AppImage` | GitHub Release |
-| Android  | `dist/android/*.apk`             | GitHub Release |
-| iOS      | `dist/ios/*.ipa`                 | GitHub Release |
+| Platform | Local path                       | CI artifact                   |
+| -------- | -------------------------------- | ----------------------------- |
+| macOS    | `dist/mac/*.dmg`                 | not built (job commented out) |
+| Windows  | `dist/windows/*.msi`, `*.exe`    | not built (job commented out) |
+| Linux    | `dist/linux/*.deb`, `*.AppImage` | not built (job commented out) |
+| Android  | `dist/android/*.apk`             | GitHub Release                |
+| iOS      | `dist/ios/*.ipa`                 | not built (job commented out) |
