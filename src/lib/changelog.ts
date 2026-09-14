@@ -31,6 +31,17 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.10-alpha',
+        date: '2026-09-14',
+        summary: 'The editor toolbar stays on one row and scrolls sideways on small screens.',
+        changes: [
+            {
+                kind: 'improved',
+                text: 'On phones and tablets the editor toolbar scrolls sideways with a swipe instead of stacking into several rows and eating the space you write in.',
+            },
+        ],
+    },
+    {
         version: '0.0.9-alpha',
         date: '2026-09-14',
         summary:
