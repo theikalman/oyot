@@ -69,6 +69,10 @@ export function isSyncMessage(v: unknown): v is SyncMessage {
     return !!v && typeof v === 'object' && typeof (v as { t?: unknown }).t === 'string';
 }
 
+// Yjs' encoding of "no missing operations": a bare, empty update. An update
+// this short carries no content, so it is not worth persisting or sending.
+export const EMPTY_UPDATE_LEN = 2;
+
 // --- base64 <-> bytes (shared by the repository and the framing layer) --------
 
 export function bytesToBase64(bytes: Uint8Array): string {

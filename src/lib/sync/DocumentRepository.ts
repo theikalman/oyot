@@ -7,6 +7,7 @@ import { contentHash } from './hash';
 import {
     base64ToBytes,
     bytesToBase64,
+    EMPTY_UPDATE_LEN,
     type AttachmentManifestEntry,
     type ManifestEntry,
 } from './protocol';
@@ -23,9 +24,6 @@ interface RawSyncEntry {
     deleted_at: number | null;
     content_hash: number[] | null;
 }
-
-// Yjs' encoding of "no missing operations": a bare, empty update.
-const EMPTY_UPDATE_LEN = 2;
 
 function toSummary(doc: Document): DocumentSummary {
     return {

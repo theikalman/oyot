@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
+    import type * as Y from 'yjs';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
@@ -46,9 +47,19 @@
         autoSave?: boolean;
         onEditorReady?: (editor: EditorType, ydoc: any) => void;
         onContentChange?: () => void;
+        // Called with the outgoing document's id and ydoc immediately before
+        // the editor behind them is destroyed, so a pending save can be
+        // flushed while the state that produced it is still live.
+        onBeforeTeardown?: (docId: string, ydoc: Y.Doc) => void;
     }
 
-    let { document, autoSave = true, onEditorReady, onContentChange }: Props = $props();
+    let {
+        document,
+        autoSave = true,
+        onEditorReady,
+        onContentChange,
+        onBeforeTeardown,
+    }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
@@ -64,6 +75,13 @@
     async function initializeEditor() {
         if (!element) {
             return false;
+        }
+
+        // Flush the document we are leaving before its ydoc goes away. This has
+        // to happen here rather than in a sibling effect: the two effects race,
+        // and if this one wins, the outgoing document's pending edit is lost.
+        if (editor && ydoc && currentDocId) {
+            onBeforeTeardown?.(currentDocId, ydoc);
         }
 
         if (editor) {
@@ -192,6 +210,10 @@
     onDestroy(() => {
         window.visualViewport?.removeEventListener('resize', handleViewportChange);
         window.visualViewport?.removeEventListener('scroll', handleViewportChange);
+
+        if (ydoc && currentDocId) {
+            onBeforeTeardown?.(currentDocId, ydoc);
+        }
 
         if (editor) {
             editor.view.dom.removeEventListener('click', handleImageClick);
