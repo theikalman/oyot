@@ -111,16 +111,18 @@ rustfmt uses the default profile.
 The webview is treated as the untrusted surface, because it renders document
 content and image attachments that arrive from paired devices.
 
-**The frontend has no filesystem permission.** `src-tauri/capabilities/`
-grants only `core`, `dialog`, `opener`, `os` (and `barcode-scanner` on mobile).
-Inserting an image opens the native dialog, which returns a path, and
-`import_image_from_path` reads the bytes in Rust. Plugin ACLs constrain the
-webview, not Rust, so nothing needs to be opened up for that read. Avoid
-reaching for `@tauri-apps/plugin-fs` in the frontend; add a command instead.
+**The frontend has no filesystem permission, and cannot pick a file.**
+`src-tauri/capabilities/` grants only `core`, `opener`, `os` (and
+`barcode-scanner` on mobile). `pick_and_import_image` opens the dialog, reads
+the bytes and stores them entirely in Rust, so no path crosses IPC and there
+is nothing for a caller to supply. Plugin ACLs constrain the webview, not
+Rust. Avoid reaching for `@tauri-apps/plugin-fs` in the frontend; add a
+command instead.
 
-**Attachments are raster only.** `ext_for_mime` in
-`src-tauri/src/commands/attachments.rs` is the allowlist, and every entry point
-goes through `store_attachment`, which enforces it along with the 10MB cap. SVG
+**Attachments are raster only, decided by their content.** Every entry point
+goes through `store_attachment`, which identifies the type from the bytes
+themselves, rejects anything that is not PNG, JPEG, GIF or WebP, and enforces
+the 10MB cap. A declared type that disagrees with the content is an error. SVG
 is excluded on purpose: it can carry script, and an attachment from a peer is
 rendered in the webview.
 
@@ -142,6 +144,27 @@ messages it cannot forge, alter or replay. See
 The signature answers "is this really that device". Whether we want to talk to
 that device is still the pairing check against `device_pairs`, and both must
 pass.
+
+Replay history is per sender, bounded at 32 senders and 256 nonces each. It
+was one shared list, which meant anyone holding any keypair could push enough
+valid messages to evict a real peer's history and replay one of its messages
+inside the 120 second window. Filling the sender map still takes 32 distinct
+keypairs, and the prize is one replayed signaling message, which the pairing
+check and perfect negotiation both absorb.
+
+A pairing prompt from one sender is rate limited to one per 30 seconds.
+Anyone who learns a `node_id` can publish to its topic, and a valid request
+puts a modal in front of the user, so without this an unpaired device could
+make the app unusable by asking repeatedly.
+
+**Pairing is decided in the webview, not in Rust.** `save_pair` persists any
+`peer_node_id` the frontend gives it, and `mqtt_accept_pair_request` takes the
+peer's `user_id` from the frontend too. Rust checks that a message really came
+from the key it claims; it does not own the state machine that decides a
+pairing was agreed. That is a real gap between this section's framing and the
+code: everything above treats the webview as untrusted, and this one decision
+trusts it. Closing it means moving the pair-request exchange into Rust, which
+has not been done.
 
 ### Running a broker
 
