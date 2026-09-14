@@ -94,7 +94,10 @@ impl SignalingManager {
     }
 
     pub async fn connect(&self, broker_url: &str, node_id: &str) -> Result<(), String> {
-        eprintln!("[Signaling] connect() broker_url={} node_id={}", broker_url, node_id);
+        eprintln!(
+            "[Signaling] connect() broker_url={} node_id={}",
+            broker_url, node_id
+        );
 
         // Tear down any previous client generation so its reconnect loop and publish
         // task stop instead of racing the new one.
@@ -149,12 +152,19 @@ impl SignalingManager {
                             let _ = app.emit("mqtt-status", "disconnected");
                         }
                         MqttEvent::Message { topic, msg } => {
-                            eprintln!("[Signaling] Received MQTT message on topic '{}': {:?}", topic, msg.msg_type);
+                            eprintln!(
+                                "[Signaling] Received MQTT message on topic '{}': {:?}",
+                                topic, msg.msg_type
+                            );
                             if msg.to.as_deref() == Some(node_id_clone.as_str()) {
                                 let uid = user_id_clone.lock().clone();
-                                Self::handle_message(&app, msg, uid, authorized_peers.clone()).await;
+                                Self::handle_message(&app, msg, uid, authorized_peers.clone())
+                                    .await;
                             } else {
-                                eprintln!("[Signaling] Ignoring message not addressed to us (to: {:?})", msg.to);
+                                eprintln!(
+                                    "[Signaling] Ignoring message not addressed to us (to: {:?})",
+                                    msg.to
+                                );
                             }
                         }
                     }
@@ -171,38 +181,46 @@ impl SignalingManager {
         our_user_id: String,
         authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
     ) {
-        eprintln!("[Signaling] handle_message() type={} from={} our_user_id={}", msg.msg_type, msg.from, our_user_id);
+        eprintln!(
+            "[Signaling] handle_message() type={} from={} our_user_id={}",
+            msg.msg_type, msg.from, our_user_id
+        );
         match msg.msg_type.as_str() {
-            "pair-request" => {
-                match serde_json::from_str::<PairPayload>(&msg.payload) {
-                    Ok(req) => {
-                        let _ = app.emit("mqtt-pair-request-received", serde_json::json!({
+            "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
+                Ok(req) => {
+                    let _ = app.emit(
+                        "mqtt-pair-request-received",
+                        serde_json::json!({
                             "from": msg.from,
                             "user_id": req.user_id,
                             "display_name": req.display_name,
-                        }));
-                    }
-                    Err(e) => eprintln!("[Signaling] Failed to parse pair-request payload: {}", e),
+                        }),
+                    );
                 }
-            }
-            "pair-response" => {
-                match serde_json::from_str::<PairPayload>(&msg.payload) {
-                    Ok(resp) => {
-                        let _ = app.emit("mqtt-pair-response-received", serde_json::json!({
+                Err(e) => eprintln!("[Signaling] Failed to parse pair-request payload: {}", e),
+            },
+            "pair-response" => match serde_json::from_str::<PairPayload>(&msg.payload) {
+                Ok(resp) => {
+                    let _ = app.emit(
+                        "mqtt-pair-response-received",
+                        serde_json::json!({
                             "from": msg.from,
                             "user_id": resp.user_id,
                             "display_name": resp.display_name,
                             "accepted": resp.accepted.unwrap_or(false),
-                        }));
-                    }
-                    Err(e) => eprintln!("[Signaling] Failed to parse pair-response payload: {}", e),
+                        }),
+                    );
                 }
-            }
+                Err(e) => eprintln!("[Signaling] Failed to parse pair-response payload: {}", e),
+            },
             "offer" => {
                 Self::handle_offer(app, msg, our_user_id, authorized_peers).await;
             }
             "answer" => {
-                eprintln!("[Signaling] Emitting mqtt-answer-received from={}", msg.from);
+                eprintln!(
+                    "[Signaling] Emitting mqtt-answer-received from={}",
+                    msg.from
+                );
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "sdp": msg.payload,
@@ -210,7 +228,10 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-answer-received", payload);
             }
             "ice-candidate" => {
-                eprintln!("[Signaling] Emitting mqtt-ice-candidate-received from={}", msg.from);
+                eprintln!(
+                    "[Signaling] Emitting mqtt-ice-candidate-received from={}",
+                    msg.from
+                );
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "candidate": msg.payload,
@@ -218,7 +239,10 @@ impl SignalingManager {
                 let _ = app.emit("mqtt-ice-candidate-received", payload);
             }
             _ => {
-                eprintln!("[Signaling] Unknown message type '{}', ignoring", msg.msg_type);
+                eprintln!(
+                    "[Signaling] Unknown message type '{}', ignoring",
+                    msg.msg_type
+                );
             }
         }
     }
@@ -244,17 +268,29 @@ impl SignalingManager {
         };
 
         let (room_id, display_name) = if let Some(pair) = persisted {
-            eprintln!("[Signaling] Offer from already-paired node {} (trusted reconnect)", msg.from);
+            eprintln!(
+                "[Signaling] Offer from already-paired node {} (trusted reconnect)",
+                msg.from
+            );
             (pair.room_id, pair.peer_display_name)
         } else if let Some(ctx) = authorized_peers.lock().get(&msg.from).cloned() {
-            eprintln!("[Signaling] Offer from session-authorized node {}", msg.from);
+            eprintln!(
+                "[Signaling] Offer from session-authorized node {}",
+                msg.from
+            );
             (derive_room_id(&our_user_id, &ctx.user_id), ctx.display_name)
         } else {
-            eprintln!("[Signaling] Rejecting unsolicited offer from unauthorized node {}", msg.from);
+            eprintln!(
+                "[Signaling] Rejecting unsolicited offer from unauthorized node {}",
+                msg.from
+            );
             return;
         };
 
-        eprintln!("[Signaling] Emitting mqtt-offer-received from={} room_id={}", msg.from, room_id);
+        eprintln!(
+            "[Signaling] Emitting mqtt-offer-received from={} room_id={}",
+            msg.from, room_id
+        );
         let payload = serde_json::json!({
             "from": msg.from,
             "sdp": msg.payload,
@@ -305,7 +341,11 @@ impl SignalingManager {
         let user_id = self.user_id.lock().clone();
         let display_name = self.display_name.lock().clone();
         eprintln!("[Signaling] publish_pair_request() to peer_id={}", peer_id);
-        let payload = PairPayload { user_id, display_name, accepted: None };
+        let payload = PairPayload {
+            user_id,
+            display_name,
+            accepted: None,
+        };
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -321,8 +361,15 @@ impl SignalingManager {
         let node_id = self.node_id.lock().clone();
         let user_id = self.user_id.lock().clone();
         let display_name = self.display_name.lock().clone();
-        eprintln!("[Signaling] publish_pair_response() to peer_id={} accepted={}", peer_id, accepted);
-        let payload = PairPayload { user_id, display_name, accepted: Some(accepted) };
+        eprintln!(
+            "[Signaling] publish_pair_response() to peer_id={} accepted={}",
+            peer_id, accepted
+        );
+        let payload = PairPayload {
+            user_id,
+            display_name,
+            accepted: Some(accepted),
+        };
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -336,7 +383,10 @@ impl SignalingManager {
 
     pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
-        eprintln!("[Signaling] publish_offer() to peer_id={} from node_id={}", peer_id, node_id);
+        eprintln!(
+            "[Signaling] publish_offer() to peer_id={} from node_id={}",
+            peer_id, node_id
+        );
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -350,7 +400,10 @@ impl SignalingManager {
 
     pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
-        eprintln!("[Signaling] publish_answer() to peer_id={} from node_id={}", peer_id, node_id);
+        eprintln!(
+            "[Signaling] publish_answer() to peer_id={} from node_id={}",
+            peer_id, node_id
+        );
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),
@@ -362,9 +415,16 @@ impl SignalingManager {
         self.send_publish(topic, bytes).await
     }
 
-    pub async fn publish_ice_candidate(&self, peer_id: &str, candidate: &str) -> Result<(), String> {
+    pub async fn publish_ice_candidate(
+        &self,
+        peer_id: &str,
+        candidate: &str,
+    ) -> Result<(), String> {
         let node_id = self.node_id.lock().clone();
-        eprintln!("[Signaling] publish_ice_candidate() to peer_id={} from node_id={}", peer_id, node_id);
+        eprintln!(
+            "[Signaling] publish_ice_candidate() to peer_id={} from node_id={}",
+            peer_id, node_id
+        );
         let msg = SignalingMessage {
             from: node_id,
             to: Some(peer_id.to_string()),

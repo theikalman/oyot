@@ -234,9 +234,13 @@ pub fn run() {
                 let db = state.db.lock();
                 let identity = crate::identity::get_or_create_identity(&db)
                     .map_err(|e| format!("Failed to create identity: {}", e))?;
-                state.signaling_manager.set_node_id(identity.node_id.clone());
+                state
+                    .signaling_manager
+                    .set_node_id(identity.node_id.clone());
                 state.signaling_manager.set_user_id(identity.user_id);
-                state.signaling_manager.set_display_name(identity.display_name);
+                state
+                    .signaling_manager
+                    .set_display_name(identity.display_name);
             }
 
             spawn_sync_tasks(
@@ -341,7 +345,8 @@ mod migration_tests {
     }
 
     fn column_exists(db: &Connection, col: &str) -> bool {
-        db.prepare(&format!("SELECT {col} FROM documents LIMIT 0")).is_ok()
+        db.prepare(&format!("SELECT {col} FROM documents LIMIT 0"))
+            .is_ok()
     }
 
     #[test]
@@ -354,11 +359,17 @@ mod migration_tests {
         assert!(column_exists(&db, "deleted_at"));
 
         let title_ts: i64 = db
-            .query_row("SELECT title_updated_at FROM documents WHERE id = 'd1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT title_updated_at FROM documents WHERE id = 'd1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(title_ts, 200, "title_updated_at backfills from updated_at");
 
-        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(version, 1);
     }
 
@@ -368,7 +379,9 @@ mod migration_tests {
         run_migrations(&db).unwrap();
         run_migrations(&db).unwrap();
         run_migrations(&db).unwrap();
-        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(version, 1);
     }
 
@@ -396,14 +409,20 @@ mod migration_tests {
         let sql = "UPDATE documents SET title = ?1, title_updated_at = ?2 \
                    WHERE id = ?3 AND (title_updated_at IS NULL OR title_updated_at < ?2)";
 
-        let stale = db.execute(sql, rusqlite::params!["Stale", 5_i64, "d1"]).unwrap();
+        let stale = db
+            .execute(sql, rusqlite::params!["Stale", 5_i64, "d1"])
+            .unwrap();
         assert_eq!(stale, 0, "an older stamp does not apply");
 
-        let fresh = db.execute(sql, rusqlite::params!["Fresh", 20_i64, "d1"]).unwrap();
+        let fresh = db
+            .execute(sql, rusqlite::params!["Fresh", 20_i64, "d1"])
+            .unwrap();
         assert_eq!(fresh, 1, "a newer stamp applies");
 
         let title: String = db
-            .query_row("SELECT title FROM documents WHERE id = 'd1'", [], |r| r.get(0))
+            .query_row("SELECT title FROM documents WHERE id = 'd1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(title, "Fresh");
     }

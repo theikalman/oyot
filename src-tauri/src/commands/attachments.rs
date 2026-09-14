@@ -296,7 +296,11 @@ pub fn list_attachment_manifest(
         if size == 0 {
             continue; // file vanished under us - do not advertise it
         }
-        out.push(AttachmentManifestEntry { hash, mime_type, size });
+        out.push(AttachmentManifestEntry {
+            hash,
+            mime_type,
+            size,
+        });
     }
     Ok(out)
 }

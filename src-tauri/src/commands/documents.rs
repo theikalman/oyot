@@ -109,7 +109,10 @@ fn current_timestamp() -> i64 {
         .as_millis() as i64
 }
 
-fn query_all_documents(db: &rusqlite::Connection, include_empty: bool) -> Result<IndexData, String> {
+fn query_all_documents(
+    db: &rusqlite::Connection,
+    include_empty: bool,
+) -> Result<IndexData, String> {
     let content_filter = if include_empty {
         ""
     } else {
@@ -181,7 +184,9 @@ pub struct DocSyncEntry {
 // not filter out content-less or deleted rows.
 // See docs/decisions/0003-full-document-set-sync.md.
 #[tauri::command]
-pub fn list_document_sync_state(state: tauri::State<'_, AppState>) -> Result<Vec<DocSyncEntry>, String> {
+pub fn list_document_sync_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DocSyncEntry>, String> {
     let db = state.db.lock();
     let mut stmt = db
         .prepare(

@@ -17,7 +17,10 @@ pub struct SignalingMessage {
 pub enum MqttEvent {
     Connected,
     Disconnected,
-    Message { topic: String, msg: SignalingMessage },
+    Message {
+        topic: String,
+        msg: SignalingMessage,
+    },
 }
 
 /// Backoff bounds for the reconnect loop. rumqttc's event loop reconnects on the
@@ -55,7 +58,9 @@ impl MqttSignalingClient {
         }
 
         let (host, port) = if url.starts_with("mqtt://") || url.starts_with("tcp://") {
-            let without_scheme = url.trim_start_matches("mqtt://").trim_start_matches("tcp://");
+            let without_scheme = url
+                .trim_start_matches("mqtt://")
+                .trim_start_matches("tcp://");
             let parts: Vec<&str> = without_scheme.split(':').collect();
             let host = parts[0].to_string();
             let port = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(1883);
@@ -68,7 +73,10 @@ impl MqttSignalingClient {
             (url.to_string(), 1883)
         };
 
-        eprintln!("[MQTT] Connecting to broker host={} port={} client_id={}", host, port, node_id);
+        eprintln!(
+            "[MQTT] Connecting to broker host={} port={} client_id={}",
+            host, port, node_id
+        );
 
         let mut mqtt_options = rumqttc::MqttOptions::new(node_id, &host, port);
         mqtt_options.set_keep_alive(std::time::Duration::from_secs(30));
@@ -80,11 +88,16 @@ impl MqttSignalingClient {
         // Only ever subscribe to our own node-scoped topics. Nothing broadcasts
         // presence and nothing is discoverable except by a device that already
         // knows our node_id out-of-band (QR/manual entry).
-        let topics: Vec<String> =
-            ["pair-request", "pair-response", "offer", "answer", "ice-candidate"]
-                .iter()
-                .map(|suffix| format!("signaling/{}/{}", node_id, suffix))
-                .collect();
+        let topics: Vec<String> = [
+            "pair-request",
+            "pair-response",
+            "offer",
+            "answer",
+            "ice-candidate",
+        ]
+        .iter()
+        .map(|suffix| format!("signaling/{}/{}", node_id, suffix))
+        .collect();
 
         let connected = Arc::new(AtomicBool::new(false));
 
@@ -175,8 +188,14 @@ impl MqttSignalingClient {
     }
 
     pub async fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), String> {
-        eprintln!("[MQTT] Publishing {} bytes to topic '{}'", payload.len(), topic);
-        let result = self.client.publish(topic, rumqttc::QoS::AtLeastOnce, false, payload)
+        eprintln!(
+            "[MQTT] Publishing {} bytes to topic '{}'",
+            payload.len(),
+            topic
+        );
+        let result = self
+            .client
+            .publish(topic, rumqttc::QoS::AtLeastOnce, false, payload)
             .await
             .map_err(|e| e.to_string());
         if let Err(e) = &result {
