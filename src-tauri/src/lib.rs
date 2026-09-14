@@ -413,6 +413,7 @@ pub fn run() {
             apply_remote_delete,
             search_documents,
             get_backlinks,
+            get_all_todos,
             get_or_create_today_journal,
             get_theme,
             save_theme,

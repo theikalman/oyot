@@ -610,6 +610,69 @@ pub fn get_backlinks(
     Ok(backlinks)
 }
 
+/// One task item, with enough of its document to group and open it.
+#[derive(Debug, Serialize)]
+pub struct TodoHit {
+    pub document_id: String,
+    pub document_title: String,
+    pub doc_type: String,
+    /// Which task item this is within its document, counted depth-first. The
+    /// address the index page hands back when the user clicks it.
+    pub ordinal: i64,
+    pub text: String,
+    pub checked: bool,
+    pub depth: i64,
+}
+
+/// Every todo in every live document, notes and journals alike.
+///
+/// The title comes from `documents` rather than the copy in `document_index`,
+/// so a rename shows up without the document having to be re-indexed.
+///
+/// The ordering is what the page groups on, and the two kinds of document want
+/// different keys. A journal is named for its day, so it belongs in date order:
+/// editing last month's entry should not lift it above this morning's. A note
+/// has no date, so recency is all there is to go on.
+pub fn query_all_todos(db: &Connection) -> Result<Vec<TodoHit>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT t.document_id, d.title, d.type, t.ordinal, t.text, t.checked, t.depth
+               FROM document_todos t
+               JOIN documents d ON d.id = t.document_id
+              WHERE d.is_deleted = 0
+              ORDER BY d.type ASC,
+                       CASE WHEN d.type = 'journal' THEN d.title END DESC,
+                       CASE WHEN d.type = 'note' THEN d.updated_at END DESC,
+                       t.ordinal ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let todos: Vec<TodoHit> = stmt
+        .query_map([], |row| {
+            let checked: i64 = row.get(5)?;
+            Ok(TodoHit {
+                document_id: row.get(0)?,
+                document_title: row.get(1)?,
+                doc_type: row.get(2)?,
+                ordinal: row.get(3)?,
+                text: row.get(4)?,
+                checked: checked != 0,
+                depth: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(todos)
+}
+
+#[tauri::command]
+pub fn get_all_todos(state: tauri::State<'_, AppState>) -> Result<Vec<TodoHit>, String> {
+    let db = state.db.lock();
+    query_all_todos(&db)
+}
+
 /// Today's journal, and whether opening it was news.
 #[derive(Debug, Serialize)]
 pub struct TodayJournal {
@@ -706,6 +769,139 @@ mod tests {
         )
         .unwrap();
         db
+    }
+
+    fn add_doc(db: &Connection, id: &str, doc_type: &str, title: &str, updated_at: i64) {
+        db.execute(
+            "INSERT INTO documents
+                 (id, type, title, crdt_state, created_at, updated_at, title_updated_at,
+                  is_deleted, lifecycle_updated_at)
+             VALUES (?1, ?2, ?3, x'0102', 1, ?4, 1, 0, 1)",
+            params![id, doc_type, title, updated_at],
+        )
+        .unwrap();
+    }
+
+    fn add_todo(db: &Connection, doc_id: &str, ordinal: i64, text: &str) {
+        db.execute(
+            "INSERT INTO document_todos (document_id, ordinal, text, checked, depth)
+             VALUES (?1, ?2, ?3, 0, 0)",
+            params![doc_id, ordinal, text],
+        )
+        .unwrap();
+    }
+
+    /// The todos as the index page reads them: which document, which item.
+    fn listed(db: &Connection) -> Vec<(String, String)> {
+        query_all_todos(db)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.document_title, t.text))
+            .collect()
+    }
+
+    // The requirement the page exists for: everything the user wrote down,
+    // wherever they wrote it. A journal is where a day's tasks usually land.
+    #[test]
+    fn every_live_document_contributes_its_todos() {
+        let db = db();
+        add_doc(&db, "j1", "journal", "2026-09-14", 10);
+        add_todo(&db, "d1", 0, "from a note");
+        add_todo(&db, "j1", 0, "from a journal");
+
+        let titles: Vec<String> = query_all_todos(&db)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+        assert_eq!(titles.len(), 2);
+        assert!(titles.contains(&"from a note".to_string()));
+        assert!(titles.contains(&"from a journal".to_string()));
+    }
+
+    #[test]
+    fn todos_keep_their_order_within_a_document() {
+        let db = db();
+        add_todo(&db, "d1", 2, "third");
+        add_todo(&db, "d1", 0, "first");
+        add_todo(&db, "d1", 1, "second");
+
+        assert_eq!(
+            listed(&db)
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>(),
+            vec!["first", "second", "third"]
+        );
+    }
+
+    // A journal is named for its day, so it is read in date order. Sorting it
+    // by `updated_at` with the notes would put last month's entry above this
+    // morning's the moment someone went back and ticked something off.
+    #[test]
+    fn journals_come_first_in_date_order_and_notes_by_recency() {
+        let db = db();
+        add_doc(&db, "j_old", "journal", "2026-09-01", 9_000); // edited most recently
+        add_doc(&db, "j_new", "journal", "2026-09-14", 10);
+        add_doc(&db, "n_stale", "note", "Stale note", 20);
+        add_doc(&db, "n_fresh", "note", "Fresh note", 8_000);
+        // `d1` from the fixture is a note with the oldest stamp of all.
+        for id in ["j_old", "j_new", "n_stale", "n_fresh", "d1"] {
+            add_todo(&db, id, 0, "item");
+        }
+
+        let order: Vec<String> = query_all_todos(&db)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.document_title)
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                "2026-09-14",
+                "2026-09-01",
+                "Fresh note",
+                "Stale note",
+                "One"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_deleted_document_contributes_nothing() {
+        let db = db();
+        add_todo(&db, "d1", 0, "buy milk");
+        tombstone_document(&db, "d1", 900).unwrap();
+        assert!(query_all_todos(&db).unwrap().is_empty());
+    }
+
+    // The title is joined live rather than read from the indexed copy, so a
+    // rename regroups the page without the document being re-indexed.
+    #[test]
+    fn a_renamed_document_groups_under_its_new_title() {
+        let db = db();
+        add_todo(&db, "d1", 0, "buy milk");
+        db.execute("UPDATE documents SET title = 'Renamed' WHERE id = 'd1'", [])
+            .unwrap();
+        assert_eq!(
+            listed(&db),
+            vec![("Renamed".to_string(), "buy milk".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_ticked_todo_reports_itself_as_done() {
+        let db = db();
+        db.execute(
+            "INSERT INTO document_todos (document_id, ordinal, text, checked, depth)
+             VALUES ('d1', 0, 'done', 1, 2)",
+            [],
+        )
+        .unwrap();
+        let hit = &query_all_todos(&db).unwrap()[0];
+        assert!(hit.checked);
+        assert_eq!(hit.depth, 2);
+        assert_eq!(hit.doc_type, "note");
     }
 
     fn content(db: &Connection) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
