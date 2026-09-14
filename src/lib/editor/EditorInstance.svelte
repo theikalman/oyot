@@ -17,6 +17,8 @@
     import { createCollaborationExtension } from './yjs';
     import { REMOTE_ORIGIN } from './origin';
     import { unregisterOpenDoc } from './openDocs';
+    import { locateTaskItem } from './taskItems';
+    import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
 
     const ScrollOnFocus = Extension.create({
@@ -42,9 +44,19 @@
         // from a peer are tagged REMOTE_ORIGIN and skipped, so a merge is not
         // rebroadcast to the peer that sent it.
         onLocalUpdate?: (update: Uint8Array) => void;
+        // Which of the document's task items to put the cursor on, counted
+        // depth-first, as the todo index addresses one. Null for an ordinary
+        // open, which leaves the cursor wherever the editor puts it.
+        focusTodo?: number | null;
     }
 
-    let { document, onEditorReady, onBeforeTeardown, onLocalUpdate }: Props = $props();
+    let {
+        document,
+        onEditorReady,
+        onBeforeTeardown,
+        onLocalUpdate,
+        focusTodo = null,
+    }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
@@ -77,6 +89,7 @@
             unregisterOpenDoc(currentDocId, ydoc);
         }
 
+        cancelFocus?.();
         if (editor) {
             editor.destroy();
             editor = null;
@@ -144,6 +157,79 @@
         return true;
     }
 
+    // How long to keep looking for an item that is not there yet.
+    const FOCUS_TIMEOUT_MS = 1500;
+    let cancelFocus: (() => void) | null = null;
+    // The document and item a focus has already been performed for, so a
+    // re-render does not yank the cursor back out from under the user.
+    let focusedKey: string | null = null;
+
+    function focusTaskItem(ed: EditorType, ordinal: number) {
+        cancelFocus?.();
+
+        const attempt = (): boolean => {
+            if (ed.isDestroyed) return true; // nothing left to focus; stop
+            const target = locateTaskItem(ed.state.doc, ordinal);
+            if (!target) return false;
+            ed.chain()
+                .setTextSelection({ from: target.from, to: target.to })
+                .focus()
+                .scrollIntoView()
+                .run();
+            return true;
+        };
+
+        const onUpdate = () => {
+            if (attempt()) finish();
+        };
+        const timer = setTimeout(() => {
+            finish();
+            // The note is open either way, which is most of what was asked
+            // for. Say why the cursor did not move rather than leave it
+            // looking like the click half-worked.
+            if (!ed.isDestroyed) toasts.info('That item is not in this note any more');
+        }, FOCUS_TIMEOUT_MS);
+
+        // Not in this turn of the loop. Getting here is a navigation, and
+        // SvelteKit moves focus to the page root once one settles: a
+        // selection set before that happens is silently undone, and the note
+        // opens at the top with no sign anything was attempted.
+        //
+        // A timeout rather than `requestAnimationFrame`, which does not run at
+        // all while the page is hidden. That is not a hypothetical: a window
+        // put in the background, or an Android app switched away from, would
+        // never place the cursor and would then be told the item was gone.
+        const soon = setTimeout(() => {
+            if (attempt()) finish();
+        });
+
+        function finish() {
+            clearTimeout(soon);
+            clearTimeout(timer);
+            if (!ed.isDestroyed) ed.off('update', onUpdate);
+            cancelFocus = null;
+        }
+
+        // The collaboration binding fills the document in after the editor is
+        // constructed, so on a cold open there is nothing to find yet.
+        ed.on('update', onUpdate);
+        cancelFocus = finish;
+    }
+
+    // Opening the same note at a different item does not rebuild the editor,
+    // so the jump cannot live in `initializeEditor` alone.
+    $effect(() => {
+        const ordinal = focusTodo;
+        const ed = editor;
+        const docId = currentDocId;
+        if (ed === null || docId === null || ordinal === null) return;
+
+        const key = `${docId}:${ordinal}`;
+        if (focusedKey === key) return;
+        focusedKey = key;
+        focusTaskItem(ed, ordinal);
+    });
+
     function handleImageClick(e: MouseEvent) {
         if (!editor) return;
 
@@ -196,6 +282,7 @@
     });
 
     onDestroy(() => {
+        cancelFocus?.();
         window.visualViewport?.removeEventListener('resize', handleViewportChange);
         window.visualViewport?.removeEventListener('scroll', handleViewportChange);
 

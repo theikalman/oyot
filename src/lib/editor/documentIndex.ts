@@ -65,8 +65,11 @@ export interface DocumentIndex {
  * `textContent` would swallow a nested task list's items into their parent's
  * label, so collection stops at the first child that is a list. Whitespace is
  * normalised because the page renders this on one line.
+ *
+ * Exported for the locator in ./taskItems, which has to agree with this about
+ * what an item says in order to recognise the one an ordinal names.
  */
-function taskItemText(node: ProseMirrorNode): string {
+export function taskItemText(node: ProseMirrorNode): string {
     const parts: string[] = [];
     for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);

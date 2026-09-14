@@ -12,6 +12,16 @@
     // store, so there were no deep links, no history, and Android's hardware
     // back key exited the app from the only route there was.
     let routeId = $derived(page.params.id);
+
+    // `?todo=` says which task item to put the cursor on, set by the todo
+    // index when one of its rows is clicked. In the URL rather than in a
+    // store so the jump survives a reload and the back button undoes it.
+    let focusTodo = $derived.by(() => {
+        const raw = page.url.searchParams.get('todo');
+        if (raw === null) return null;
+        const ordinal = Number(raw);
+        return Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : null;
+    });
     let loadFailed = $state(false);
 
     $effect(() => {
@@ -40,7 +50,7 @@
 
 <WorkspaceShell title={activeDocument?.title ?? null}>
     {#if activeDocument}
-        <Editor />
+        <Editor {focusTodo} />
     {:else if loadFailed}
         <div class="empty-state">
             <p>That note no longer exists.</p>
