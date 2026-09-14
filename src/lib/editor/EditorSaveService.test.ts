@@ -184,6 +184,10 @@ describe('EditorSaveService', () => {
             text: 'two tasks',
             linkTargets: [],
             attachmentHashes: [],
+            todos: [
+                { ordinal: 0, text: 'one', checked: true, depth: 0 },
+                { ordinal: 1, text: 'two', checked: false, depth: 0 },
+            ],
             todoCount: 2,
             completedTodoCount: 1,
         }));

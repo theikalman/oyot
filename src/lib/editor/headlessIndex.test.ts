@@ -51,6 +51,34 @@ describe('indexFromYDoc', () => {
         expect(index.completedTodoCount).toBe(1);
     });
 
+    // The todo index page lists documents this device may only ever have
+    // received, so the rows behind it have to survive the round trip through
+    // the CRDT, not just the editor's own walk.
+    it('reads every task item out of a document nobody has opened', () => {
+        const task = (text: string, checked: boolean, children: unknown[] = []) => ({
+            type: 'taskItem',
+            attrs: { checked },
+            content: [para(text), ...children],
+        });
+        const ydoc = ydocOf([
+            {
+                type: 'taskList',
+                content: [
+                    task('plan the trip', false, [
+                        { type: 'taskList', content: [task('pick dates', true)] },
+                    ]),
+                    task('pack', false),
+                ],
+            },
+        ]);
+
+        expect(indexFromYDoc(ydoc).todos).toEqual([
+            { ordinal: 0, text: 'plan the trip', checked: false, depth: 0 },
+            { ordinal: 1, text: 'pick dates', checked: true, depth: 1 },
+            { ordinal: 2, text: 'pack', checked: false, depth: 0 },
+        ]);
+    });
+
     it('collects outgoing document links', () => {
         const ydoc = ydocOf([
             {
@@ -99,6 +127,7 @@ describe('indexFromYDoc', () => {
             text: '',
             linkTargets: [],
             attachmentHashes: [],
+            todos: [],
             todoCount: 0,
             completedTodoCount: 0,
         });

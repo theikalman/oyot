@@ -9,6 +9,20 @@
 
 use rusqlite::{params, OptionalExtension};
 
+/// One task item, as it arrives over IPC.
+///
+/// No id: an item is addressed by where it falls among the document's task
+/// items, which is the order this vector is in. The ordinal is therefore
+/// derived on insert rather than sent, so the stored order cannot disagree
+/// with the walk that produced it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoInput {
+    pub text: String,
+    pub checked: bool,
+    pub depth: i64,
+}
+
 /// What the editor extracted from a document, as it arrives over IPC.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +34,10 @@ pub struct DocumentIndexInput {
     pub attachment_hashes: Vec<String>,
     pub todo_count: i32,
     pub completed_todo_count: i32,
+    /// Every task item in the document, in document order. Defaulted so a
+    /// payload from a build that predates the todo index still deserialises.
+    #[serde(default)]
+    pub todos: Vec<TodoInput>,
 }
 
 /// What a fully-built index looks like today.
@@ -29,7 +47,11 @@ pub struct DocumentIndexInput {
 /// version has no attachment rows, and deleting blobs on the strength of that
 /// would throw away images that are still on the page. Bump it whenever the
 /// derived rows gain something that has to be backfilled.
-pub const INDEX_VERSION: i64 = 1;
+///
+/// v2 added `document_todos`. The bump is what makes the startup backfill
+/// re-render every document with content, which is the only way a todo
+/// written before this existed reaches the index page.
+pub const INDEX_VERSION: i64 = 2;
 
 /// Record the title only, for paths that change a title without seeing content
 /// (a rename, or materialising a row learned from a peer). Leaves counts,
@@ -120,6 +142,23 @@ pub fn update_document_index(
         .map_err(|e| e.to_string())?;
     }
 
+    // And again for todos: the items in the document now are the whole truth
+    // about what todos it has. Replacing also renumbers, which is what keeps
+    // an ordinal pointing at the line it named.
+    db.execute(
+        "DELETE FROM document_todos WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    for (ordinal, todo) in index.todos.iter().enumerate() {
+        db.execute(
+            "INSERT INTO document_todos (document_id, ordinal, text, checked, depth)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![doc_id, ordinal as i64, todo.text, todo.checked, todo.depth],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     db.execute(
         "UPDATE documents SET index_version = ?2 WHERE id = ?1",
         params![doc_id, INDEX_VERSION],
@@ -163,6 +202,12 @@ pub fn clear_document_index(db: &rusqlite::Connection, doc_id: &str) -> Result<(
     // A deleted document holds nothing, so its attachments become collectable.
     db.execute(
         "DELETE FROM document_attachments WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    // ...and its todos leave the index page, which is the point of deleting it.
+    db.execute(
+        "DELETE FROM document_todos WHERE document_id = ?",
         params![doc_id],
     )
     .map_err(|e| e.to_string())?;
@@ -221,6 +266,7 @@ mod tests {
             attachment_hashes: vec![],
             todo_count: todo,
             completed_todo_count: done,
+            todos: vec![],
         }
     }
 
@@ -229,6 +275,156 @@ mod tests {
             attachment_hashes: hashes.iter().map(|s| s.to_string()).collect(),
             ..index("body", &[], 0, 0)
         }
+    }
+
+    fn with_todos(todos: &[(&str, bool, i64)]) -> DocumentIndexInput {
+        let todos: Vec<TodoInput> = todos
+            .iter()
+            .map(|(text, checked, depth)| TodoInput {
+                text: text.to_string(),
+                checked: *checked,
+                depth: *depth,
+            })
+            .collect();
+        let total = todos.len() as i32;
+        let done = todos.iter().filter(|t| t.checked).count() as i32;
+        DocumentIndexInput {
+            todos,
+            ..index("body", &[], total, done)
+        }
+    }
+
+    /// Every todo row for a document, in the order the index page reads them.
+    fn todos_of(db: &Connection, doc_id: &str) -> Vec<(i64, String, bool, i64)> {
+        let mut stmt = db
+            .prepare(
+                "SELECT ordinal, text, checked, depth FROM document_todos
+                  WHERE document_id = ? ORDER BY ordinal",
+            )
+            .unwrap();
+        stmt.query_map([doc_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+    }
+
+    #[test]
+    fn todos_are_recorded_in_order_with_their_ordinal() {
+        let db = db();
+        update_document_index(
+            &db,
+            "a",
+            "Alpha",
+            &with_todos(&[("buy milk", false, 0), ("pick dates", true, 1)]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            todos_of(&db, "a"),
+            vec![
+                (0, "buy milk".to_string(), false, 0),
+                (1, "pick dates".to_string(), true, 1),
+            ]
+        );
+    }
+
+    // Replacing rather than diffing is what renumbers the items, and the
+    // ordinal is the address the index page navigates by. A stale row left
+    // behind would send the cursor to a line that is no longer there.
+    #[test]
+    fn todos_are_replaced_wholesale_and_renumbered() {
+        let db = db();
+        update_document_index(
+            &db,
+            "a",
+            "Alpha",
+            &with_todos(&[
+                ("first", false, 0),
+                ("second", false, 0),
+                ("third", false, 0),
+            ]),
+        )
+        .unwrap();
+
+        // The user deletes the first item.
+        update_document_index(
+            &db,
+            "a",
+            "Alpha",
+            &with_todos(&[("second", false, 0), ("third", false, 0)]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            todos_of(&db, "a"),
+            vec![
+                (0, "second".to_string(), false, 0),
+                (1, "third".to_string(), false, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn ticking_a_todo_is_recorded() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_todos(&[("buy milk", false, 0)])).unwrap();
+        update_document_index(&db, "a", "Alpha", &with_todos(&[("buy milk", true, 0)])).unwrap();
+        assert_eq!(
+            todos_of(&db, "a"),
+            vec![(0, "buy milk".to_string(), true, 0)]
+        );
+    }
+
+    // An empty item is what a freshly inserted todo looks like. Dropping it
+    // would shift every ordinal after it onto the wrong line.
+    #[test]
+    fn a_todo_with_no_text_still_takes_its_place() {
+        let db = db();
+        update_document_index(
+            &db,
+            "a",
+            "Alpha",
+            &with_todos(&[("", false, 0), ("second", false, 0)]),
+        )
+        .unwrap();
+        assert_eq!(
+            todos_of(&db, "a"),
+            vec![
+                (0, String::new(), false, 0),
+                (1, "second".to_string(), false, 0)
+            ]
+        );
+    }
+
+    #[test]
+    fn clearing_removes_todos() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_todos(&[("buy milk", false, 0)])).unwrap();
+        clear_document_index(&db, "a").unwrap();
+        assert!(todos_of(&db, "a").is_empty());
+    }
+
+    #[test]
+    fn deleting_a_document_row_cascades_to_its_todos() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_todos(&[("buy milk", false, 0)])).unwrap();
+        db.execute("DELETE FROM documents WHERE id = 'a'", [])
+            .unwrap();
+        assert!(todos_of(&db, "a").is_empty());
+    }
+
+    // A rename sees no content, so it has nothing to say about the todos.
+    #[test]
+    fn a_title_only_update_leaves_todos_alone() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_todos(&[("buy milk", false, 0)])).unwrap();
+        update_document_title(&db, "a", "Renamed").unwrap();
+        assert_eq!(
+            todos_of(&db, "a"),
+            vec![(0, "buy milk".to_string(), false, 0)]
+        );
     }
 
     fn attachments_of(db: &Connection, doc_id: &str) -> Vec<String> {

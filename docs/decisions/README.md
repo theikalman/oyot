@@ -27,6 +27,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0014](0014-the-merged-blob-is-the-only-content-store.md)       | The merged blob is the only content store                                           | Accepted |
 | [0015](0015-the-url-is-the-open-document.md)                    | The URL says which document is open, and the shell owns startup                     | Accepted |
 | [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md)       | Binary chunk frames, and a development broker that is anonymous on purpose          | Accepted |
+| [0017](0017-a-cross-document-todo-index.md)                     | A cross-document todo index, addressed by ordinal                                   | Accepted |
 
 ## Format
 

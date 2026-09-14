@@ -36,7 +36,7 @@
 <div class="sidebar-section">
     <h3>
         Connected Devices
-        <button class="cal-toggle-btn" onclick={onManage} title="Manage devices">
+        <button class="manage-btn" onclick={onManage} title="Manage devices">
             <svg
                 width="16"
                 height="16"
@@ -107,6 +107,40 @@
 </div>
 
 <style>
+    /* Svelte scopes styles to the component that declares them, so the
+       `.sidebar-section` and `h3` rules in Sidebar.svelte never reached this
+       markup even though it uses their class names. The section sat flush
+       against the sidebar's edge with an unstyled heading and a default
+       browser button beside it, while every other section was inset. */
+    .sidebar-section {
+        padding: 12px;
+    }
+
+    .sidebar-section h3 {
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin: 0 0 8px 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .manage-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0 4px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        color: var(--text-secondary);
+    }
+
+    .manage-btn:hover {
+        color: var(--text-primary);
+    }
+
     .empty-hint {
         margin: 0;
         font-size: 13px;

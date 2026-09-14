@@ -4,6 +4,7 @@
         DAY_NAMES,
         addMonths,
         isSameDay,
+        journalDateOf,
         journalTitleForDay,
         monthGrid,
         monthLabel,
@@ -24,6 +25,19 @@
     // The month on display. Local to the calendar: nothing outside it cares
     // which month is being looked at.
     let monthOf = $state(new Date());
+
+    // Follow the open journal into its own month.
+    //
+    // The grid used to stay on whatever month the calendar was built in, so
+    // opening a journal from any other month -- from search, or from the todo
+    // index, which lists days going back as far as they were written --
+    // highlighted nothing, because the day it opened was not on screen to
+    // highlight. Only the title changing moves the grid, so browsing months
+    // with the arrows still goes where it is told.
+    $effect(() => {
+        const date = currentJournalTitle ? journalDateOf(currentJournalTitle) : null;
+        if (date) monthOf = new Date(date.getFullYear(), date.getMonth(), 1);
+    });
 
     function pick(day: number | null): void {
         if (day === null) return;

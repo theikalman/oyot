@@ -17,3 +17,24 @@ export function openDocument(docId: string): Promise<void> {
 export function openHome(): Promise<void> {
     return goto(resolve('/'));
 }
+
+// Open a document with the cursor on one of its todos.
+//
+// The target rides in the URL rather than in a store, for the same reason the
+// document id does: a link to a particular line stays a link, survives a
+// reload, and the back button undoes it. `ordinal` is the item's place among
+// the document's task items, which is how the todo index addresses one.
+export function openDocumentAtTodo(docId: string, ordinal: number): Promise<void> {
+    // `keepFocus` because the editor is about to take focus itself, and a
+    // navigation otherwise resets it to the page root. This is the case the
+    // option exists for: focus is being managed deliberately, not left to
+    // land wherever the framework puts it. Relying on doing it afterwards
+    // instead is a race, and one that SvelteKit's own reset can win, because
+    // for a URL with a fragment it defers itself the same way.
+    return goto(resolve(`/doc/[id]?todo=${ordinal}`, { id: docId }), { keepFocus: true });
+}
+
+// The todo index: every task item in every note and journal.
+export function openTodos(): Promise<void> {
+    return goto(resolve('/todos'));
+}

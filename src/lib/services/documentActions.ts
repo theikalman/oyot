@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import type { Document } from '../types';
 import { appStore } from '../stores/app';
+import { bumpIndexRevision } from '../stores/derivedIndex';
 import { toDocumentSummary } from './documents';
 import { broadcastDocCreated, broadcastDocRenamed, broadcastDocDeleted } from '../sync';
 
@@ -75,6 +76,8 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
     if (appStoreCurrentId() === docId) {
         appStore.setCurrentDocument(doc);
     }
+    // Views grouped by title, the todo index among them, have to regroup.
+    bumpIndexRevision();
     broadcastDocRenamed(docId, doc.title, doc.title_updated_at);
     return doc;
 }
@@ -86,5 +89,7 @@ export async function deleteDocument(docId: string): Promise<void> {
     // back on the next manifest exchange as if it were news.
     const deletedAt = await invoke<number>('delete_document', { docId });
     appStore.removeDocument(docId);
+    // Its derived rows went with it, so anything reading them is now stale.
+    bumpIndexRevision();
     broadcastDocDeleted(docId, deletedAt);
 }

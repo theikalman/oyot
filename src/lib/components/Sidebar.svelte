@@ -9,7 +9,8 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
-    import { openDocument, openHome } from '../services/navigation';
+    import { openDocument, openHome, openTodos } from '../services/navigation';
+    import { page } from '$app/state';
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
     import { createSearch, type SearchHit } from '../search/searchStore.svelte';
@@ -40,7 +41,6 @@
 
     let collapsed = $state(isSmallScreen());
     let small = $state(isSmallScreen());
-    let showCalendar = $state(false);
 
     // Follow the viewport rather than sampling it once at startup. Rotating a
     // tablet or resizing a window left the sidebar in whatever state it had
@@ -83,15 +83,28 @@
         };
     });
 
+    // Everything still to do, across every note and journal. The counts are
+    // already kept current in the document store by the save and merge paths,
+    // so the badge costs no query of its own.
+    let openTodoCount = $derived(
+        $documents.reduce(
+            (n: number, d: DocumentSummary) => n + (d.todo_count - d.completed_todo_count),
+            0,
+        ),
+    );
+    let onTodosPage = $derived(page.url.pathname === '/todos');
+
+    function goToTodos() {
+        void openTodos();
+        dismissOnSmallScreen();
+    }
+
     let currentDocId = $derived($appStore.currentDocument?.id);
     let currentJournalTitle = $derived(
         $appStore.currentDocument?.doc_type === 'journal' ? $appStore.currentDocument.title : null,
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
-    let journalsNewestFirst = $derived(
-        [...journals].sort((a, b) => b.title.localeCompare(a.title)),
-    );
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
@@ -289,6 +302,22 @@
                 class="search-input"
                 aria-label="Search documents"
             />
+            <button class="collapse-btn" onclick={() => (collapsed = true)} title="Collapse">
+                <svg
+                    width="20"
+                    height="20"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    ><path
+                        stroke="currentColor"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="m11 17-5-5 5-5M18 17l-5-5 5-5"
+                    /></svg
+                >
+            </button>
         {/if}
     </div>
 
@@ -335,59 +364,17 @@
                     {/if}
                 </div>
             {:else}
+                <!-- The calendar, always, and no heading over it. It is how a
+                     journal is found: a journal is named for its day, so a
+                     month grid marking the days with something written in
+                     them beats a column of dates, and it says what it is
+                     without being told. -->
                 <div class="sidebar-section">
-                    {#if showCalendar}
-                        <JournalCalendar
-                            {journals}
-                            {currentJournalTitle}
-                            {today}
-                            onPick={openJournalFor}
-                        />
-                    {/if}
-                </div>
-
-                <div class="sidebar-section">
-                    <h3>
-                        Journals ({journals.length})
-                        <button
-                            class="cal-toggle-btn"
-                            onclick={() => (showCalendar = !showCalendar)}
-                            title="Toggle calendar"
-                        >
-                            <svg
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                xmlns="http://www.w3.org/2000/svg"
-                                ><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g
-                                    id="SVGRepo_tracerCarrier"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                ></g><g id="SVGRepo_iconCarrier">
-                                    <path
-                                        d="M3 9H21M7 3V5M17 3V5M6 13H8M6 17H8M11 13H13M11 17H13M16 13H18M16 17H18M6.2 21H17.8C18.9201 21 19.4802 21 19.908 20.782C20.2843 20.5903 20.5903 20.2843 20.782 19.908C21 19.4802 21 18.9201 21 17.8V8.2C21 7.07989 21 6.51984 20.782 6.09202C20.5903 5.71569 20.2843 5.40973 19.908 5.21799C19.4802 5 18.9201 5 17.8 5H6.2C5.0799 5 4.51984 5 4.09202 5.21799C3.71569 5.40973 3.40973 5.71569 3.21799 6.09202C3 6.51984 3 7.07989 3 8.2V17.8C3 18.9201 3 19.4802 3.21799 19.908C3.40973 20.2843 3.71569 20.5903 4.09202 20.782C4.51984 21 5.07989 21 6.2 21Z"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                    ></path>
-                                </g></svg
-                            >
-                        </button>
-                    </h3>
-                    <!-- Journals were reachable only through the calendar,
-                         which is hidden by default, and could not be renamed
-                         or deleted at all. Newest first: the one you want is
-                         almost always a recent one. -->
-                    <DocumentList
-                        documents={journalsNewestFirst}
-                        {currentDocId}
-                        {openMenuId}
-                        onOpen={handleDocClick}
-                        onToggleMenu={toggleMenu}
-                        onRename={startRename}
-                        onDelete={startDelete}
+                    <JournalCalendar
+                        {journals}
+                        {currentJournalTitle}
+                        {today}
+                        onPick={openJournalFor}
                     />
                 </div>
 
@@ -405,6 +392,31 @@
                         onRename={startRename}
                         onDelete={startDelete}
                     />
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>Index</h3>
+                    <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="m7.5 12 3 3 6-6" />
+                            <path
+                                d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
+                            />
+                        </svg>
+                        <span class="nav-label">Todos</span>
+                        {#if openTodoCount > 0}
+                            <span class="nav-count">{openTodoCount}</span>
+                        {/if}
+                    </button>
                 </div>
             {/if}
 
@@ -446,13 +458,10 @@
     <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
 {/if}
 
-<button
-    class="toggle-btn"
-    class:collapsed
-    onclick={() => (collapsed = !collapsed)}
-    title={collapsed ? 'Expand' : 'Collapse'}
->
-    {#if collapsed}
+<!-- The only control outside the sidebar, and only when there is no sidebar
+     to put it in. Collapsing happens from the header, beside the search box. -->
+{#if collapsed}
+    <button class="expand-btn" onclick={() => (collapsed = false)} title="Expand">
         <svg
             width="20"
             height="20"
@@ -460,30 +469,15 @@
             fill="none"
             viewBox="0 0 24 24"
             ><path
-                stroke="#A1A1A1"
+                stroke="currentColor"
                 stroke-linecap="round"
                 stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M3 12h18M3 6h18M3 18h12"
+                stroke-width="2"
+                d="m13 17 5-5-5-5M6 17l5-5-5-5"
             /></svg
         >
-    {:else}
-        <svg
-            width="20"
-            height="20"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            ><path
-                stroke="#A1A1A1"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.5"
-                d="M3 12h18M3 6h18M9 18h12"
-            /></svg
-        >
-    {/if}
-</button>
+    </button>
+{/if}
 
 {#if showModal}
     <Modal title="New Note" onClose={closeModal}>
@@ -582,48 +576,53 @@
         background: rgba(0, 0, 0, 0.35);
     }
 
-    .toggle-btn {
-        width: 40px;
-        height: 40px;
+    /* Beside the search box, sized to match it. */
+    .collapse-btn {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        padding: 0;
         background: none;
         border: none;
-        cursor: pointer;
-        padding: 4px;
-        color: var(--text-secondary);
         border-radius: 4px;
+        color: var(--text-secondary);
+        cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        flex-shrink: 0;
-        margin-left: auto;
     }
 
-    .toggle-btn:hover {
+    .collapse-btn:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
     }
 
-    .toggle-btn.collapsed {
+    /* Floating, because with the sidebar hidden there is nothing to sit in. */
+    .expand-btn {
         position: fixed;
         left: 20px;
         bottom: 48px;
         z-index: 100;
+        width: 40px;
+        height: 40px;
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-secondary);
         background: var(--bg-secondary);
         border: 1px solid var(--border-color);
         border-radius: 50%;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        cursor: pointer;
         transition:
             box-shadow 0.2s ease,
             transform 0.2s ease;
     }
 
-    .toggle-btn.collapsed:hover {
+    .expand-btn:hover {
+        color: var(--text-primary);
         box-shadow: 0 0 16px 4px rgba(59, 130, 246, 0.4);
-    }
-
-    .toggle-btn.collapsed svg {
-        width: 20px;
-        height: 20px;
     }
 
     .sidebar-header {
@@ -737,6 +736,49 @@
         -webkit-box-orient: vertical;
     }
 
+    /* ── Index section ── */
+    .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 7px 8px;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-family: inherit;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .nav-item:hover {
+        background: var(--bg-hover);
+    }
+
+    .nav-item.active {
+        background: var(--accent-bg);
+        color: var(--accent-color);
+    }
+
+    .nav-label {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .nav-count {
+        flex-shrink: 0;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+    }
+
+    .nav-item.active .nav-count {
+        color: var(--accent-color);
+    }
+
     .add-doc-btn {
         background: none;
         border: none;
@@ -748,21 +790,6 @@
     }
 
     .add-doc-btn:hover {
-        color: var(--text-primary);
-    }
-
-    .cal-toggle-btn {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 0 4px;
-        line-height: 1;
-        display: flex;
-        align-items: center;
-        color: var(--text-secondary);
-    }
-
-    .cal-toggle-btn:hover {
         color: var(--text-primary);
     }
 
