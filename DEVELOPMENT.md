@@ -165,6 +165,8 @@ oyot/
 │   │   ├── stores/          # Svelte stores (app state, sync state)
 │   │   ├── sync/            # Peer sync: transport, protocol, framing
 │   │   ├── tiptap/          # Editor extensions, slash commands, nodes
+│   │   ├── changelog.ts     # Release notes shown in the About dialog
+│   │   ├── version.ts       # Running version, injected at build time
 │   │   └── types.ts         # Shared type definitions
 │   └── routes/              # SvelteKit routes (SPA, ssr disabled)
 ├── src-tauri/               # Rust backend
@@ -202,6 +204,20 @@ The app supports 5 platforms: **macOS, Windows, Linux, Android, and iOS**.
 
 - `make release` builds a release for **the current platform only** and puts artifacts in `dist/`.
 - `make release-tag VERSION=x.y.z` pushes a git tag that triggers **GitHub Actions to build all 5 platforms** in parallel and publishes a draft GitHub Release.
+
+### Bumping the version
+
+The version lives in four places, and `src/lib/version.test.ts` fails when they
+disagree. Change all four in the same commit:
+
+1. `package.json`
+2. `src-tauri/tauri.conf.json` (and `bundle.android.versionCode`)
+3. `src-tauri/Cargo.toml` (run `cargo check` to refresh `Cargo.lock`)
+4. `src/lib/changelog.ts` — add a new entry at the top of `RELEASES`
+
+The sidebar footer shows the version from `package.json`, and clicking it opens
+the About dialog with the changelog, so a release with no entry ships a dialog
+that says nothing about it.
 
 ### Quick release (all platforms via CI)
 
