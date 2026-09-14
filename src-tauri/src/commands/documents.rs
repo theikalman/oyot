@@ -2,7 +2,7 @@ use crate::db::AppState;
 use crate::indexer;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -606,40 +606,80 @@ pub fn get_backlinks(
     Ok(backlinks)
 }
 
+/// Today's journal, and whether opening it was news.
+#[derive(Debug, Serialize)]
+pub struct TodayJournal {
+    pub document: Document,
+    /// True when this call created the row or revived a tombstone. False when
+    /// today's entry was simply already there, which is every launch after the
+    /// first one of the day.
+    pub created: bool,
+}
+
+/// Create today's journal, or revive it if it was deleted. Returns whether
+/// anything changed, i.e. whether peers have something to be told.
+///
+/// One upsert rather than SELECT-then-INSERT for the write itself: the old
+/// form released the mutex between the two, and failed outright once the
+/// day's journal had been deleted, because the tombstone still owned the id.
+/// Failing here took the whole app down with it, since startup awaits this
+/// before it can show a document.
+pub fn upsert_today_journal(
+    db: &Connection,
+    doc_id: &str,
+    title: &str,
+    now: i64,
+) -> Result<bool, String> {
+    // Asked under the same lock as the write, because the upsert cannot tell
+    // us: SQLite reports one row changed whether it inserted or updated. A row
+    // that is already live is one every peer has heard about.
+    let already_live = db
+        .query_row(
+            "SELECT 1 FROM documents WHERE id = ? AND is_deleted = 0",
+            params![doc_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .is_some();
+
+    db.execute(
+        "INSERT INTO documents
+             (id, type, title, created_at, updated_at, title_updated_at,
+              is_deleted, deleted_at, lifecycle_updated_at)
+         VALUES (?1, 'journal', ?2, ?3, ?3, ?3, 0, NULL, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+             is_deleted           = 0,
+             deleted_at           = NULL,
+             lifecycle_updated_at = CASE
+                 WHEN documents.is_deleted = 1 THEN excluded.lifecycle_updated_at
+                 ELSE documents.lifecycle_updated_at
+             END",
+        params![doc_id, title, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    indexer::update_document_title(db, doc_id, title)?;
+    Ok(!already_live)
+}
+
 #[tauri::command]
-pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<Document, String> {
+pub fn get_or_create_today_journal(
+    state: tauri::State<'_, AppState>,
+) -> Result<TodayJournal, String> {
     let today_title = get_today_date();
     let doc_id = format_journal_date(&today_title).unwrap_or_else(|| today_title.clone());
-
     let now = current_timestamp();
 
-    // One upsert rather than SELECT-then-INSERT: the old form released the
-    // mutex between the two, and failed outright once the day's journal had
-    // been deleted, because the tombstone still owned the id. Failing here took
-    // the whole app down with it, since startup awaits this before it can show
-    // a document.
-    {
+    let created = {
         let db = state.db.lock();
-        db.execute(
-            "INSERT INTO documents
-                 (id, type, title, created_at, updated_at, title_updated_at,
-                  is_deleted, deleted_at, lifecycle_updated_at)
-             VALUES (?1, 'journal', ?2, ?3, ?3, ?3, 0, NULL, ?3)
-             ON CONFLICT(id) DO UPDATE SET
-                 is_deleted           = 0,
-                 deleted_at           = NULL,
-                 lifecycle_updated_at = CASE
-                     WHEN documents.is_deleted = 1 THEN excluded.lifecycle_updated_at
-                     ELSE documents.lifecycle_updated_at
-                 END",
-            params![&doc_id, &today_title, now],
-        )
-        .map_err(|e| e.to_string())?;
+        upsert_today_journal(&db, &doc_id, &today_title, now)?
+    };
 
-        indexer::update_document_title(&db, &doc_id, &today_title)?;
-    }
-
-    get_document(state, doc_id)
+    Ok(TodayJournal {
+        document: get_document(state, doc_id)?,
+        created,
+    })
 }
 
 #[cfg(test)]
@@ -814,6 +854,45 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    // Announcing today's journal on every launch made each peer pull the
+    // whole document back, because `onLiveCreated` answers a `doc-created`
+    // for a document it has with a `sync-need` carrying an empty state
+    // vector. Only an actual change is news.
+    #[test]
+    fn opening_todays_journal_is_news_only_the_first_time() {
+        let db = db();
+        assert!(
+            upsert_today_journal(&db, "14 Sep 2026", "2026-09-14", 100).unwrap(),
+            "the first open creates it"
+        );
+        assert!(
+            !upsert_today_journal(&db, "14 Sep 2026", "2026-09-14", 200).unwrap(),
+            "every later open is not"
+        );
+    }
+
+    #[test]
+    fn reviving_a_deleted_journal_is_news_again() {
+        let db = db();
+        upsert_today_journal(&db, "14 Sep 2026", "2026-09-14", 100).unwrap();
+        tombstone_document(&db, "14 Sep 2026", 200).unwrap();
+
+        assert!(
+            upsert_today_journal(&db, "14 Sep 2026", "2026-09-14", 300).unwrap(),
+            "a revival is exactly what peers need to hear about"
+        );
+
+        let (deleted, stamp): (i64, i64) = db
+            .query_row(
+                "SELECT is_deleted, lifecycle_updated_at FROM documents WHERE id = '14 Sep 2026'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(deleted, 0);
+        assert_eq!(stamp, 300, "the revival must outrank the delete");
     }
 
     // A row we already have belongs to the last-writer-wins path, which this

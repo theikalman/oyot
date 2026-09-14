@@ -44,12 +44,20 @@ export async function createJournalForDate(dateTitle: string): Promise<Document>
     return doc;
 }
 
-// Wraps get_or_create_today_journal so a freshly created journal is announced
-// to peers (an already-existing one is a no-op for them).
+// Wraps get_or_create_today_journal, announcing only when there is something
+// peers have not heard.
+//
+// Announcing unconditionally meant every launch broadcast `doc-created` for a
+// journal every peer already had, and each of them answered with a `sync-need`
+// carrying an empty state vector, so the whole document came back across the
+// wire. A revival still counts as news: it is how a peer learns the tombstone
+// it holds has been superseded.
 export async function ensureTodayJournal(): Promise<Document> {
-    const doc = await invoke<Document>('get_or_create_today_journal');
+    const { document: doc, created } = await invoke<{ document: Document; created: boolean }>(
+        'get_or_create_today_journal',
+    );
     appStore.addDocument(toDocumentSummary(doc));
-    announceCreated(doc);
+    if (created) announceCreated(doc);
     return doc;
 }
 
