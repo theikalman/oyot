@@ -71,7 +71,11 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
 }
 
 export async function deleteDocument(docId: string): Promise<void> {
-    await invoke('delete_document', { docId });
+    // Broadcast the stamp Rust actually wrote. Taking a second reading with
+    // `Date.now()` here produced one strictly later than the row's, so every
+    // peer recorded the delete as marginally newer than ours and handed it
+    // back on the next manifest exchange as if it were news.
+    const deletedAt = await invoke<number>('delete_document', { docId });
     appStore.removeDocument(docId);
-    broadcastDocDeleted(docId, Date.now());
+    broadcastDocDeleted(docId, deletedAt);
 }

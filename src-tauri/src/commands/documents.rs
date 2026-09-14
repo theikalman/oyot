@@ -2,7 +2,7 @@ use crate::db::AppState;
 use crate::indexer;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -315,30 +315,16 @@ pub fn apply_remote_delete(
 ) -> Result<bool, String> {
     let applied = {
         let db = state.db.lock();
-        // Last-writer-wins: a tombstone only applies if the peer observed the
-        // delete later than whatever we last observed for this row. Otherwise a
-        // stale tombstone would undo a revival that happened after it.
-        db.execute(
-            "UPDATE documents
-                SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1
-              WHERE id = ?2
-                AND (lifecycle_updated_at IS NULL OR lifecycle_updated_at < ?1)",
-            params![deleted_at, &doc_id],
-        )
-        .map_err(|e| e.to_string())?
+        apply_tombstone_if_newer(&db, &doc_id, deleted_at)?
     };
 
-    // Only drop the CRDT history if the tombstone actually won. Doing it
+    // Only drop the update log if the tombstone actually won. Doing it
     // unconditionally would empty a document whose revival we had already
     // accepted, while leaving the row live.
-    if applied > 0 {
-        {
-            let db = state.db.lock();
-            indexer::clear_document_index(&db, &doc_id)?;
-        }
+    if applied {
         state.snapshot.delete_document_data(&doc_id)?;
     }
-    Ok(applied > 0)
+    Ok(applied)
 }
 
 #[tauri::command]
@@ -407,22 +393,68 @@ pub fn update_document(
     get_document(state, doc_id)
 }
 
-#[tauri::command]
-pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result<(), String> {
-    let now = current_timestamp();
-    let db = state.db.lock();
+// Deleting is a tombstone plus the loss of the content.
+//
+// Both delete paths used to leave `crdt_state` in place, and it is the only
+// column anything reads content from: `delete_document_data` clears the update
+// log, which nothing loads. So a revived document came back with everything
+// still in it. ADR 0003 decision 5 and ADR 0008 both say the history is
+// dropped; the code was what disagreed, and the visible consequence was that
+// deleting today's journal did not clear it, since the next launch revives it.
+//
+// Clearing `content_hash` with it keeps the manifest honest: a tombstone with a
+// stale hash would advertise content this device no longer has.
+const TOMBSTONE_SET: &str = "is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1, \
+     crdt_state = NULL, content_hash = NULL";
+
+/// Tombstone a document locally. Takes `&Connection` rather than `State` so the
+/// behaviour can be tested rather than mirrored by a copy of the SQL.
+pub fn tombstone_document(db: &Connection, doc_id: &str, now: i64) -> Result<(), String> {
     db.execute(
-        "UPDATE documents SET is_deleted = 1, deleted_at = ?1, lifecycle_updated_at = ?1 WHERE id = ?2",
-        params![now, &doc_id],
+        &format!("UPDATE documents SET {TOMBSTONE_SET} WHERE id = ?2"),
+        params![now, doc_id],
     )
     .map_err(|e| e.to_string())?;
+    indexer::clear_document_index(db, doc_id)
+}
 
-    indexer::clear_document_index(&db, &doc_id)?;
+/// Apply a peer's tombstone, last-writer-wins on the lifecycle stamp. Returns
+/// whether it applied: a stale tombstone must not undo a later revival, and
+/// must not take the revived content with it.
+pub fn apply_tombstone_if_newer(
+    db: &Connection,
+    doc_id: &str,
+    deleted_at: i64,
+) -> Result<bool, String> {
+    let applied = db
+        .execute(
+            &format!(
+                "UPDATE documents SET {TOMBSTONE_SET}
+                  WHERE id = ?2
+                    AND (lifecycle_updated_at IS NULL OR lifecycle_updated_at < ?1)"
+            ),
+            params![deleted_at, doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if applied > 0 {
+        indexer::clear_document_index(db, doc_id)?;
+    }
+    Ok(applied > 0)
+}
 
-    drop(db);
+/// Returns the timestamp written, so the broadcast to peers carries the same
+/// stamp the row does. Inventing a second one with `Date.now()` on the way out
+/// made every peer record a delete marginally later than ours, which the next
+/// manifest exchange then applied back to us as if it were news.
+#[tauri::command]
+pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Result<i64, String> {
+    let now = current_timestamp();
+    {
+        let db = state.db.lock();
+        tombstone_document(&db, &doc_id, now)?;
+    }
     state.snapshot.delete_document_data(&doc_id)?;
-
-    Ok(())
+    Ok(now)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -549,4 +581,131 @@ pub fn get_or_create_today_journal(state: tauri::State<'_, AppState>) -> Result<
     }
 
     get_document(state, doc_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Exercises the real functions rather than a copy of their SQL. The
+    // migration tests in lib.rs mirror statements by hand, which means they
+    // pass whatever the code does.
+    fn db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        crate::setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents
+                 (id, type, title, crdt_state, content_hash, created_at, updated_at,
+                  title_updated_at, is_deleted, lifecycle_updated_at)
+             VALUES ('d1', 'note', 'One', x'0102', x'0304', 1, 1, 1, 0, 500)",
+            [],
+        )
+        .unwrap();
+        db
+    }
+
+    fn content(db: &Connection) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+        db.query_row(
+            "SELECT crdt_state, content_hash FROM documents WHERE id = 'd1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    // The regression: both delete paths cleared the update log, which nothing
+    // reads, and left `crdt_state`, which is the only column content is loaded
+    // from. A revived document therefore came back with everything still in
+    // it, and deleting today's journal did not clear it because the next
+    // launch revives it.
+    #[test]
+    fn deleting_drops_the_content_not_just_the_flag() {
+        let db = db();
+        tombstone_document(&db, "d1", 900).unwrap();
+
+        let (state, hash) = content(&db);
+        assert_eq!(state, None, "the content must go with the tombstone");
+        assert_eq!(hash, None, "a stale hash would advertise content we lost");
+
+        let (deleted, stamp): (i64, i64) = db
+            .query_row(
+                "SELECT is_deleted, lifecycle_updated_at FROM documents WHERE id = 'd1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(stamp, 900);
+    }
+
+    #[test]
+    fn deleting_clears_the_derived_rows() {
+        let db = db();
+        crate::indexer::update_document_index(
+            &db,
+            "d1",
+            "One",
+            &crate::indexer::DocumentIndexInput {
+                text: "findable".into(),
+                link_targets: vec![],
+                todo_count: 0,
+                completed_todo_count: 0,
+            },
+        )
+        .unwrap();
+
+        tombstone_document(&db, "d1", 900).unwrap();
+
+        let rows: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM document_search WHERE document_id = 'd1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0, "a deleted document must not stay searchable");
+    }
+
+    #[test]
+    fn a_remote_tombstone_older_than_our_revival_changes_nothing() {
+        let db = db();
+        // Our row was last observed at 500, so a peer that deleted at 400 saw
+        // it before we revived it.
+        let applied = apply_tombstone_if_newer(&db, "d1", 400).unwrap();
+
+        assert!(!applied);
+        let (state, hash) = content(&db);
+        assert_eq!(
+            state,
+            Some(vec![1, 2]),
+            "a losing tombstone must not take the content"
+        );
+        assert_eq!(hash, Some(vec![3, 4]));
+    }
+
+    #[test]
+    fn a_newer_remote_tombstone_applies_and_clears_the_content() {
+        let db = db();
+        let applied = apply_tombstone_if_newer(&db, "d1", 600).unwrap();
+
+        assert!(applied);
+        assert_eq!(content(&db), (None, None));
+    }
+
+    #[test]
+    fn applying_a_remote_tombstone_twice_is_idempotent() {
+        let db = db();
+        assert!(apply_tombstone_if_newer(&db, "d1", 600).unwrap());
+        assert!(
+            !apply_tombstone_if_newer(&db, "d1", 600).unwrap(),
+            "the same stamp is not a later observation"
+        );
+    }
+
+    #[test]
+    fn a_tombstone_for_an_unknown_document_applies_to_nothing() {
+        let db = db();
+        assert!(!apply_tombstone_if_newer(&db, "never-heard-of-it", 600).unwrap());
+    }
 }
