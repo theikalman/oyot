@@ -193,6 +193,84 @@ describe('EditorSaveService', () => {
         expect(counts).toEqual([{ docId: 'doc', todo: 2, done: 1 }]);
     });
 
+    // A failed save was reported to the user and then forgotten. If nothing
+    // else was typed, the edit died with the Y.Doc on the next document
+    // switch, so the user saw an error and then lost the work anyway.
+    it('remembers a failed save as still needing to be written', async () => {
+        saveShouldThrow = true;
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(docWith('important'));
+
+        await svc.flushNow();
+
+        expect(svc.hasPendingWrite()).toBe(true);
+    });
+
+    it('writes again after a failure', async () => {
+        const ydoc = docWith('base');
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(4, '!');
+        svc.recordUpdate(updates[0]);
+
+        saveShouldThrow = true;
+        await svc.flushNow();
+        expect(saved).toHaveLength(0);
+
+        saveShouldThrow = false;
+        await svc.flushNow();
+
+        expect(saved).toHaveLength(1);
+        expect(textOf(saved[0].state)).toBe('base!');
+        expect(svc.hasPendingWrite()).toBe(false);
+    });
+
+    it('does not lose the delta a failed save was carrying', async () => {
+        // The peer never saw it, so it still has to go out. Taking the delta
+        // and dropping it on failure meant only the next edit was broadcast,
+        // and the failed one reached other devices only on the next reconnect.
+        const ydoc = docWith('base');
+        const peer = new Y.Doc();
+        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
+
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc'));
+        svc.setYDoc(ydoc);
+
+        const updates: Uint8Array[] = [];
+        ydoc.on('update', (u: Uint8Array) => updates.push(u));
+        ydoc.getText('content').insert(4, ' one');
+        svc.recordUpdate(updates[0]);
+
+        saveShouldThrow = true;
+        await svc.flushNow();
+        expect(broadcast).toHaveLength(0);
+
+        saveShouldThrow = false;
+        await svc.flushNow();
+
+        expect(broadcast).toHaveLength(1);
+        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
+        Y.applyUpdate(peer, sent);
+        expect(peer.getText('content').toString()).toBe('base one');
+    });
+
+    it('a document switch drops the dirty flag with the pending edits', () => {
+        const svc = new EditorSaveService();
+        svc.setDocument(asDocument('doc-a'));
+        svc.setYDoc(docWith('x'));
+        svc.recordUpdate(new Uint8Array([1, 2, 3]));
+        expect(svc.hasPendingWrite()).toBe(true);
+
+        svc.setDocument(asDocument('doc-b'));
+        expect(svc.takePendingDelta()).toBeNull();
+    });
+
     it('a failed save reports instead of rejecting the caller', async () => {
         saveShouldThrow = true;
         const svc = new EditorSaveService();

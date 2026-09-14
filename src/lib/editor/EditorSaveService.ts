@@ -70,6 +70,11 @@ export class EditorSaveService {
     private onSaving?: () => void;
     private onSaved?: (docId: string) => void;
     private isDestroyed = false;
+    // Set when a write fails, so the next trigger writes again instead of
+    // treating the document as saved. A failed save used to be reported and
+    // then forgotten: if nothing else was typed, the edit was lost on the
+    // next document switch, which destroys the Y.Doc it lived in.
+    private dirty = false;
     // Supplied by the editor, because only it can read the rendered document.
     private readIndex: (() => DocumentIndex | null) | null = null;
 
@@ -89,6 +94,7 @@ export class EditorSaveService {
 
     setDocument(doc: Document | null): void {
         this.currentDoc = doc;
+        this.dirty = false;
         // Updates belong to the document that produced them; carrying them
         // across a switch would broadcast one document's edit under another's
         // id.
@@ -100,6 +106,7 @@ export class EditorSaveService {
     recordUpdate(update: Uint8Array): void {
         if (this.isDestroyed) return;
         this.pendingUpdates.push(update);
+        this.dirty = true;
         this.triggerSave();
     }
 
@@ -151,19 +158,24 @@ export class EditorSaveService {
         this.onSaving?.();
         return persistSnapshot(docId, snapshot, delta, index)
             .then(() => {
+                this.dirty = false;
                 this.onSaved?.(docId);
             })
             .catch(() => {
-                // persistSnapshot already reported it; swallow so a failed save
-                // does not surface as an unhandled rejection on a teardown path.
+                // persistSnapshot already reported it to the user; swallow so
+                // a failed save does not surface as an unhandled rejection on
+                // a teardown path. Remember it, though: the content is still
+                // only in memory.
+                this.dirty = true;
+                if (delta) this.pendingUpdates.unshift(delta);
                 this.onSaved?.(docId);
             });
     }
 
-    // True while an edit is sitting in the debounce window, i.e. there is
-    // unwritten work that a teardown must flush.
+    // True when there is unwritten work a teardown must flush: an edit inside
+    // the debounce window, or a write that failed and has not been retried.
     hasPendingWrite(): boolean {
-        return this.saveTimeout !== null;
+        return this.saveTimeout !== null || this.dirty;
     }
 
     destroy(): void {
@@ -175,6 +187,7 @@ export class EditorSaveService {
         this.ydoc = null;
         this.currentDoc = null;
         this.pendingUpdates = [];
+        this.dirty = false;
     }
 }
 

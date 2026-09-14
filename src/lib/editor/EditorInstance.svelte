@@ -418,6 +418,17 @@
         background: var(--bg-secondary);
     }
 
+    /* An attachment whose bytes have not arrived from the other device yet.
+       The placeholder is a transparent 1x1 pixel, which on its own is
+       indistinguishable from nothing being there at all. */
+    .editor-content :global(img.attachment-pending) {
+        min-width: 120px;
+        min-height: 90px;
+        background: var(--bg-hover);
+        border: 1px dashed var(--border-color);
+        border-radius: 6px;
+    }
+
     .editor-content :global(img) {
         max-width: 100%;
         height: auto;

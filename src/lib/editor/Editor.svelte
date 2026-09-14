@@ -88,19 +88,30 @@
     // exit. `hidden` is the one that matters on mobile: Android can kill a
     // backgrounded app without ever firing a close event.
     function handleVisibilityChange() {
-        if (document.visibilityState === 'hidden') {
-            void saveService?.flushNow();
+        // Only when there is something to write. Flushing regardless rewrote
+        // the whole document, bumped `updated_at` and broadcast it to every
+        // peer each time the user switched away from the window.
+        if (document.visibilityState === 'hidden' && saveService?.hasPendingWrite()) {
+            void saveService.flushNow();
         }
     }
+
+    // Both Tauri listeners are registered asynchronously, so a component
+    // destroyed before they resolve would have had nothing to unregister and
+    // would have leaked a handler holding a stale editor. That happens
+    // whenever the open document is deleted.
+    let destroyed = false;
 
     onMount(async () => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('pagehide', handleVisibilityChange);
 
         try {
-            unlistenCloseRequested = await getCurrentWindow().onCloseRequested(() => {
-                void saveService?.flushNow();
+            const unlisten = await getCurrentWindow().onCloseRequested(() => {
+                if (saveService?.hasPendingWrite()) void saveService.flushNow();
             });
+            if (destroyed) unlisten();
+            else unlistenCloseRequested = unlisten;
         } catch (e) {
             // Not running under Tauri (unit tests, browser preview): the
             // visibilitychange and pagehide listeners above still cover it.
@@ -111,16 +122,19 @@
         // sync layer, so there is nothing to fetch here and nothing to apply.
         // What still needs telling is the panel below the editor, which reads
         // derived rows out of SQL rather than out of the document.
-        unlistenSyncEvent = await listen('sync-received', (event) => {
+        const unlistenSync = await listen('sync-received', (event) => {
             const payload = event.payload as { doc_id?: string };
             log.debug(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'}`);
             if (payload?.doc_id && payload.doc_id === current?.id) {
                 indexRevision++;
             }
         });
+        if (destroyed) unlistenSync();
+        else unlistenSyncEvent = unlistenSync;
     });
 
     onDestroy(() => {
+        destroyed = true;
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('pagehide', handleVisibilityChange);
         unlistenSyncEvent?.();
