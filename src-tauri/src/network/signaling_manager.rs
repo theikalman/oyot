@@ -3,7 +3,6 @@ use crate::network::mqtt_client::{MqttEvent, MqttSignalingClient, SignalingMessa
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
@@ -278,7 +277,10 @@ impl SignalingManager {
                 "[Signaling] Offer from session-authorized node {}",
                 msg.from
             );
-            (derive_room_id(&our_user_id, &ctx.user_id), ctx.display_name)
+            (
+                pairing::derive_room_id(&our_user_id, &ctx.user_id),
+                ctx.display_name,
+            )
         } else {
             eprintln!(
                 "[Signaling] Rejecting unsolicited offer from unauthorized node {}",
@@ -307,25 +309,6 @@ impl SignalingManager {
         }
         *self.publish_tx.lock() = None;
         self.authorized_peers.lock().clear();
-    }
-
-    /// True only while a live MQTT session exists (post-ConnAck). False while
-    /// connecting, reconnecting after a drop, or fully disconnected.
-    pub fn is_connected(&self) -> bool {
-        self.mqtt_client
-            .lock()
-            .as_ref()
-            .map(|c| c.is_connected())
-            .unwrap_or(false)
-    }
-
-    /// Tri-state view for the frontend: "connected" | "connecting" | "disconnected".
-    pub fn mqtt_connection_status(&self) -> &'static str {
-        match &*self.mqtt_client.lock() {
-            None => "disconnected",
-            Some(c) if c.is_connected() => "connected",
-            Some(_) => "connecting",
-        }
     }
 
     async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
@@ -435,14 +418,4 @@ impl SignalingManager {
         let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
         self.send_publish(topic, bytes).await
     }
-}
-
-fn derive_room_id(user_a: &str, user_b: &str) -> String {
-    let mut sorted = [user_a.to_string(), user_b.to_string()];
-    sorted.sort();
-    let combined = sorted.join(":");
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let result = hasher.finalize();
-    hex::encode(&result[..16])
 }

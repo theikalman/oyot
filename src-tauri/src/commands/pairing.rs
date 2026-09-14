@@ -18,20 +18,6 @@ pub fn set_display_name(
 }
 
 #[tauri::command]
-pub fn get_node_id(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let db = state.db.lock();
-    let identity = crate::identity::get_or_create_identity(&db)?;
-    Ok(identity.node_id)
-}
-
-#[tauri::command]
-pub fn get_user_id(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let db = state.db.lock();
-    let identity = crate::identity::get_or_create_identity(&db)?;
-    Ok(identity.user_id)
-}
-
-#[tauri::command]
 pub fn list_paired_devices(state: tauri::State<'_, AppState>) -> Result<Vec<DevicePair>, String> {
     let db = state.db.lock();
     let identity = crate::identity::get_or_create_identity(&db)?;
@@ -64,25 +50,10 @@ pub fn save_pair(
 }
 
 #[tauri::command]
-pub fn derive_room_id(
-    state: tauri::State<'_, AppState>,
-    peer_user_id: String,
-) -> Result<String, String> {
-    let db = state.db.lock();
-    let identity = crate::identity::get_or_create_identity(&db)?;
-    Ok(pairing::derive_room_id(&identity.user_id, &peer_user_id))
-}
-
-#[tauri::command]
 pub fn update_pair_sync_time(
     state: tauri::State<'_, AppState>,
     room_id: String,
 ) -> Result<(), String> {
     let db = state.db.lock();
     pairing::update_last_sync(&db, &room_id)
-}
-
-#[tauri::command]
-pub fn get_signaling_status(state: tauri::State<'_, AppState>) -> bool {
-    state.signaling_manager.is_connected()
 }

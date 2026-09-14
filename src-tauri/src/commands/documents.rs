@@ -40,14 +40,6 @@ pub struct IndexData {
     pub documents: Vec<DocumentSummary>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JournalEntry {
-    pub id: String,
-    pub doc_type: String,
-    pub title: String,
-    pub created_at: i64,
-}
-
 pub fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -112,16 +104,9 @@ fn current_timestamp() -> i64 {
         .as_millis() as i64
 }
 
-fn query_all_documents(
-    db: &rusqlite::Connection,
-    include_empty: bool,
-) -> Result<IndexData, String> {
-    let content_filter = if include_empty {
-        ""
-    } else {
-        "AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
-              OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))"
-    };
+fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData, String> {
+    let content_filter = "AND (EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
+              OR EXISTS (SELECT 1 FROM yjs_snapshots s WHERE s.document_id = d.id))";
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
                 CASE WHEN EXISTS (SELECT 1 FROM yjs_updates u WHERE u.document_id = d.id)
@@ -144,16 +129,7 @@ fn query_all_documents(
 #[tauri::command]
 pub fn get_all_documents(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
     let db = state.db.lock();
-    query_all_documents(&db, false)
-}
-
-// Like get_all_documents but also returns documents that have no CRDT content
-// yet - e.g. one just learned from a paired device whose delta is still in
-// flight. The sidebar shows these with a "syncing" affordance.
-#[tauri::command]
-pub fn get_all_documents_full(state: tauri::State<'_, AppState>) -> Result<IndexData, String> {
-    let db = state.db.lock();
-    query_all_documents(&db, true)
+    query_all_documents(&db)
 }
 
 #[tauri::command]
@@ -508,29 +484,6 @@ pub fn get_backlinks(
         .collect();
 
     Ok(backlinks)
-}
-
-#[tauri::command]
-pub fn get_journals(state: tauri::State<'_, AppState>) -> Result<Vec<JournalEntry>, String> {
-    let db = state.db.lock();
-    let mut stmt = db.prepare(
-        "SELECT id, type, title, created_at FROM documents WHERE type = 'journal' AND is_deleted = 0 ORDER BY created_at DESC"
-    ).map_err(|e| e.to_string())?;
-
-    let journals: Vec<JournalEntry> = stmt
-        .query_map([], |row| {
-            Ok(JournalEntry {
-                id: row.get(0)?,
-                doc_type: row.get(1)?,
-                title: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(journals)
 }
 
 #[tauri::command]

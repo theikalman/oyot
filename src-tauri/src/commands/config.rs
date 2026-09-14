@@ -40,21 +40,6 @@ pub fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_signaling_url(app: tauri::AppHandle) -> Option<String> {
-    let json = read_config(&app);
-    json.get("signaling_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
-#[tauri::command]
-pub fn save_signaling_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    let mut json = read_config(&app);
-    json["signaling_url"] = serde_json::json!(url);
-    write_config(&app, json)
-}
-
-#[tauri::command]
 pub fn get_mqtt_broker_url(app: tauri::AppHandle) -> Option<String> {
     let json = read_config(&app);
     json.get("mqtt_broker_url")

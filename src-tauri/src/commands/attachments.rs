@@ -147,35 +147,6 @@ pub fn save_image(
 }
 
 #[tauri::command]
-pub fn delete_image(state: tauri::State<'_, AppState>, hash: String) -> Result<(), String> {
-    let local_path: Option<String> = {
-        let db = state.db.lock();
-        db.query_row(
-            "SELECT local_path FROM attachments WHERE hash = ?",
-            params![&hash],
-            |row| row.get(0),
-        )
-        .ok()
-    };
-
-    if let Some(relative_path) = local_path {
-        let full_path = state.data_dir.join(relative_path);
-        if full_path.exists() {
-            std::fs::remove_file(&full_path).map_err(|e| e.to_string())?;
-        }
-    }
-
-    let db = state.db.lock();
-    db.execute(
-        "UPDATE attachments SET local_path = NULL, is_fully_downloaded = 0 WHERE hash = ?",
-        params![&hash],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
 pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32, String> {
     let orphaned: Vec<String> = {
         let db = state.db.lock();
@@ -256,36 +227,6 @@ pub struct AttachmentInfoResponse {
 }
 
 #[tauri::command]
-pub fn list_pending_attachments(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<AttachmentInfoResponse>, String> {
-    let db = state.db.lock();
-    let mut stmt = db
-        .prepare("SELECT hash, mime_type, local_path, is_fully_downloaded FROM attachments WHERE is_fully_downloaded = 0")
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            let local_path: Option<String> = row.get(2)?;
-            let is_downloaded: i32 = row.get(3)?;
-            Ok(AttachmentInfoResponse {
-                hash: row.get(0)?,
-                mime_type: row.get(1)?,
-                local_path,
-                is_fully_downloaded: is_downloaded == 1,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut result = Vec::new();
-    for info in rows.flatten() {
-        result.push(info);
-    }
-
-    Ok(result)
-}
-
-#[tauri::command]
 pub fn get_local_blob_url(
     state: tauri::State<'_, AppState>,
     hash: String,
@@ -305,41 +246,6 @@ pub fn get_local_blob_url(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
-}
-
-#[tauri::command]
-pub fn get_all_attachment_hashes(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<AttachmentHashInfo>, String> {
-    let db = state.db.lock();
-    let mut stmt = db
-        .prepare("SELECT hash, mime_type, is_fully_downloaded FROM attachments")
-        .map_err(|e| e.to_string())?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            let is_downloaded: i32 = row.get(2)?;
-            Ok(AttachmentHashInfo {
-                hash: row.get(0)?,
-                mime_type: row.get(1)?,
-                is_fully_downloaded: is_downloaded == 1,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut result = Vec::new();
-    for info in rows.flatten() {
-        result.push(info);
-    }
-
-    Ok(result)
-}
-
-#[derive(serde::Serialize)]
-pub struct AttachmentHashInfo {
-    pub hash: String,
-    pub mime_type: String,
-    pub is_fully_downloaded: bool,
 }
 
 // --- peer-to-peer attachment transfer -------------------------------------

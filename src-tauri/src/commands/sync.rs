@@ -1,7 +1,5 @@
 use crate::db::AppState;
 use crate::indexer;
-use crate::network::peer_manager;
-use crate::network::webrtc_manager::WebRtcMessage;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -10,15 +8,6 @@ use tauri::Emitter;
 pub struct YjsStateResult {
     pub doc_id: String,
     pub state: Vec<u8>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DocumentMetadata {
-    pub doc_id: String,
-    pub title: String,
-    pub doc_type: String,
-    pub created_at: i64,
-    pub updated_at: i64,
 }
 
 #[tauri::command]
@@ -92,24 +81,6 @@ pub async fn save_yjs_update(
 
     let _ = db_snapshot.check_and_consolidate(&doc_id, &merged_state);
 
-    let connected_peers = state.webrtc_manager.get_connected_peers().await;
-    eprintln!(
-        "[cmd] save_yjs_update doc_id={} broadcasting to {} Rust-side webrtc_manager peer(s): {:?}",
-        doc_id,
-        connected_peers.len(),
-        connected_peers
-    );
-    state
-        .webrtc_manager
-        .broadcast_message(
-            WebRtcMessage::CrdtUpdate {
-                doc_id: doc_id.clone(),
-                update,
-            },
-            None,
-        )
-        .await;
-
     eprintln!(
         "[cmd] save_yjs_update doc_id={} emitting sync-received (local echo)",
         doc_id
@@ -136,144 +107,4 @@ pub fn set_content_hash(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[tauri::command]
-pub fn load_document(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-) -> Result<DocumentMetadata, String> {
-    let db = state.db.lock();
-    let meta: DocumentMetadata = db
-        .query_row(
-            "SELECT id, title, type, created_at, updated_at FROM documents WHERE id = ? AND is_deleted = 0",
-            params![&doc_id],
-            |row| {
-                Ok(DocumentMetadata {
-                    doc_id: row.get(0)?,
-                    title: row.get(1)?,
-                    doc_type: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                })
-            },
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(meta)
-}
-
-#[tauri::command]
-pub async fn add_sync_peer(
-    state: tauri::State<'_, AppState>,
-    peer_id: String,
-    display_name: String,
-) -> Result<(), String> {
-    eprintln!(
-        "[cmd] add_sync_peer peer_id={} display_name={}",
-        peer_id, display_name
-    );
-    {
-        let db = state.db.lock();
-        peer_manager::save_peer(&db, &peer_id, &display_name)?;
-    }
-
-    let _ = state
-        .peer_registry
-        .add_peer(peer_id.clone(), display_name)
-        .await;
-    state.webrtc_manager.register_channel(peer_id.clone()).await;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn get_sync_peers(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let db_peers = {
-        let db = state.db.lock();
-        peer_manager::load_trusted_peers(&db)?
-    };
-    eprintln!(
-        "[cmd] get_sync_peers -> {} trusted peer(s) in db",
-        db_peers.len()
-    );
-
-    let mut result = Vec::new();
-    for peer in db_peers {
-        let _ = state
-            .peer_registry
-            .add_peer(peer.node_id.clone(), peer.device_name.clone())
-            .await;
-        result.push(serde_json::json!({
-            "node_id": peer.node_id,
-            "device_name": peer.device_name,
-        }));
-    }
-
-    Ok(result)
-}
-
-#[tauri::command]
-pub async fn remove_sync_peer(
-    state: tauri::State<'_, AppState>,
-    peer_id: String,
-) -> Result<(), String> {
-    eprintln!("[cmd] remove_sync_peer peer_id={}", peer_id);
-    {
-        let db = state.db.lock();
-        peer_manager::remove_peer(&db, &peer_id)?;
-    }
-
-    state.peer_registry.remove_peer(&peer_id).await;
-    state.webrtc_manager.unregister_channel(&peer_id).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn set_sync_enabled(_state: tauri::State<'_, AppState>, _enabled: bool) -> Result<(), String> {
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn trigger_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let peers = state.webrtc_manager.get_connected_peers().await;
-    eprintln!(
-        "[cmd] trigger_sync -> {} Rust-side webrtc_manager peer(s): {:?}",
-        peers.len(),
-        peers
-    );
-    for peer_id in peers {
-        eprintln!("[cmd] trigger_sync sending CrdtStateRequest to {}", peer_id);
-        state
-            .webrtc_manager
-            .send_to_peer(
-                &peer_id,
-                WebRtcMessage::CrdtStateRequest {
-                    doc_id: String::new(),
-                },
-            )
-            .await?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn create_snapshot(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-    snapshot_blob: Vec<u8>,
-) -> Result<(), String> {
-    let last_update_id = state.snapshot.get_latest_update_id(&doc_id)?;
-    state
-        .snapshot
-        .save_snapshot(&doc_id, &snapshot_blob, last_update_id)
-}
-
-#[tauri::command]
-pub fn get_all_updates(
-    state: tauri::State<'_, AppState>,
-    doc_id: String,
-) -> Result<Vec<Vec<u8>>, String> {
-    state.snapshot.get_all_updates(&doc_id)
 }

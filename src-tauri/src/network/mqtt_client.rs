@@ -208,12 +208,6 @@ impl MqttSignalingClient {
         self.event_tx.subscribe()
     }
 
-    /// True while an MQTT session is live (post-ConnAck). False while connecting,
-    /// reconnecting, or after shutdown.
-    pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Relaxed)
-    }
-
     /// Stops the reconnect/poll loop for this client generation. Idempotent.
     pub fn shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
