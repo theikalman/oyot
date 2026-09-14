@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
+import svelteParser from 'svelte-eslint-parser';
 import globals from 'globals';
 
 export default ts.config(
@@ -30,6 +31,15 @@ export default ts.config(
     {
         files: ['**/*.svelte'],
         languageOptions: {
+            parserOptions: { parser: ts.parser },
+        },
+    },
+    {
+        // Rune modules. They are TypeScript, but `$state` and `$derived` are
+        // Svelte syntax, so the plain TS parser rejects them.
+        files: ['**/*.svelte.ts', '**/*.svelte.js'],
+        languageOptions: {
+            parser: svelteParser,
             parserOptions: { parser: ts.parser },
         },
     },

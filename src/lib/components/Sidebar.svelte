@@ -9,7 +9,6 @@
     } from '../stores/sync';
     import { reconnectPeer } from '../sync';
     import type { DocumentSummary } from '../types';
-    import { invoke } from '@tauri-apps/api/core';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import {
@@ -21,6 +20,7 @@
     import { openDocument, openHome } from '../services/navigation';
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
+    import { createSearch, type SearchHit } from '../search/searchStore.svelte';
     import AboutDialog from './AboutDialog.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
@@ -100,91 +100,34 @@
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
-    // well as notes. It used to be a substring match on note titles only.
-    interface SearchHit {
-        id: string;
-        doc_type: string;
-        title: string;
-        snippet: string;
-    }
-
-    let searchResults = $state<SearchHit[]>([]);
-    let isSearching = $state(false);
-    // A failed search must not render as "nothing matches": that reads as an
-    // answer when it is the absence of one.
-    let searchFailed = $state(false);
-    let searchTimer: ReturnType<typeof setTimeout> | null = null;
-    let searchSeq = 0;
-    // Which hit the arrow keys have moved to. Reset whenever the results
-    // change, so Enter never opens a document the user cannot see highlighted.
-    let selectedHit = $state(0);
+    // well as notes. The debounce, the sequencing and the selection live in
+    // $lib/search: three pieces of state that have to stay in step, which they
+    // did not reliably do as loose variables among everything else here.
+    const search = createSearch();
 
     let isSearchActive = $derived(searchInput.trim().length > 0);
 
-    async function runSearch(query: string) {
-        const seq = ++searchSeq;
-        try {
-            const hits = await invoke<SearchHit[]>('search_documents', { query });
-            // Drop a response that a newer keystroke has already superseded.
-            if (seq !== searchSeq) return;
-            searchResults = hits;
-            searchFailed = false;
-            selectedHit = 0;
-        } catch (err) {
-            if (seq !== searchSeq) return;
-            console.error('[Sidebar] Search failed:', err);
-            searchResults = [];
-            searchFailed = true;
-        } finally {
-            if (seq === searchSeq) isSearching = false;
-        }
-    }
+    $effect(() => search.schedule(searchInput.trim()));
 
-    $effect(() => {
-        const query = searchInput.trim();
-        if (searchTimer) clearTimeout(searchTimer);
-
-        if (!query) {
-            searchSeq++; // invalidate anything in flight
-            searchResults = [];
-            searchFailed = false;
-            isSearching = false;
-            return;
-        }
-
-        isSearching = true;
-        searchTimer = setTimeout(() => void runSearch(query), 150);
-
-        // Without this the pending timer outlives the component: navigating
-        // to settings mid-keystroke fired a search that then wrote its result
-        // into state nothing is rendering any more.
-        return () => {
-            if (searchTimer) {
-                clearTimeout(searchTimer);
-                searchTimer = null;
-            }
-        };
-    });
-
-    // Arrow keys move through the results and Enter opens one, so a search
-    // can be completed without leaving the keyboard. Escape clears the box,
-    // which is also how you get back to the document list.
+    // Arrow keys move through the results and Enter opens one, so a search can
+    // be completed without leaving the keyboard. Escape clears the box, which
+    // is also how you get back to the document list.
     function handleSearchKeydown(event: KeyboardEvent) {
         if (event.key === 'Escape') {
             searchInput = '';
             return;
         }
-        if (searchResults.length === 0) return;
+        if (search.results.length === 0) return;
 
         if (event.key === 'ArrowDown') {
             event.preventDefault();
-            selectedHit = (selectedHit + 1) % searchResults.length;
+            search.move(1);
         } else if (event.key === 'ArrowUp') {
             event.preventDefault();
-            selectedHit = (selectedHit - 1 + searchResults.length) % searchResults.length;
+            search.move(-1);
         } else if (event.key === 'Enter') {
             event.preventDefault();
-            const hit = searchResults[selectedHit];
+            const hit = search.current();
             if (hit) openSearchHit(hit);
         }
     }
@@ -436,22 +379,22 @@
             {#if isSearchActive}
                 <div class="sidebar-section">
                     <h3>
-                        Results {#if !isSearching}({searchResults.length}){/if}
+                        Results {#if !search.searching}({search.results.length}){/if}
                     </h3>
-                    {#if isSearching && searchResults.length === 0}
+                    {#if search.searching && search.results.length === 0}
                         <p class="search-note">Searching...</p>
-                    {:else if searchFailed}
+                    {:else if search.failed}
                         <p class="search-note error">Search is unavailable right now</p>
-                    {:else if searchResults.length === 0}
+                    {:else if search.results.length === 0}
                         <p class="search-note">Nothing matches "{searchInput.trim()}"</p>
                     {:else}
                         <ul class="doc-list">
-                            {#each searchResults as hit, i (hit.id)}
+                            {#each search.results as hit, i (hit.id)}
                                 <li class="doc-item">
                                     <button
                                         class="search-hit"
                                         class:current={currentDocId === hit.id}
-                                        class:selected={i === selectedHit}
+                                        class:selected={i === search.selected}
                                         onclick={() => openSearchHit(hit)}
                                     >
                                         <span class="search-hit-title">
