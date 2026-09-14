@@ -35,8 +35,8 @@
 
             await cleanupOrphanedImages();
         } catch (error) {
+            // loadAllDocuments already reports its own failure to the user.
             console.error('Failed to initialize:', error);
-            toasts.error('Failed to load documents');
         } finally {
             appStore.setLoading(false);
         }
