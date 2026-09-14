@@ -46,3 +46,20 @@ tauri-plugin-os = "2"
 tauri-plugin-barcode-scanner = "2.4.5"
 
 
+# Defaults left the release binary unoptimised for size, which matters most on
+# Android where the Rust library ships inside the APK. `opt-level = "s"` is the
+# right trade for an app that is IO-bound rather than compute-bound.
+#
+# macOS arm64 binary: 16.0MB with cargo defaults, 7.8MB with this profile.
+#
+# Deliberately NOT `panic = "abort"`, which would take it to 6.2MB. Sync runs on
+# detached tokio tasks (the MQTT poll loop, the event forwarders); with
+# unwinding a panic there kills that task and the app keeps working, while abort
+# takes the whole note-taking app down with it. 1.6MB is not worth that, and the
+# panic surface is real: `db_snapshot::current_timestamp` unwraps
+# `duration_since(UNIX_EPOCH)`, which a misconfigured device clock can trip.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
