@@ -887,6 +887,15 @@ async function setupEventListeners(): Promise<void> {
         },
     );
 
+    // Emitted once per run of failed connection attempts, never after a
+    // session has been up. `mqtt_connect` resolves before a single packet is
+    // exchanged, so this is the only signal that the broker is unreachable or
+    // refusing us.
+    const unlistenError = await listen<string>('mqtt-error', (event) => {
+        log.debug(`[sync] event: mqtt-error -> ${event.payload}`);
+        syncStore.setSignalingError(event.payload);
+    });
+
     const unlistenStatus = await listen<string>('mqtt-status', (event) => {
         const next = event.payload as SignalingStatus;
         const prev = get(signalingStatus);
@@ -906,6 +915,7 @@ async function setupEventListeners(): Promise<void> {
         unlistenAnswer,
         unlistenIce,
         unlistenStatus,
+        unlistenError,
     ];
     log.debug('[sync] Event listeners registered');
 }

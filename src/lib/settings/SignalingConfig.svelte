@@ -1,11 +1,25 @@
 <script lang="ts">
+    import type { SignalingStatus } from '$lib/stores/sync';
+
     interface Props {
         signalingUrl: string | null;
-        isConnected: boolean;
+        status: SignalingStatus;
+        /** Why the connection failed, when `status` is 'error'. */
+        error: string | null;
         onSave: (url: string) => void;
     }
 
-    let { signalingUrl, isConnected, onSave }: Props = $props();
+    let { signalingUrl, status, error, onSave }: Props = $props();
+
+    // A boolean could not tell "still trying" from "tried and failed", so a
+    // wrong address or a rejected login read as an ordinary disconnection and
+    // the user had nothing to act on.
+    const LABELS: Record<SignalingStatus, string> = {
+        connected: 'Connected to MQTT',
+        connecting: 'Connecting...',
+        disconnected: 'Disconnected',
+        error: 'Cannot reach this broker',
+    };
 
     // Seeded from the prop, then owned by the field. The effect used to assign
     // both of these on every run, so any store update -- a reconnect, a status
@@ -61,11 +75,12 @@
                 <button class="btn-link" onclick={() => (isEditing = true)}>Edit</button>
             </div>
             <div class="status-row">
-                <span class="status-dot {isConnected ? 'connected' : 'disconnected'}"></span>
-                <span class="status-label">
-                    {isConnected ? 'Connected to MQTT' : 'Disconnected'}
-                </span>
+                <span class="status-dot {status}"></span>
+                <span class="status-label">{LABELS[status]}</span>
             </div>
+            {#if status === 'error' && error}
+                <p class="status-detail">{error}</p>
+            {/if}
         </div>
     {/if}
 </section>
@@ -147,10 +162,23 @@
         border-radius: 50%;
     }
     .status-dot.connected {
-        background: #22c55e;
+        background: var(--status-ok, #22c55e);
+    }
+    .status-dot.connecting {
+        background: var(--status-pending, #f59e0b);
     }
     .status-dot.disconnected {
-        background: #9ca3af;
+        background: var(--status-idle, #9ca3af);
+    }
+    .status-dot.error {
+        background: var(--status-error, #ef4444);
+    }
+    .status-detail {
+        margin: 8px 0 0 0;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+        word-break: break-word;
     }
     .status-label {
         font-size: 12px;

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 // Topic plus payload, handed to the publish task that owns the live MQTT client.
 type PublishSender = mpsc::Sender<(String, Vec<u8>)>;
@@ -170,7 +170,28 @@ impl SignalingManager {
             // the whole session rather than a single message.
             let mut verifier = EnvelopeVerifier::new();
             tokio::spawn(async move {
-                while let Ok(event) = event_rx.recv().await {
+                loop {
+                    let event = match event_rx.recv().await {
+                        Ok(event) => event,
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            // Keep going. Breaking here stopped every signaling
+                            // message reaching the frontend for the rest of the
+                            // session, while MQTT went on reporting "connected"
+                            // and nothing recovered short of a manual
+                            // reconnect. Anyone able to publish to the broker
+                            // could cause it, since a message is parsed and
+                            // queued before its signature is checked.
+                            warn_log!(
+                                "[Signaling] event channel lagged, {} message(s) dropped",
+                                skipped
+                            );
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            trace!("[Signaling] event channel closed, forwarder exiting");
+                            break;
+                        }
+                    };
                     match event {
                         MqttEvent::Connected => {
                             trace!("[Signaling] MQTT Connected");
@@ -178,6 +199,11 @@ impl SignalingManager {
                         }
                         MqttEvent::Disconnected => {
                             let _ = app.emit("mqtt-status", "disconnected");
+                        }
+                        MqttEvent::Error(reason) => {
+                            warn_log!("[Signaling] MQTT could not connect: {}", reason);
+                            let _ = app.emit("mqtt-status", "error");
+                            let _ = app.emit("mqtt-error", reason);
                         }
                         MqttEvent::Message { topic, msg } => {
                             trace!(

@@ -6,6 +6,7 @@
         syncStore,
         identity,
         signalingStatus,
+        signalingError,
         pairedDevices,
         connectedPeers,
         pendingPairRequest,
@@ -35,6 +36,7 @@
     let pending: PendingPairRequest | null = $state(null);
     let pairState = $state<PairingState>(null);
     let signalingUrl = $state<string | null>(null);
+    let signalingErr = $state<string | null>(null);
     let copySuccess = $state(false);
 
     onMount(() => {
@@ -59,6 +61,9 @@
         const un8 = pairingState.subscribe((v) => {
             pairState = v;
         });
+        const un9 = signalingError.subscribe((v) => {
+            signalingErr = v;
+        });
 
         return () => {
             un1();
@@ -68,6 +73,7 @@
             un6();
             un7();
             un8();
+            un9();
         };
     });
 
@@ -185,7 +191,7 @@
         onRename={handleRename}
     />
 
-    <SignalingConfig {signalingUrl} {isConnected} onSave={handleSaveSignalingUrl} />
+    <SignalingConfig {signalingUrl} {status} error={signalingErr} onSave={handleSaveSignalingUrl} />
 
     {#if isConnected}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
