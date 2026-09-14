@@ -9,6 +9,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
+// Topic plus payload, handed to the publish task that owns the live MQTT client.
+type PublishSender = mpsc::Sender<(String, Vec<u8>)>;
+
 #[derive(Debug, Clone)]
 struct PeerContext {
     user_id: String,
@@ -29,7 +32,7 @@ pub struct SignalingManager {
     user_id: Arc<ParkingMutex<String>>,
     display_name: Arc<ParkingMutex<String>>,
     app_handle: Option<AppHandle>,
-    publish_tx: Arc<ParkingMutex<Option<mpsc::Sender<(String, Vec<u8>)>>>>,
+    publish_tx: Arc<ParkingMutex<Option<PublishSender>>>,
     // Peers we've explicitly agreed to pair with during this session (accepted a
     // pair-request from them, or had our pair-request accepted). Consulted when an
     // "offer" arrives from a node_id that isn't already in the persisted device_pairs
@@ -225,6 +228,7 @@ impl SignalingManager {
     ///    e.g. after an app restart) - reuses the stored room_id directly.
     /// 2. In-memory authorized_peers (a pairing handshake accepted earlier this session)
     ///    - derives room_id from the two real user_ids exchanged during that handshake.
+    ///
     /// If neither matches, the offer is from a node we never agreed to pair with and is
     /// dropped rather than auto-accepted.
     async fn handle_offer(
@@ -374,7 +378,7 @@ impl SignalingManager {
 }
 
 fn derive_room_id(user_a: &str, user_b: &str) -> String {
-    let mut sorted = vec![user_a.to_string(), user_b.to_string()];
+    let mut sorted = [user_a.to_string(), user_b.to_string()];
     sorted.sort();
     let combined = sorted.join(":");
     let mut hasher = Sha256::new();

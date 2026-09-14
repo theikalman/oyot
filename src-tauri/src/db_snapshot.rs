@@ -73,10 +73,8 @@ impl DbSnapshot {
             .map_err(|e| e.to_string())?;
 
         let mut updates = Vec::new();
-        for row in rows {
-            if let Ok(blob) = row {
-                updates.push(blob);
-            }
+        for blob in rows.flatten() {
+            updates.push(blob);
         }
         Ok(updates)
     }

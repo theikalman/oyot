@@ -125,7 +125,7 @@ pub fn get_pair_by_room(
 use sha2::{Digest, Sha256};
 
 pub fn derive_room_id(user_a: &str, user_b: &str) -> String {
-    let mut ids = vec![user_a, user_b];
+    let mut ids = [user_a, user_b];
     ids.sort();
     let combined = ids.join(":");
     let mut hasher = Sha256::new();

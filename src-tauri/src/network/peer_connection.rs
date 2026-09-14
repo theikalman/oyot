@@ -98,7 +98,7 @@ impl PeerRegistry {
     #[allow(dead_code)]
     pub async fn broadcast_to_all(&self, msg: PeerMessage, exclude: Option<&str>) {
         let peers = self.peers.lock().await;
-        for (_, conn) in peers.iter() {
+        for conn in peers.values() {
             if let Some(ex) = exclude {
                 if conn.peer_id == ex {
                     continue;
