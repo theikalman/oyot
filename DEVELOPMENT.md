@@ -294,6 +294,33 @@ A device on a build without any of this is simply not discovered, has no
 listener, and syncs through the broker exactly as it did before. Mixed pairs
 are the normal case for a while.
 
+### Still to do: the iOS backend
+
+Deliberately not built yet, and the largest known gap in this feature. iOS
+falls back to the broker, which is what it did before local sync existed, so
+nothing is broken there; it just does not get the feature.
+
+Everything above the `backend` module in `lan_discovery.rs` is platform
+independent and already shared: the peer table, the TXT parsing, the pruning
+and the event emission. An iOS backend is a `spawn` that returns a `Handle`,
+and it needs to:
+
+- Browse and advertise through `NWBrowser` and `NWListener` in a small Tauri
+  plugin. These are permitted where a raw multicast socket is not, which is
+  the whole reason for the split.
+- Declare `NSLocalNetworkUsageDescription` and `NSBonjourServices` (listing
+  `_oyot._tcp`) in `Info.plist`. The first is the wording of the permission
+  prompt the user sees. Without the second, iOS will not resolve the service
+  at all.
+- Feed what it finds into the same `PeerTable` and start the existing
+  `lan_signaling` listener, which is plain TCP and needs nothing special from
+  the platform.
+
+What it must not need is `com.apple.developer.networking.multicast`. That is
+the entitlement `mdns-sd` would require, granted only by a request Apple
+reviews by hand, and avoiding it is why iOS gets its own backend rather than
+the one every other platform uses.
+
 ## Project Structure
 
 ```

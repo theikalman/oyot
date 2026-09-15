@@ -451,6 +451,11 @@ mod backend {
 /// entry, rather than the raw multicast socket this crate binds, which needs
 /// an entitlement Apple reviews by hand. Until that plugin exists the app
 /// falls back to the broker on iOS, which is what it does today.
+///
+/// Everything above this module is platform independent and already shared,
+/// so the work is a `spawn` that returns a `Handle` and feeds the same
+/// `PeerTable`. What it involves is written down under "Still to do: the iOS
+/// backend" in DEVELOPMENT.md.
 #[cfg(target_os = "ios")]
 mod backend {
     use super::PeerTable;
@@ -472,7 +477,8 @@ mod backend {
         _port: u16,
     ) -> Result<Handle, String> {
         Err(
-            "local-network discovery on iOS needs the Bonjour browser, which is not built yet"
+            "local-network discovery on iOS needs an NWBrowser backend, which is not built yet; \
+             see \"Still to do: the iOS backend\" in DEVELOPMENT.md"
                 .to_string(),
         )
     }
