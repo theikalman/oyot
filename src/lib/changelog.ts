@@ -31,6 +31,30 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.11-alpha',
+        date: '2026-09-15',
+        summary:
+            'Sync over the local network, with no internet and no broker in the middle. iPhone and iPad still go through a broker.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Devices on the same network find each other and sync directly, with no internet connection and no broker. Pairing works there too, so two devices can be introduced with nothing but the network they are both on.',
+            },
+            {
+                kind: 'added',
+                text: 'Settings > Sync can be set to use the local network only, in which case the app never contacts a broker at all and devices elsewhere stop syncing until they are back on your network.',
+            },
+            {
+                kind: 'improved',
+                text: 'A paired device now says whether it was reached over the local network or through the broker.',
+            },
+            {
+                kind: 'improved',
+                text: 'Losing the broker no longer stops the app trying to reconnect. Anything it can still reach, it still reaches.',
+            },
+        ],
+    },
+    {
         version: '0.0.10-alpha',
         date: '2026-09-14',
         summary: 'The editor toolbar stays on one row and scrolls sideways on small screens.',
