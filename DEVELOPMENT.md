@@ -284,11 +284,11 @@ rather than shortening the eight seconds.
 
 Platform support is not even, and this ships in stages:
 
-| Platform              | Discovery                                                                                                                                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                           |
-| Android               | `mdns-sd` is in the build, but nothing holds the `MulticastLock` Android needs to receive multicast. Assume it does not work yet.                                                                         |
-| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead and falls back to the broker until it has one. |
+| Platform              | Discovery                                                                                                                                                                                                                                                                     |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                                                                                               |
+| Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. Backgrounded it still advertises and still accepts connections, but hears nothing, and discovery finds the network again on its own when it comes back. Not yet run on a real device. |
+| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead and falls back to the broker until it has one.                                                                     |
 
 A device on a build without any of this is simply not discovered, has no
 listener, and syncs through the broker exactly as it did before. Mixed pairs
