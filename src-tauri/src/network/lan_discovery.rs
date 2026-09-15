@@ -115,6 +115,14 @@ pub fn peer_from_advert(
     if addrs.is_empty() || port == 0 {
         return None;
     }
+    // Sorted, IPv4 first, for two reasons. The library hands these over as a
+    // set, so the same advertisement can arrive in a different order each
+    // time, and an order-sensitive comparison would read that as a peer that
+    // moved and run a reconnect sweep for nothing. And IPv4 first is the order
+    // worth trying on a home network, which is what `send_to` wants anyway.
+    let mut addrs = addrs;
+    addrs.sort_by_key(|a| (!a.is_ipv4(), a.to_string()));
+    addrs.dedup();
     Some(LanPeer {
         node_id,
         boot_id: txt.get(TXT_BOOT).map(|s| s.to_string()),
@@ -563,6 +571,31 @@ mod tests {
             !table.upsert(peer("peer-a", 20, 2_000)),
             "same device, same address, later"
         );
+    }
+
+    // The library hands addresses over as a set, so the same announcement can
+    // arrive in a different order. Reading that as a peer that moved would run
+    // a reconnect sweep on every re-announcement, at random.
+    #[test]
+    fn the_same_addresses_in_a_different_order_are_not_a_change() {
+        let mut table = PeerTable::default();
+        let v4 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20));
+        let v6 = IpAddr::V6("fe80::1".parse().unwrap());
+
+        let one = peer_from_advert(&advert("peer-a"), "f", vec![v4, v6], 7000, US, 1_000).unwrap();
+        let other =
+            peer_from_advert(&advert("peer-a"), "f", vec![v6, v4], 7000, US, 2_000).unwrap();
+
+        assert!(table.upsert(one));
+        assert!(!table.upsert(other), "same device, same addresses");
+    }
+
+    #[test]
+    fn an_advert_is_read_with_ipv4_first() {
+        let v4 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20));
+        let v6 = IpAddr::V6("fe80::1".parse().unwrap());
+        let got = peer_from_advert(&advert("peer-a"), "f", vec![v6, v4], 7000, US, 0).unwrap();
+        assert_eq!(got.addrs, vec![v4, v6]);
     }
 
     #[test]

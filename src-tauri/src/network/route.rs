@@ -33,10 +33,13 @@ pub struct RouteInputs {
     /// The user asked for local-network sync only, so the broker is not an
     /// option even when it is reachable.
     pub local_only: bool,
-    /// This peer has been seen on this network and is not in a failure
-    /// cooldown.
-    pub lan_available: bool,
-    /// A broker client exists for this session.
+    /// This peer has been seen on this network and has an address to try.
+    pub lan_discovered: bool,
+    /// This peer's local route failed recently.
+    pub lan_cooling: bool,
+    /// The broker is connected, not merely configured. A client that has
+    /// never reached its broker publishes into a void, and preferring that
+    /// void over a working local network is worse than having no fallback.
     pub broker_connected: bool,
 }
 
@@ -45,15 +48,24 @@ pub struct RouteInputs {
 /// Local first, and never both: two offers for one peer is the collision
 /// perfect negotiation exists to survive (ADR 0002), and racing the routes
 /// would manufacture one on every connection to save a few seconds.
+///
+/// A cooldown is a preference, not a prohibition. It says "something else
+/// first if there is anything else", because on a device with no broker, or
+/// one whose broker is unreachable, writing off the local route means writing
+/// off the only route there is: every message then fails with "no signaling
+/// route", the peer cannot even answer an offer it received, and both devices
+/// sit at "Connecting..." until one of them is restarted.
 pub fn choose_route(inputs: RouteInputs) -> Option<Route> {
-    if inputs.lan_available {
+    if inputs.lan_discovered && !inputs.lan_cooling {
         return Some(Route::Lan);
     }
-    if inputs.local_only {
-        return None;
-    }
-    if inputs.broker_connected {
+    if !inputs.local_only && inputs.broker_connected {
         return Some(Route::Broker);
+    }
+    // Nothing else can carry it, so a route that failed recently beats no
+    // route at all.
+    if inputs.lan_discovered {
+        return Some(Route::Lan);
     }
     None
 }
@@ -65,7 +77,8 @@ mod tests {
     fn inputs() -> RouteInputs {
         RouteInputs {
             local_only: false,
-            lan_available: false,
+            lan_discovered: false,
+            lan_cooling: false,
             broker_connected: true,
         }
     }
@@ -73,7 +86,7 @@ mod tests {
     #[test]
     fn the_local_network_wins_when_the_peer_is_on_it() {
         let got = choose_route(RouteInputs {
-            lan_available: true,
+            lan_discovered: true,
             ..inputs()
         });
         assert_eq!(got, Some(Route::Lan));
@@ -82,6 +95,32 @@ mod tests {
     #[test]
     fn the_broker_carries_a_peer_that_is_not_on_this_network() {
         assert_eq!(choose_route(inputs()), Some(Route::Broker));
+    }
+
+    #[test]
+    fn a_local_route_that_failed_recently_gives_way_to_the_broker() {
+        let got = choose_route(RouteInputs {
+            lan_discovered: true,
+            lan_cooling: true,
+            ..inputs()
+        });
+        assert_eq!(got, Some(Route::Broker));
+    }
+
+    // The bug this rule was rewritten for. Two devices on one network, no
+    // broker between them: the local route fails once, and writing it off
+    // leaves nothing at all. Every message then fails with "no signaling
+    // route", so the peer cannot even answer an offer it just received, and
+    // both sides sit at "Connecting..." for ever.
+    #[test]
+    fn a_cooling_local_route_is_still_better_than_no_route() {
+        let got = choose_route(RouteInputs {
+            lan_discovered: true,
+            lan_cooling: true,
+            broker_connected: false,
+            local_only: false,
+        });
+        assert_eq!(got, Some(Route::Lan));
     }
 
     // The setting has to be true at the packet level or it is a promise the
@@ -96,10 +135,22 @@ mod tests {
     }
 
     #[test]
+    fn local_only_keeps_using_a_local_route_that_failed() {
+        let got = choose_route(RouteInputs {
+            local_only: true,
+            lan_discovered: true,
+            lan_cooling: true,
+            broker_connected: true,
+        });
+        assert_eq!(got, Some(Route::Lan), "there is nothing else to wait for");
+    }
+
+    #[test]
     fn local_only_still_uses_the_local_network() {
         let got = choose_route(RouteInputs {
             local_only: true,
-            lan_available: true,
+            lan_discovered: true,
+            lan_cooling: false,
             broker_connected: false,
         });
         assert_eq!(got, Some(Route::Lan));

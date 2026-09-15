@@ -102,6 +102,15 @@ pub struct SignalingManager {
     /// The user asked for local-network sync only, so the broker is not an
     /// option even when it is connected.
     local_only: AtomicBool,
+    /// Whether the broker connection is actually up.
+    ///
+    /// `publish_tx` only says a client generation exists: it is set the moment
+    /// `connect` is called, before a single packet has been exchanged, and it
+    /// stays set while the client retries a broker it has never reached. A
+    /// route chosen on that basis publishes into a void, which is worse than
+    /// having no fallback, because it is preferred over a local network that
+    /// works.
+    broker_online: Arc<AtomicBool>,
 }
 
 impl SignalingManager {
@@ -117,6 +126,7 @@ impl SignalingManager {
             lan: Arc::new(ParkingMutex::new(None)),
             lan_cooldowns: Arc::new(ParkingMutex::new(HashMap::new())),
             local_only: AtomicBool::new(false),
+            broker_online: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -133,20 +143,21 @@ impl SignalingManager {
 
     /// Where this peer can be reached on the local network, if anywhere.
     ///
-    /// A peer inside a failure cooldown reads as unreachable, which is what
-    /// sends the next message over the broker instead.
+    /// Says only whether it was found there. Whether its local route is in a
+    /// cooldown is a separate question, because a cooldown is a preference
+    /// rather than a prohibition: see `choose_route`.
     fn lan_peer(&self, peer_id: &str) -> Option<LanPeer> {
-        let cooling = {
-            let cooldowns = self.lan_cooldowns.lock();
-            cooldowns
-                .get(peer_id)
-                .is_some_and(|at| crypto::now_ms() - at < LAN_COOLDOWN_MS)
-        };
-        if cooling {
-            return None;
-        }
         let lan = self.lan.lock().clone();
         lan.and_then(|lan| lan.peer(peer_id))
+    }
+
+    /// Whether this peer's local route failed recently enough to prefer
+    /// something else, if there is anything else.
+    fn lan_cooling(&self, peer_id: &str) -> bool {
+        let cooldowns = self.lan_cooldowns.lock();
+        cooldowns
+            .get(peer_id)
+            .is_some_and(|at| crypto::now_ms() - at < LAN_COOLDOWN_MS)
     }
 
     /// Forget a cooldown, so the local route is tried again at once.
@@ -328,9 +339,13 @@ impl SignalingManager {
         let mut event_rx = client.subscribe_to_events();
         *self.mqtt_client.lock() = Some(client);
 
+        // A fresh client generation has not reached anything yet.
+        self.broker_online.store(false, Ordering::Relaxed);
+
         if let Some(app_handle) = &self.app_handle {
             let inbound = self.inbound(app_handle.clone(), node_id);
             let app = app_handle.clone();
+            let broker_online = self.broker_online.clone();
             tokio::spawn(async move {
                 loop {
                     let event = match event_rx.recv().await {
@@ -357,13 +372,16 @@ impl SignalingManager {
                     match event {
                         MqttEvent::Connected => {
                             trace!("[Signaling] MQTT Connected");
+                            broker_online.store(true, Ordering::Relaxed);
                             let _ = app.emit("broker-status", "connected");
                         }
                         MqttEvent::Disconnected => {
+                            broker_online.store(false, Ordering::Relaxed);
                             let _ = app.emit("broker-status", "disconnected");
                         }
                         MqttEvent::Error(reason) => {
                             warn_log!("[Signaling] MQTT could not connect: {}", reason);
+                            broker_online.store(false, Ordering::Relaxed);
                             let _ = app.emit("broker-status", "error");
                             let _ = app.emit("broker-error", reason);
                         }
@@ -398,6 +416,7 @@ impl SignalingManager {
     /// keeps a socket open and keeps announcing itself, and the setting
     /// promises none of that.
     pub fn disconnect_broker(&self) {
+        self.broker_online.store(false, Ordering::Relaxed);
         let had_client = self.mqtt_client.lock().take();
         *self.publish_tx.lock() = None;
         if let Some(client) = had_client {
@@ -407,7 +426,7 @@ impl SignalingManager {
     }
 
     fn broker_connected(&self) -> bool {
-        self.publish_tx.lock().is_some()
+        self.broker_online.load(Ordering::Relaxed) && self.publish_tx.lock().is_some()
     }
 
     /// Sign one message and send it to a peer by whichever route can reach it.
@@ -430,7 +449,8 @@ impl SignalingManager {
         let local_only = self.local_only.load(Ordering::Relaxed);
         let inputs = RouteInputs {
             local_only,
-            lan_available: lan_peer.is_some(),
+            lan_discovered: lan_peer.is_some(),
+            lan_cooling: self.lan_cooling(peer_id),
             broker_connected: self.broker_connected(),
         };
         let Some(route) = choose_route(inputs) else {
