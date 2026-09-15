@@ -10,6 +10,7 @@ import {
     canSignal,
     lanStatus,
     lanPeerIds,
+    syncMode,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
@@ -131,12 +132,26 @@ function markPeerReconnecting(peerNodeId: string, reconnecting: boolean): void {
     syncStore.setPeerReconnecting(peerNodeId, reconnecting);
 }
 
+// Whether there is another way to reach a peer if the local route does not
+// work out.
+//
+// Without one, giving up on the local network is giving up. The peer cannot
+// even be sent an answer to the offer it just delivered, every message fails
+// with "no signaling route", and the only route that could have worked is
+// torn down every eight seconds while both devices sit at "Connecting...".
+// The broker has to be connected, not merely configured: one that is timing
+// out is not a fallback.
+function hasFallbackRoute(): boolean {
+    return get(syncMode) !== 'local-only' && get(brokerStatus) === 'connected';
+}
+
 // Record which transport just carried signaling for this peer, and put the
-// local network on a short fuse when it was that.
+// local network on a short fuse when it was that and there is somewhere else
+// to go.
 function noteRoute(session: PeerSession, route: SignalingRoute): void {
     if (sessions.get(session.peerNodeId) !== session) return;
     session.route = route;
-    if (route === 'lan') {
+    if (route === 'lan' && hasFallbackRoute()) {
         armLanWatchdog(session);
     } else if (session.lanTimer) {
         clearTimeout(session.lanTimer);
@@ -158,6 +173,15 @@ function armLanWatchdog(session: PeerSession): void {
         if (sessions.get(session.peerNodeId) !== session) return;
         if (session.route !== 'lan') return;
         if (session.pc.connectionState === 'connected') return;
+        // Re-checked rather than trusted from eight seconds ago: the broker
+        // may have dropped since, and writing off the local route now would
+        // leave this peer with nothing.
+        if (!hasFallbackRoute()) {
+            log.debug(
+                `[sync] [${session.peerNodeId}] local network is the only route, staying on it`,
+            );
+            return;
+        }
         console.warn(
             `[sync] [${session.peerNodeId}] local network did not connect in ${LAN_ATTEMPT_TIMEOUT_MS}ms, falling back`,
         );
@@ -1198,7 +1222,13 @@ async function setupEventListeners(): Promise<void> {
         // it, and tearing down a working connection to move it to a route we
         // have not tried yet would be a poor trade.
         if (get(pairedDevices).some((p) => p.peer_node_id === peer.node_id)) {
-            void reconnectAllPairedDevices('lan-peer-found');
+            // This event only fires when something about reaching the peer
+            // changed, which usually means a new address or a new port after
+            // it restarted. A cooldown from the old one says nothing about
+            // this one, so it should not hold the new address back.
+            void invoke('signaling_clear_route_failure', { peerNodeId: peer.node_id })
+                .catch((e) => console.warn(`[sync] [${peer.node_id}] clear cooldown failed:`, e))
+                .finally(() => void reconnectAllPairedDevices('lan-peer-found'));
         }
     });
 
