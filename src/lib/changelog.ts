@@ -31,7 +31,7 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
-        version: '0.0.13-alpha',
+        version: '0.0.14-alpha',
         date: '2026-09-15',
         summary:
             'Sync over the local network, with no internet and no broker in the middle. iPhone and iPad still go through a broker.',
@@ -63,6 +63,14 @@ export const RELEASES: Release[] = [
             {
                 kind: 'fixed',
                 text: 'The sync indicator no longer reads "Sync error" while your devices are syncing happily over the local network. It was reporting an unreachable broker as a fault even when nothing needed one.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Two devices on one network reconnect after one of them is closed and reopened. A local connection that failed once was set aside for a minute, and with no broker to fall back to there was nothing left to try, so both devices sat on "Connecting..." indefinitely.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Pairing waits for the other device to be found on the network rather than failing the moment you paste an ID, and when it cannot find it, it says whether nothing was on the network, or the broker was not connected.',
             },
         ],
     },
