@@ -2,7 +2,7 @@
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import { appStore, theme } from '$lib/stores/app';
-    import { brokerStatus, connectedPeers } from '$lib/stores/sync';
+    import { canSignal, connectedPeers } from '$lib/stores/sync';
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
 
@@ -10,7 +10,9 @@
     let syncSummary = $derived(
         $connectedPeers.length > 0
             ? `${$connectedPeers.length} device${$connectedPeers.length !== 1 ? 's' : ''} connected`
-            : $brokerStatus === 'connected'
+            : // Ready when anything can carry a pairing, which the local
+              // network now can without a broker.
+              $canSignal
               ? 'Ready to pair'
               : 'Offline',
     );

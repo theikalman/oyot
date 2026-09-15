@@ -1,41 +1,20 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import { brokerStatus, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
+    import { brokerStatus, canSignal, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
+    import { syncBadge, type SyncTone } from '$lib/sync/syncBadge';
 
-    let signaling = $derived($brokerStatus);
+    let broker = $derived($brokerStatus);
+    let reachable = $derived($canSignal);
     let peers = $derived($connectedPeers);
     let phase = $derived($aggregateSyncPhase);
 
-    type Tone = 'synced' | 'syncing' | 'offline' | 'error';
+    // The rule, and the bug it was extracted for, are in sync/syncBadge.ts.
+    let badge = $derived(syncBadge({ peers: peers.length, phase, broker, reachable }));
+    let tone = $derived(badge.tone);
+    let label = $derived(badge.label);
 
-    let tone: Tone = $derived(
-        signaling === 'error'
-            ? 'error'
-            : peers.length === 0
-              ? 'offline'
-              : phase === 'synced'
-                ? 'synced'
-                : phase === 'error'
-                  ? 'error'
-                  : 'syncing',
-    );
-
-    let label = $derived(
-        tone === 'error'
-            ? 'Sync error'
-            : peers.length === 0
-              ? signaling === 'connected'
-                  ? 'No devices'
-                  : signaling === 'connecting'
-                    ? 'Connecting…'
-                    : 'Offline'
-              : tone === 'synced'
-                ? 'Synced'
-                : 'Syncing…',
-    );
-
-    function color(t: Tone): string {
+    function color(t: SyncTone): string {
         switch (t) {
             case 'synced':
                 return 'var(--status-synced, #22c55e)';
