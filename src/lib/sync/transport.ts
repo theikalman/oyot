@@ -7,6 +7,7 @@ import {
     pendingPairRequest,
     pairingState,
     brokerStatus,
+    canSignal,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
@@ -612,7 +613,7 @@ function scheduleReconnect(peerNodeId: string): void {
     const session = sessions.get(peerNodeId);
     if (!session || session.reconnectTimer) return;
     if (suppressReconnect.has(peerNodeId)) return;
-    if (get(brokerStatus) !== 'connected') return;
+    if (!get(canSignal)) return;
 
     const pair = get(pairedDevices).find((p) => p.peer_node_id === peerNodeId);
     if (!pair) {
@@ -635,7 +636,7 @@ function scheduleReconnect(peerNodeId: string): void {
             teardownSession(peerNodeId);
             return;
         }
-        if (suppressReconnect.has(peerNodeId) || get(brokerStatus) !== 'connected') return;
+        if (suppressReconnect.has(peerNodeId) || !get(canSignal)) return;
         void ensurePeerConnection(
             current.peer_node_id,
             current.room_id,
@@ -663,8 +664,8 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
         console.warn('[sync] reconnectPeer() called before identity was loaded, aborting');
         return;
     }
-    if (get(brokerStatus) !== 'connected') {
-        console.warn(`[sync] reconnectPeer(${peerNodeId}) ignored - signaling not connected`);
+    if (!get(canSignal)) {
+        console.warn(`[sync] reconnectPeer(${peerNodeId}) ignored - no signaling route`);
         return;
     }
     const pair = get(pairedDevices).find((p) => p.peer_node_id === peerNodeId);
@@ -702,7 +703,7 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
 
 export async function reconnectAllPairedDevices(reason: string): Promise<void> {
     if (!identity || sweepRunning) return;
-    if (get(brokerStatus) !== 'connected') return;
+    if (!get(canSignal)) return;
     sweepRunning = true;
     log.debug(`[sync] reconnectAllPairedDevices(${reason})`);
     try {
@@ -871,7 +872,7 @@ export async function initSync(): Promise<void> {
 
         await refreshPairedDevices();
 
-        if (get(brokerStatus) === 'connected') {
+        if (get(canSignal)) {
             void reconnectAllPairedDevices('init');
         }
 
@@ -982,7 +983,9 @@ async function setupEventListeners(): Promise<void> {
         syncStore.setBrokerStatus(next);
         if (next === 'connected' && prev !== 'connected') {
             void reconnectAllPairedDevices('broker-connected');
-        } else if (next === 'disconnected' || next === 'error') {
+        } else if ((next === 'disconnected' || next === 'error') && !get(canSignal)) {
+            // Only when nothing else can reach a peer: with the local network
+            // up, the broker dropping is not a reason to stop trying.
             pauseAllReconnects();
         }
     });

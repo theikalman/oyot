@@ -4,7 +4,7 @@
         connectedPeerIds,
         reconnectingPeerIds,
         roomSync,
-        brokerStatus,
+        canSignal,
     } from '$lib/stores/sync';
     import { reconnectPeer } from '$lib/sync';
     import { peerConnection, peerStatusLabel } from '$lib/sync/peerStatus';
@@ -93,7 +93,7 @@
                         <div class="device-menu">
                             <button
                                 class="doc-menu-item"
-                                disabled={online || $brokerStatus !== 'connected'}
+                                disabled={online || !$canSignal}
                                 onclick={() => reconnect(device.peer_node_id)}
                             >
                                 {reconnecting ? 'Reconnect now' : 'Reconnect'}

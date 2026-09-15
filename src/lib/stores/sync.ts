@@ -27,6 +27,11 @@ export interface PendingPairRequest {
 
 export type BrokerStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
+// Whether this device is discoverable on, and discovering peers on, the local
+// network. Separate from the broker's status: either one alone is enough to
+// reach a peer, which is what `canSignal` below is for. See ADR 0018.
+export type LanStatus = 'off' | 'starting' | 'active' | 'error';
+
 // Which transport carried a signaling message, or connected a peer.
 export type SignalingRoute = 'lan' | 'broker';
 export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
@@ -49,6 +54,7 @@ function createSyncStore() {
         identity: null as UserIdentity | null,
         brokerUrl: null as string | null,
         brokerStatus: 'disconnected' as BrokerStatus,
+        lanStatus: 'off' as LanStatus,
         // Why signaling could not connect, when the status is 'error'. Null
         // otherwise. Without it the UI can say something is wrong but not what.
         brokerError: null as string | null,
@@ -76,6 +82,7 @@ function createSyncStore() {
             })),
         setBrokerError: (reason: string) =>
             update((s) => ({ ...s, brokerStatus: 'error', brokerError: reason })),
+        setLanStatus: (status: LanStatus) => update((s) => ({ ...s, lanStatus: status })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
         setConnectedPeers: (peers: ConnectedPeer[]) =>
@@ -154,6 +161,18 @@ function createSyncStore() {
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
 export const brokerStatus = derived(syncStore, ($s) => $s.brokerStatus);
+export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
+
+// Whether there is any way to reach a peer right now.
+//
+// The reconnect paths used to ask whether the broker was connected, which made
+// the broker the definition of "can we sync at all": on a network with no route
+// to it the app was not degraded but inert, and stayed inert until it came
+// back. Either transport being up is enough. See ADR 0018.
+export const canSignal = derived(
+    syncStore,
+    ($s) => $s.brokerStatus === 'connected' || $s.lanStatus === 'active',
+);
 export const brokerError = derived(syncStore, ($s) => $s.brokerError);
 export const pairedDevices = derived(syncStore, ($s) => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, ($s) => $s.connectedPeers);
