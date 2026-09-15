@@ -17,6 +17,18 @@ export interface ConnectedPeer {
     peer_node_id: string;
     peer_display_name: string;
     room_id: string;
+    // Which transport carried the signaling that set this connection up. The
+    // documents themselves always travel directly, either way.
+    route: SignalingRoute | null;
+}
+
+// A device seen on this network, as `lan_discovery` reports it.
+export interface LanPeer {
+    node_id: string;
+    boot_id: string | null;
+    addrs: string[];
+    port: number;
+    seen_at: number;
 }
 
 export interface PendingPairRequest {
@@ -34,6 +46,10 @@ export type LanStatus = 'off' | 'starting' | 'active' | 'error';
 
 // Which transport carried a signaling message, or connected a peer.
 export type SignalingRoute = 'lan' | 'broker';
+
+// How the user wants devices reached. 'auto' prefers the local network and
+// falls back to the broker; 'local-only' never touches the broker at all.
+export type SyncMode = 'auto' | 'local-only';
 export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
 
 // Per-room document-sync progress, driven by DocSyncProtocol.
@@ -55,6 +71,8 @@ function createSyncStore() {
         brokerUrl: null as string | null,
         brokerStatus: 'disconnected' as BrokerStatus,
         lanStatus: 'off' as LanStatus,
+        lanPeers: [] as LanPeer[],
+        syncMode: 'auto' as SyncMode,
         // Why signaling could not connect, when the status is 'error'. Null
         // otherwise. Without it the UI can say something is wrong but not what.
         brokerError: null as string | null,
@@ -82,7 +100,26 @@ function createSyncStore() {
             })),
         setBrokerError: (reason: string) =>
             update((s) => ({ ...s, brokerStatus: 'error', brokerError: reason })),
-        setLanStatus: (status: LanStatus) => update((s) => ({ ...s, lanStatus: status })),
+        setLanStatus: (status: LanStatus) =>
+            update((s) => ({
+                ...s,
+                lanStatus: status,
+                // Nothing is reachable locally once discovery stops, and a
+                // list left behind would go on claiming otherwise.
+                lanPeers: status === 'active' ? s.lanPeers : [],
+            })),
+        setLanPeers: (peers: LanPeer[]) => update((s) => ({ ...s, lanPeers: peers })),
+        addLanPeer: (peer: LanPeer) =>
+            update((s) => ({
+                ...s,
+                lanPeers: [...s.lanPeers.filter((p) => p.node_id !== peer.node_id), peer],
+            })),
+        removeLanPeer: (nodeId: string) =>
+            update((s) => ({
+                ...s,
+                lanPeers: s.lanPeers.filter((p) => p.node_id !== nodeId),
+            })),
+        setSyncMode: (mode: SyncMode) => update((s) => ({ ...s, syncMode: mode })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
         setConnectedPeers: (peers: ConnectedPeer[]) =>
@@ -162,6 +199,9 @@ export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
 export const brokerStatus = derived(syncStore, ($s) => $s.brokerStatus);
 export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
+export const lanPeers = derived(syncStore, ($s) => $s.lanPeers);
+export const lanPeerIds = derived(syncStore, ($s) => new Set($s.lanPeers.map((p) => p.node_id)));
+export const syncMode = derived(syncStore, ($s) => $s.syncMode);
 
 // Whether there is any way to reach a peer right now.
 //

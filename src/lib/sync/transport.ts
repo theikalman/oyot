@@ -8,12 +8,16 @@ import {
     pairingState,
     brokerStatus,
     canSignal,
+    lanStatus,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
     type DevicePair,
     type BrokerStatus,
+    type LanStatus,
+    type LanPeer,
     type SignalingRoute,
+    type SyncMode,
 } from '../stores/sync';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
@@ -61,11 +65,16 @@ interface PeerSession {
     dataChannel: RTCDataChannel | null;
     framed: FramedChannel | null;
     proto: DocSyncProtocol | null;
+    // Which transport last carried signaling for this peer. Null until the
+    // first message goes out or arrives; the backend picks the route, so this
+    // is what it reports back rather than what we asked for.
+    route: SignalingRoute | null;
     reconnectAttempts: number;
     reconnectTimer?: ReturnType<typeof setTimeout>;
     graceTimer?: ReturnType<typeof setTimeout>;
     promoteTimer?: ReturnType<typeof setTimeout>;
     negotiationTimer?: ReturnType<typeof setTimeout>;
+    lanTimer?: ReturnType<typeof setTimeout>;
 }
 
 const repo = new DocumentRepository();
@@ -92,6 +101,15 @@ const PROMOTE_TIMEOUT_MS = 6_000;
 // peer's own offers as collisions. One lost answer therefore wedged that peer
 // until the user pressed Reconnect.
 const NEGOTIATION_TIMEOUT_MS = 30_000;
+// How long to wait for a connection negotiated over the local network before
+// giving up on that route and letting the backoff try the broker.
+//
+// A local handshake that is going to work is done well inside a second: there
+// is no relay, nothing reflexive to gather, and the peer is a few milliseconds
+// away. Thirty seconds is the right patience for a connection through the
+// internet and far too much for this one, and every second of it is a second
+// the peer is not syncing.
+const LAN_ATTEMPT_TIMEOUT_MS = 8_000;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -110,6 +128,43 @@ function isPolite(peerNodeId: string): boolean {
 
 function markPeerReconnecting(peerNodeId: string, reconnecting: boolean): void {
     syncStore.setPeerReconnecting(peerNodeId, reconnecting);
+}
+
+// Record which transport just carried signaling for this peer, and put the
+// local network on a short fuse when it was that.
+function noteRoute(session: PeerSession, route: SignalingRoute): void {
+    if (sessions.get(session.peerNodeId) !== session) return;
+    session.route = route;
+    if (route === 'lan') {
+        armLanWatchdog(session);
+    } else if (session.lanTimer) {
+        clearTimeout(session.lanTimer);
+        session.lanTimer = undefined;
+    }
+}
+
+// Stop waiting on a local route that is not connecting.
+//
+// The backend already notices a refused connection, which covers a peer that
+// has left the network. This covers the other half: the message was taken and
+// the connection still never formed, which nothing about the socket reveals.
+// Telling the backend is what sends the retry over the broker, since the peer
+// is then in a cooldown when the next message is routed.
+function armLanWatchdog(session: PeerSession): void {
+    if (session.lanTimer) return;
+    session.lanTimer = setTimeout(() => {
+        session.lanTimer = undefined;
+        if (sessions.get(session.peerNodeId) !== session) return;
+        if (session.route !== 'lan') return;
+        if (session.pc.connectionState === 'connected') return;
+        console.warn(
+            `[sync] [${session.peerNodeId}] local network did not connect in ${LAN_ATTEMPT_TIMEOUT_MS}ms, falling back`,
+        );
+        void invoke('signaling_note_route_failure', { peerNodeId: session.peerNodeId }).catch((e) =>
+            console.error(`[sync] [${session.peerNodeId}] could not report the route failure:`, e),
+        );
+        scheduleReconnect(session.peerNodeId);
+    }, LAN_ATTEMPT_TIMEOUT_MS);
 }
 
 // Rebuild the session if it has not finished connecting in time. Routed
@@ -214,9 +269,13 @@ async function sendDescription(
     const payload = serializeDesc(session.epoch, desc.toJSON());
     const cmd = desc.type === 'answer' ? 'signaling_publish_answer' : 'signaling_publish_offer';
     log.debug(`[sync] [${peerId}] -> ${desc.type} (epoch=${session.epoch})`);
-    await invoke(cmd, { peerId, sdp: payload }).catch((e) =>
-        console.error(`[sync] [${peerId}] Failed to publish ${desc.type}:`, e),
-    );
+    try {
+        const route = await invoke<SignalingRoute>(cmd, { peerId, sdp: payload });
+        log.debug(`[sync] [${peerId}] ${desc.type} went over ${route}`);
+        noteRoute(session, route);
+    } catch (e) {
+        console.error(`[sync] [${peerId}] Failed to publish ${desc.type}:`, e);
+    }
 }
 
 async function sendIceCandidate(
@@ -262,6 +321,10 @@ function clearSessionTimers(session: PeerSession): void {
     if (session.negotiationTimer) {
         clearTimeout(session.negotiationTimer);
         session.negotiationTimer = undefined;
+    }
+    if (session.lanTimer) {
+        clearTimeout(session.lanTimer);
+        session.lanTimer = undefined;
     }
 }
 
@@ -338,6 +401,7 @@ async function ensurePeerConnection(
         displayName,
         pc,
         polite,
+        route: existing?.route ?? null,
         epoch: (existing?.epoch ?? 0) + 1,
         peerEpoch: existing?.peerEpoch ?? 0,
         peerBoot: existing?.peerBoot ?? null,
@@ -397,6 +461,7 @@ async function ensurePeerConnection(
                 peer_node_id: peerNodeId,
                 peer_display_name: displayName,
                 room_id: roomId,
+                route: session.route,
             });
             invoke('save_pair', { peerNodeId, peerDisplayName: displayName, roomId })
                 .then(refreshPairedDevices)
@@ -504,6 +569,7 @@ function wireDataChannel(channel: RTCDataChannel, session: PeerSession): void {
             peer_node_id: session.peerNodeId,
             peer_display_name: session.displayName,
             room_id: session.roomId,
+            route: session.route,
         });
         void proto.start();
     };
@@ -530,7 +596,11 @@ function wireDataChannel(channel: RTCDataChannel, session: PeerSession): void {
 
 // --- perfect-negotiation description / ICE handlers -------------------
 
-async function handleDescription(from: string, env: DescEnvelope): Promise<void> {
+async function handleDescription(
+    from: string,
+    env: DescEnvelope,
+    route?: SignalingRoute,
+): Promise<void> {
     let session = sessions.get(from);
 
     if (!session) {
@@ -558,6 +628,10 @@ async function handleDescription(from: string, env: DescEnvelope): Promise<void>
         if (!built) return;
         session = built;
     }
+
+    // How it reached us is how we should answer, and what we blame if the
+    // connection never forms.
+    if (route) noteRoute(session, route);
 
     if (admitEnvelope(session, env) === 'stale') {
         log.debug(
@@ -675,6 +749,12 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
     }
 
     suppressReconnect.delete(peerNodeId);
+    // The user asked for a connection now, so let the local network be tried
+    // again even if it just failed. Sitting out the rest of a cooldown to
+    // answer them would look like the button did nothing.
+    await invoke('signaling_clear_route_failure', { peerNodeId }).catch((e) =>
+        console.warn(`[sync] [${peerNodeId}] could not clear the route cooldown:`, e),
+    );
 
     const existing = sessions.get(peerNodeId);
     if (existing) {
@@ -853,10 +933,32 @@ export async function initSync(): Promise<void> {
         // One-time hash backfill for rows written before the hashing code existed.
         void repo.backfillHashes().catch((e) => console.warn('[sync] hash backfill failed:', e));
 
+        const mode = await invoke<SyncMode>('get_sync_mode').catch((e) => {
+            console.warn('[sync] could not read the sync mode, assuming auto:', e);
+            return 'auto' as SyncMode;
+        });
+        syncStore.setSyncMode(mode);
+        log.debug(`[sync] sync mode: ${mode}`);
+
+        // The local network first, because it is the preferred route and
+        // because it is the only one that works with no internet.
+        await startLocalNetwork();
+
+        // Read before the mode is acted on, so a configured broker is still
+        // shown in settings by a device that is currently not using it.
         const mqttBroker = await invoke<string | null>('get_mqtt_broker_url');
         log.debug(`[sync] MQTT broker URL from config: ${mqttBroker || '(none)'}`);
-        if (mqttBroker && mqttBroker.trim() !== '') {
-            syncStore.setBrokerUrl(mqttBroker);
+        const hasBroker = !!mqttBroker && mqttBroker.trim() !== '';
+        if (hasBroker) syncStore.setBrokerUrl(mqttBroker);
+
+        if (mode === 'local-only') {
+            log.debug('[sync] local-network-only, not connecting to the broker');
+            syncStore.setBrokerStatus('disconnected');
+            await finishInit();
+            return;
+        }
+
+        if (hasBroker) {
             syncStore.setBrokerStatus('connecting');
             try {
                 log.debug(`[sync] Connecting to MQTT broker ${mqttBroker}...`);
@@ -866,20 +968,45 @@ export async function initSync(): Promise<void> {
                 syncStore.setBrokerStatus('error');
             }
         } else {
-            console.warn('[sync] No MQTT broker URL configured, signaling will not start');
+            console.warn(
+                '[sync] No MQTT broker URL configured, only the local network will be used',
+            );
             syncStore.setBrokerStatus('disconnected');
         }
 
-        await refreshPairedDevices();
-
-        if (get(canSignal)) {
-            void reconnectAllPairedDevices('init');
-        }
-
-        log.debug('[sync] initSync() complete, event listeners active');
+        await finishInit();
     } catch (error) {
         console.error('[sync] Failed to init sync:', error);
         syncStore.setBrokerStatus('error');
+    }
+}
+
+async function finishInit(): Promise<void> {
+    await refreshPairedDevices();
+
+    if (get(canSignal)) {
+        void reconnectAllPairedDevices('init');
+    }
+
+    log.debug('[sync] initSync() complete, event listeners active');
+}
+
+// Start advertising on this network and listening for peers on it.
+//
+// A failure here is not fatal: discovery can be unavailable for reasons that
+// have nothing to do with the app, from a firewall prompt the user has not
+// answered to a platform that has no backend for it yet. The broker still
+// works, and `canSignal` already accounts for this being off.
+async function startLocalNetwork(): Promise<void> {
+    try {
+        const port = await invoke<number>('lan_start');
+        log.debug(`[sync] local network signaling listening on port ${port}`);
+        // Seeds the list from whatever discovery already knows, which matters
+        // when sync is restarted rather than started.
+        syncStore.setLanPeers(await invoke<LanPeer[]>('lan_list_peers'));
+    } catch (e) {
+        console.warn('[sync] local network sync unavailable:', e);
+        syncStore.setLanStatus('error');
     }
 }
 
@@ -927,13 +1054,17 @@ async function setupEventListeners(): Promise<void> {
         log.debug(`[sync] event: offer from=${from} room_id=${room_id} route=${route}`);
         try {
             const { boot, epoch, description } = parseDescPayload(sdp);
-            await handleDescription(from, {
-                boot,
-                epoch,
-                description,
-                roomId: room_id,
-                displayName: display_name,
-            });
+            await handleDescription(
+                from,
+                {
+                    boot,
+                    epoch,
+                    description,
+                    roomId: room_id,
+                    displayName: display_name,
+                },
+                route,
+            );
         } catch (e) {
             console.error(`[sync] [${from}] bad offer payload:`, e);
         }
@@ -946,7 +1077,7 @@ async function setupEventListeners(): Promise<void> {
             log.debug(`[sync] event: answer from=${from} route=${route}`);
             try {
                 const { boot, epoch, description } = parseDescPayload(sdp);
-                await handleDescription(from, { boot, epoch, description });
+                await handleDescription(from, { boot, epoch, description }, route);
             } catch (e) {
                 console.error(`[sync] [${from}] bad answer payload:`, e);
             }
@@ -990,6 +1121,39 @@ async function setupEventListeners(): Promise<void> {
         }
     });
 
+    const unlistenLanStatus = await listen<string>('lan-status', (event) => {
+        const next = event.payload as LanStatus;
+        const prev = get(lanStatus);
+        log.debug(`[sync] event: lan-status -> ${next} (was ${prev})`);
+        syncStore.setLanStatus(next);
+        if (next === 'active' && prev !== 'active') {
+            void reconnectAllPairedDevices('lan-active');
+        } else if (next !== 'active' && !get(canSignal)) {
+            pauseAllReconnects();
+        }
+    });
+
+    const unlistenLanFound = await listen<LanPeer>('lan-peer-found', (event) => {
+        const peer = event.payload;
+        log.debug(
+            `[sync] event: lan-peer-found ${peer.node_id} at ${peer.addrs.join(', ')}:${peer.port}`,
+        );
+        syncStore.addLanPeer(peer);
+        // A device we are paired with just became reachable without the
+        // internet, so try it now rather than at the next backoff tick. A peer
+        // already connected through the broker is left alone: the sweep skips
+        // it, and tearing down a working connection to move it to a route we
+        // have not tried yet would be a poor trade.
+        if (get(pairedDevices).some((p) => p.peer_node_id === peer.node_id)) {
+            void reconnectAllPairedDevices('lan-peer-found');
+        }
+    });
+
+    const unlistenLanLost = await listen<{ node_id: string }>('lan-peer-lost', (event) => {
+        log.debug(`[sync] event: lan-peer-lost ${event.payload.node_id}`);
+        syncStore.removeLanPeer(event.payload.node_id);
+    });
+
     cleanupFns = [
         unlistenPairRequest,
         unlistenPairResponse,
@@ -998,6 +1162,9 @@ async function setupEventListeners(): Promise<void> {
         unlistenIce,
         unlistenStatus,
         unlistenError,
+        unlistenLanStatus,
+        unlistenLanFound,
+        unlistenLanLost,
     ];
     log.debug('[sync] Event listeners registered');
 }
@@ -1011,4 +1178,8 @@ export function shutdownSync(): void {
     clearPairRequestTimer();
     disconnectAll();
     suppressReconnect.clear();
+    // Stop advertising before the window goes: a peer acting on an
+    // advertisement we left behind would find a closed port.
+    void invoke('lan_stop').catch((e) => console.warn('[sync] lan_stop failed:', e));
+    syncStore.setLanStatus('off');
 }
