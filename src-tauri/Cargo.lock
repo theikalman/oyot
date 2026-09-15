@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "oyot"
-version = "0.0.11-alpha"
+version = "0.0.12-alpha"
 dependencies = [
  "base64 0.22.1",
  "chrono",

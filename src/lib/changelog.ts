@@ -31,7 +31,7 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
-        version: '0.0.11-alpha',
+        version: '0.0.12-alpha',
         date: '2026-09-15',
         summary:
             'Sync over the local network, with no internet and no broker in the middle. iPhone and iPad still go through a broker.',
@@ -51,6 +51,10 @@ export const RELEASES: Release[] = [
             {
                 kind: 'improved',
                 text: 'Losing the broker no longer stops the app trying to reconnect. Anything it can still reach, it still reaches.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The Node ID box on the pairing screen keeps what you type or scan into it. It was clearing itself as you typed, which left no way to pair from that screen at all.',
             },
         ],
     },
