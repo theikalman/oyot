@@ -459,6 +459,8 @@ pub fn run() {
             lan_start,
             lan_stop,
             lan_list_peers,
+            signaling_note_route_failure,
+            signaling_clear_route_failure,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

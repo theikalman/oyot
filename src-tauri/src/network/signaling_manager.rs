@@ -149,6 +149,17 @@ impl SignalingManager {
         lan.and_then(|lan| lan.peer(peer_id))
     }
 
+    /// Forget a cooldown, so the local route is tried again at once.
+    ///
+    /// For when the user presses Reconnect: they asked for a connection now,
+    /// and sitting out the rest of a cooldown to answer that would look like
+    /// the button did nothing.
+    pub fn clear_lan_failure(&self, peer_id: &str) {
+        if self.lan_cooldowns.lock().remove(peer_id).is_some() {
+            trace!("[Signaling] local route to {} is available again", peer_id);
+        }
+    }
+
     /// Record that this peer's local route did not work.
     ///
     /// Called when a send fails outright, and by the frontend when a
@@ -394,7 +405,12 @@ impl SignalingManager {
     /// goes out over the broker immediately. A refused connection is knowledge
     /// we have now, and waiting out a negotiation that can never complete to
     /// act on it would cost half a minute per message.
-    async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
+    async fn publish(
+        &self,
+        peer_id: &str,
+        msg_type: &str,
+        payload: String,
+    ) -> Result<Route, String> {
         let lan_peer = self.lan_peer(peer_id);
         let local_only = self.local_only.load(Ordering::Relaxed);
         let inputs = RouteInputs {
@@ -419,7 +435,7 @@ impl SignalingManager {
                 return Err(format!("no local address for {peer_id}"));
             };
             match lan_signaling::send_to(&peer.addrs, peer.port, &msg).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(Route::Lan),
                 Err(e) => {
                     warn_log!("[Signaling] local send to {} failed: {}", peer_id, e);
                     self.note_lan_failure(peer_id);
@@ -433,7 +449,8 @@ impl SignalingManager {
 
         let topic = format!("signaling/{}/{}", peer_id, msg_type);
         let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await
+        self.send_publish(topic, bytes).await?;
+        Ok(Route::Broker)
     }
 
     fn pair_payload(&self, accepted: Option<bool>) -> Result<String, String> {
@@ -445,21 +462,25 @@ impl SignalingManager {
         serde_json::to_string(&payload).map_err(|e| e.to_string())
     }
 
-    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<(), String> {
+    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<Route, String> {
         let payload = self.pair_payload(None)?;
         self.publish(peer_id, "pair-request", payload).await
     }
 
-    pub async fn publish_pair_response(&self, peer_id: &str, accepted: bool) -> Result<(), String> {
+    pub async fn publish_pair_response(
+        &self,
+        peer_id: &str,
+        accepted: bool,
+    ) -> Result<Route, String> {
         let payload = self.pair_payload(Some(accepted))?;
         self.publish(peer_id, "pair-response", payload).await
     }
 
-    pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
+    pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<Route, String> {
         self.publish(peer_id, "offer", sdp.to_string()).await
     }
 
-    pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
+    pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<Route, String> {
         self.publish(peer_id, "answer", sdp.to_string()).await
     }
 
@@ -467,7 +488,7 @@ impl SignalingManager {
         &self,
         peer_id: &str,
         candidate: &str,
-    ) -> Result<(), String> {
+    ) -> Result<Route, String> {
         self.publish(peer_id, "ice-candidate", candidate.to_string())
             .await
     }
