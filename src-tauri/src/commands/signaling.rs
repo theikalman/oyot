@@ -214,3 +214,14 @@ pub fn signaling_note_route_failure(state: State<'_, AppState>, peer_node_id: St
 pub fn signaling_clear_route_failure(state: State<'_, AppState>, peer_node_id: String) {
     state.signaling_manager.clear_lan_failure(&peer_node_id);
 }
+
+/// Disconnect from the broker and stay disconnected.
+///
+/// The counterpart to `broker_connect`, for the switch to local-network-only.
+/// There was no way to put the connection down before, because nothing had
+/// ever wanted to.
+#[tauri::command]
+pub fn broker_disconnect(state: State<'_, AppState>) {
+    trace!("[cmd] broker_disconnect");
+    state.signaling_manager.disconnect_broker();
+}

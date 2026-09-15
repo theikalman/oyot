@@ -450,6 +450,7 @@ pub fn run() {
             save_pair,
             update_pair_sync_time,
             broker_connect,
+            broker_disconnect,
             signaling_publish_pair_request,
             signaling_accept_pair_request,
             signaling_decline_pair_request,

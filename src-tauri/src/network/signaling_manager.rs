@@ -391,6 +391,21 @@ impl SignalingManager {
         }
     }
 
+    /// Drop the broker connection entirely.
+    ///
+    /// For the switch to local-network-only. Not publishing to the broker is
+    /// not the same as not being connected to it: the client stays subscribed,
+    /// keeps a socket open and keeps announcing itself, and the setting
+    /// promises none of that.
+    pub fn disconnect_broker(&self) {
+        let had_client = self.mqtt_client.lock().take();
+        *self.publish_tx.lock() = None;
+        if let Some(client) = had_client {
+            trace!("[Signaling] disconnecting from the broker");
+            client.shutdown();
+        }
+    }
+
     fn broker_connected(&self) -> bool {
         self.publish_tx.lock().is_some()
     }
