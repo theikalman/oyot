@@ -1,8 +1,8 @@
 pub mod attachments;
 pub mod config;
 pub mod documents;
-pub mod mqtt;
 pub mod pairing;
+pub mod signaling;
 pub mod sync;
 
 pub use attachments::*;
@@ -11,6 +11,6 @@ pub use config::{
     save_mqtt_credentials, save_theme,
 };
 pub use documents::*;
-pub use mqtt::*;
 pub use pairing::*;
+pub use signaling::*;
 pub use sync::*;

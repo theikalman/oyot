@@ -439,13 +439,13 @@ pub fn run() {
             remove_pair,
             save_pair,
             update_pair_sync_time,
-            mqtt_connect,
-            mqtt_publish_pair_request,
-            mqtt_accept_pair_request,
-            mqtt_decline_pair_request,
-            mqtt_publish_offer,
-            mqtt_publish_answer,
-            mqtt_publish_ice_candidate,
+            broker_connect,
+            signaling_publish_pair_request,
+            signaling_accept_pair_request,
+            signaling_decline_pair_request,
+            signaling_publish_offer,
+            signaling_publish_answer,
+            signaling_publish_ice_candidate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

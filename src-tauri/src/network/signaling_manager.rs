@@ -2,6 +2,7 @@ use crate::crypto::{self, EnvelopeVerifier};
 use crate::db::AppState;
 use crate::identity::LocalIdentity;
 use crate::network::mqtt_client::{MqttEvent, MqttSignalingClient, SignalingMessage};
+use crate::network::route::{choose_route, Route, RouteInputs};
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,16 @@ pub struct SignalingManager {
     // table, so unsolicited offers from unpaired/unauthorized nodes get dropped instead
     // of silently auto-accepted.
     authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
+    /// Signature, freshness and replay checks for every inbound message, on
+    /// every route. One instance for the life of the process: it used to be
+    /// built per MQTT client generation, which was enough while the broker was
+    /// the only way in, and is not once a second transport can deliver the
+    /// same envelope. See `Inbound`.
+    verifier: Arc<ParkingMutex<EnvelopeVerifier>>,
+    /// Shared for the same reason: a pairing prompt the user has just
+    /// dismissed should stay dismissed no matter which transport the next copy
+    /// of the request arrives on.
+    pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
 }
 
 impl SignalingManager {
@@ -82,6 +93,24 @@ impl SignalingManager {
             app_handle,
             publish_tx: Arc::new(ParkingMutex::new(None)),
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
+            verifier: Arc::new(ParkingMutex::new(EnvelopeVerifier::new())),
+            pair_prompts: Arc::new(ParkingMutex::new(Vec::new())),
+        }
+    }
+
+    /// The inbound half, for a route to hand received messages to.
+    ///
+    /// `node_id` and the user id are snapshots taken when a route starts, as
+    /// they were when the MQTT forwarder task captured them; neither changes
+    /// after startup.
+    pub fn inbound(&self, app: AppHandle, node_id: &str) -> Inbound {
+        Inbound {
+            app,
+            node_id: node_id.to_string(),
+            our_user_id: self.get_user_id(),
+            verifier: self.verifier.clone(),
+            pair_prompts: self.pair_prompts.clone(),
+            authorized_peers: self.authorized_peers.clone(),
         }
     }
 
@@ -204,7 +233,7 @@ impl SignalingManager {
         // ConnAck, so it is replayed automatically after a reconnect.
 
         if let Some(app_handle) = &self.app_handle {
-            let _ = app_handle.emit("mqtt-status", "connecting");
+            let _ = app_handle.emit("broker-status", "connecting");
         }
 
         let (publish_tx, mut publish_rx) = mpsc::channel::<(String, Vec<u8>)>(100);
@@ -226,19 +255,9 @@ impl SignalingManager {
         let mut event_rx = client.subscribe_to_events();
         *self.mqtt_client.lock() = Some(client);
 
-        let our_user_id = self.get_user_id();
-        let node_id_str = node_id.to_string();
-        let authorized_peers = self.authorized_peers.clone();
-
         if let Some(app_handle) = &self.app_handle {
+            let inbound = self.inbound(app_handle.clone(), node_id);
             let app = app_handle.clone();
-            let node_id_clone = node_id_str.clone();
-            // One verifier per client generation, so its replay history spans
-            // the whole session rather than a single message.
-            let mut verifier = EnvelopeVerifier::new();
-            // Owned by this task, like the verifier, so it spans the session
-            // rather than a single message.
-            let mut pair_prompts: Vec<(String, i64)> = Vec::new();
             tokio::spawn(async move {
                 loop {
                     let event = match event_rx.recv().await {
@@ -265,15 +284,15 @@ impl SignalingManager {
                     match event {
                         MqttEvent::Connected => {
                             trace!("[Signaling] MQTT Connected");
-                            let _ = app.emit("mqtt-status", "connected");
+                            let _ = app.emit("broker-status", "connected");
                         }
                         MqttEvent::Disconnected => {
-                            let _ = app.emit("mqtt-status", "disconnected");
+                            let _ = app.emit("broker-status", "disconnected");
                         }
                         MqttEvent::Error(reason) => {
                             warn_log!("[Signaling] MQTT could not connect: {}", reason);
-                            let _ = app.emit("mqtt-status", "error");
-                            let _ = app.emit("mqtt-error", reason);
+                            let _ = app.emit("broker-status", "error");
+                            let _ = app.emit("broker-error", reason);
                         }
                         MqttEvent::Message { topic, msg } => {
                             trace!(
@@ -281,47 +300,7 @@ impl SignalingManager {
                                 topic,
                                 msg.msg_type
                             );
-                            if msg.to.as_deref() != Some(node_id_clone.as_str()) {
-                                trace!(
-                                    "[Signaling] Ignoring message not addressed to us (to: {:?})",
-                                    msg.to
-                                );
-                                continue;
-                            }
-
-                            // Before anything reads the payload: prove the
-                            // sender holds the secret key for the node_id it
-                            // claims, that the message is fresh, and that we
-                            // have not already processed it. The broker is
-                            // untrusted; anyone able to publish can set `from`
-                            // to whatever they like.
-                            if let Err(e) = verifier.verify(
-                                &msg.from,
-                                node_id_clone.as_str(),
-                                &msg.msg_type,
-                                &msg.payload,
-                                msg.ts,
-                                &msg.nonce,
-                                &msg.sig,
-                                crypto::now_ms(),
-                            ) {
-                                warn_log!(
-                                    "[Signaling] Rejecting {} from {}: {}",
-                                    msg.msg_type,
-                                    msg.from,
-                                    e
-                                );
-                                continue;
-                            }
-
-                            Self::handle_message(
-                                &app,
-                                msg,
-                                our_user_id.clone(),
-                                authorized_peers.clone(),
-                                &mut pair_prompts,
-                            )
-                            .await;
+                            inbound.receive(msg, Route::Broker).await;
                         }
                     }
                 }
@@ -329,145 +308,6 @@ impl SignalingManager {
         }
 
         Ok(())
-    }
-
-    async fn handle_message(
-        app: &AppHandle,
-        msg: SignalingMessage,
-        our_user_id: String,
-        authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
-        pair_prompts: &mut Vec<(String, i64)>,
-    ) {
-        trace!(
-            "[Signaling] handle_message() type={} from={} our_user_id={}",
-            msg.msg_type,
-            msg.from,
-            our_user_id
-        );
-        match msg.msg_type.as_str() {
-            "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
-                Ok(req) => {
-                    if !allow_pair_prompt(pair_prompts, &msg.from, crypto::now_ms()) {
-                        warn_log!(
-                            "[Signaling] Ignoring a repeat pair-request from {} inside the cooldown",
-                            msg.from
-                        );
-                        return;
-                    }
-                    let _ = app.emit(
-                        "mqtt-pair-request-received",
-                        serde_json::json!({
-                            "from": msg.from,
-                            "user_id": req.user_id,
-                            "display_name": req.display_name,
-                        }),
-                    );
-                }
-                Err(e) => warn_log!("[Signaling] Failed to parse pair-request payload: {}", e),
-            },
-            "pair-response" => match serde_json::from_str::<PairPayload>(&msg.payload) {
-                Ok(resp) => {
-                    let _ = app.emit(
-                        "mqtt-pair-response-received",
-                        serde_json::json!({
-                            "from": msg.from,
-                            "user_id": resp.user_id,
-                            "display_name": resp.display_name,
-                            "accepted": resp.accepted.unwrap_or(false),
-                        }),
-                    );
-                }
-                Err(e) => warn_log!("[Signaling] Failed to parse pair-response payload: {}", e),
-            },
-            "offer" => {
-                Self::handle_offer(app, msg, our_user_id, authorized_peers).await;
-            }
-            "answer" => {
-                trace!(
-                    "[Signaling] Emitting mqtt-answer-received from={}",
-                    msg.from
-                );
-                let payload = serde_json::json!({
-                    "from": msg.from,
-                    "sdp": msg.payload,
-                });
-                let _ = app.emit("mqtt-answer-received", payload);
-            }
-            "ice-candidate" => {
-                trace!(
-                    "[Signaling] Emitting mqtt-ice-candidate-received from={}",
-                    msg.from
-                );
-                let payload = serde_json::json!({
-                    "from": msg.from,
-                    "candidate": msg.payload,
-                });
-                let _ = app.emit("mqtt-ice-candidate-received", payload);
-            }
-            _ => {
-                warn_log!(
-                    "[Signaling] Unknown message type '{}', ignoring",
-                    msg.msg_type
-                );
-            }
-        }
-    }
-
-    /// Resolves an incoming offer's sender against two trust sources, in order:
-    /// 1. Already-persisted device_pairs (a previously completed pairing reconnecting,
-    ///    e.g. after an app restart) - reuses the stored room_id directly.
-    /// 2. In-memory authorized_peers (a pairing handshake accepted earlier this session)
-    ///    - derives room_id from the two real user_ids exchanged during that handshake.
-    ///
-    /// If neither matches, the offer is from a node we never agreed to pair with and is
-    /// dropped rather than auto-accepted.
-    async fn handle_offer(
-        app: &AppHandle,
-        msg: SignalingMessage,
-        our_user_id: String,
-        authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
-    ) {
-        let persisted = {
-            let state = app.state::<AppState>();
-            let db = state.db.lock();
-            pairing::get_pair_by_node_id(&db, &our_user_id, &msg.from).unwrap_or(None)
-        };
-
-        let (room_id, display_name) = if let Some(pair) = persisted {
-            trace!(
-                "[Signaling] Offer from already-paired node {} (trusted reconnect)",
-                msg.from
-            );
-            (pair.room_id, pair.peer_display_name)
-        } else if let Some(ctx) = authorized_peers.lock().get(&msg.from).cloned() {
-            trace!(
-                "[Signaling] Offer from session-authorized node {}",
-                msg.from
-            );
-            (
-                pairing::derive_room_id(&our_user_id, &ctx.user_id),
-                ctx.display_name,
-            )
-        } else {
-            warn_log!(
-                "[Signaling] Rejecting unsolicited offer from unauthorized node {}",
-                msg.from
-            );
-            return;
-        };
-
-        trace!(
-            "[Signaling] Emitting mqtt-offer-received from={} room_id={}",
-            msg.from,
-            room_id
-        );
-        let payload = serde_json::json!({
-            "from": msg.from,
-            "sdp": msg.payload,
-            "room_id": room_id,
-            "display_name": display_name,
-        });
-        let _ = app.emit("mqtt-offer-received", payload);
     }
 
     async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
@@ -478,16 +318,46 @@ impl SignalingManager {
         }
     }
 
-    /// Publish one signed message to a peer's node-scoped topic.
+    /// Which transport should carry a message to this peer.
+    ///
+    /// Only the broker answers yes for now. The LAN inputs arrive with step 3
+    /// of ADR 0018; this is the seam they plug into, and `choose_route` already
+    /// holds the rule they will be read by.
+    fn route_for(&self, _peer_id: &str) -> Option<Route> {
+        choose_route(RouteInputs {
+            local_only: false,
+            lan_available: false,
+            broker_connected: self.publish_tx.lock().is_some(),
+        })
+    }
+
+    /// Sign one message and send it to a peer by whichever route can reach it.
     ///
     /// Every outgoing message goes through here, so there is no path that
     /// publishes an unsigned envelope.
     async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
-        trace!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
+        let Some(route) = self.route_for(peer_id) else {
+            return Err(format!("no signaling route to {peer_id}"));
+        };
+        trace!(
+            "[Signaling] publish {} to peer_id={} over {}",
+            msg_type,
+            peer_id,
+            route.label()
+        );
         let msg = self.seal(peer_id, msg_type, payload)?;
-        let topic = format!("signaling/{}/{}", peer_id, msg_type);
-        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await
+        match route {
+            Route::Broker => {
+                let topic = format!("signaling/{}/{}", peer_id, msg_type);
+                let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+                self.send_publish(topic, bytes).await
+            }
+            // Arrives with step 3 of ADR 0018, and `route_for` cannot return
+            // it before then. An error rather than an `unreachable!`: these
+            // calls run on detached tasks, where a panic takes sync down
+            // silently and a returned error is logged by the caller.
+            Route::Lan => Err(format!("no local-network route to {peer_id}")),
+        }
     }
 
     fn pair_payload(&self, accepted: Option<bool>) -> Result<String, String> {
@@ -524,6 +394,218 @@ impl SignalingManager {
     ) -> Result<(), String> {
         self.publish(peer_id, "ice-candidate", candidate.to_string())
             .await
+    }
+}
+
+/// Whether a message is addressed to us and provably came from the device it
+/// claims to, recently, and only once.
+///
+/// Runs before anything reads the payload: no transport we use is trusted, and
+/// on any of them `from` is whatever the sender chose to write.
+///
+/// Takes the verifier rather than owning one, because every route shares a
+/// single history. See `Inbound`.
+fn admit(
+    verifier: &ParkingMutex<EnvelopeVerifier>,
+    our_node_id: &str,
+    msg: &SignalingMessage,
+) -> bool {
+    if msg.to.as_deref() != Some(our_node_id) {
+        trace!(
+            "[Signaling] Ignoring message not addressed to us (to: {:?})",
+            msg.to
+        );
+        return false;
+    }
+
+    let result = verifier.lock().verify(
+        &msg.from,
+        our_node_id,
+        &msg.msg_type,
+        &msg.payload,
+        msg.ts,
+        &msg.nonce,
+        &msg.sig,
+        crypto::now_ms(),
+    );
+
+    if let Err(e) = result {
+        warn_log!(
+            "[Signaling] Rejecting {} from {}: {}",
+            msg.msg_type,
+            msg.from,
+            e
+        );
+        return false;
+    }
+    true
+}
+
+/// The inbound half of signaling: what to do with a message that has arrived,
+/// regardless of which transport carried it.
+///
+/// Held by the manager and cloned into each route's receive loop, so both
+/// routes share one replay history and one pairing-prompt cooldown. Per-route
+/// copies would mean a message captured off the broker could be replayed into
+/// the LAN listener inside the clock-skew window, because the nonce that would
+/// catch it was recorded in the other copy. See ADR 0018.
+#[derive(Clone)]
+pub struct Inbound {
+    app: AppHandle,
+    /// Our own node_id, as the `to` every message must be addressed to.
+    node_id: String,
+    our_user_id: String,
+    verifier: Arc<ParkingMutex<EnvelopeVerifier>>,
+    pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
+    authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
+}
+
+impl Inbound {
+    /// Verify, then dispatch. The single entry point for every route.
+    pub async fn receive(&self, msg: SignalingMessage, route: Route) {
+        if !admit(&self.verifier, &self.node_id, &msg) {
+            return;
+        }
+        self.dispatch(msg, route).await;
+    }
+
+    async fn dispatch(&self, msg: SignalingMessage, route: Route) {
+        trace!(
+            "[Signaling] dispatch() type={} from={} route={} our_user_id={}",
+            msg.msg_type,
+            msg.from,
+            route.label(),
+            self.our_user_id
+        );
+        match msg.msg_type.as_str() {
+            "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
+                Ok(req) => {
+                    let allowed = {
+                        let mut prompts = self.pair_prompts.lock();
+                        allow_pair_prompt(&mut prompts, &msg.from, crypto::now_ms())
+                    };
+                    if !allowed {
+                        warn_log!(
+                            "[Signaling] Ignoring a repeat pair-request from {} inside the cooldown",
+                            msg.from
+                        );
+                        return;
+                    }
+                    let _ = self.app.emit(
+                        "signaling-pair-request-received",
+                        serde_json::json!({
+                            "from": msg.from,
+                            "user_id": req.user_id,
+                            "display_name": req.display_name,
+                            "route": route.label(),
+                        }),
+                    );
+                }
+                Err(e) => warn_log!("[Signaling] Failed to parse pair-request payload: {}", e),
+            },
+            "pair-response" => match serde_json::from_str::<PairPayload>(&msg.payload) {
+                Ok(resp) => {
+                    let _ = self.app.emit(
+                        "signaling-pair-response-received",
+                        serde_json::json!({
+                            "from": msg.from,
+                            "user_id": resp.user_id,
+                            "display_name": resp.display_name,
+                            "accepted": resp.accepted.unwrap_or(false),
+                            "route": route.label(),
+                        }),
+                    );
+                }
+                Err(e) => warn_log!("[Signaling] Failed to parse pair-response payload: {}", e),
+            },
+            "offer" => {
+                self.handle_offer(msg, route).await;
+            }
+            "answer" => {
+                trace!(
+                    "[Signaling] Emitting signaling-answer-received from={}",
+                    msg.from
+                );
+                let payload = serde_json::json!({
+                    "from": msg.from,
+                    "sdp": msg.payload,
+                    "route": route.label(),
+                });
+                let _ = self.app.emit("signaling-answer-received", payload);
+            }
+            "ice-candidate" => {
+                trace!(
+                    "[Signaling] Emitting signaling-ice-candidate-received from={}",
+                    msg.from
+                );
+                let payload = serde_json::json!({
+                    "from": msg.from,
+                    "candidate": msg.payload,
+                    "route": route.label(),
+                });
+                let _ = self.app.emit("signaling-ice-candidate-received", payload);
+            }
+            _ => {
+                warn_log!(
+                    "[Signaling] Unknown message type '{}', ignoring",
+                    msg.msg_type
+                );
+            }
+        }
+    }
+
+    /// Resolves an incoming offer's sender against two trust sources, in order:
+    /// 1. Already-persisted device_pairs (a previously completed pairing reconnecting,
+    ///    e.g. after an app restart) - reuses the stored room_id directly.
+    /// 2. In-memory authorized_peers (a pairing handshake accepted earlier this session)
+    ///    - derives room_id from the two real user_ids exchanged during that handshake.
+    ///
+    /// If neither matches, the offer is from a node we never agreed to pair with and is
+    /// dropped rather than auto-accepted.
+    async fn handle_offer(&self, msg: SignalingMessage, route: Route) {
+        let persisted = {
+            let state = self.app.state::<AppState>();
+            let db = state.db.lock();
+            pairing::get_pair_by_node_id(&db, &self.our_user_id, &msg.from).unwrap_or(None)
+        };
+
+        let (room_id, display_name) = if let Some(pair) = persisted {
+            trace!(
+                "[Signaling] Offer from already-paired node {} (trusted reconnect)",
+                msg.from
+            );
+            (pair.room_id, pair.peer_display_name)
+        } else if let Some(ctx) = self.authorized_peers.lock().get(&msg.from).cloned() {
+            trace!(
+                "[Signaling] Offer from session-authorized node {}",
+                msg.from
+            );
+            (
+                pairing::derive_room_id(&self.our_user_id, &ctx.user_id),
+                ctx.display_name,
+            )
+        } else {
+            warn_log!(
+                "[Signaling] Rejecting unsolicited offer from unauthorized node {}",
+                msg.from
+            );
+            return;
+        };
+
+        trace!(
+            "[Signaling] Emitting signaling-offer-received from={} room_id={} route={}",
+            msg.from,
+            room_id,
+            route.label()
+        );
+        let payload = serde_json::json!({
+            "from": msg.from,
+            "sdp": msg.payload,
+            "room_id": room_id,
+            "display_name": display_name,
+            "route": route.label(),
+        });
+        let _ = self.app.emit("signaling-offer-received", payload);
     }
 }
 
@@ -621,6 +703,35 @@ mod tests {
                 crypto::now_ms(),
             )
             .is_ok());
+    }
+
+    // The whole reason the verifier moved onto the manager. Per-route copies
+    // would each hold half the nonce history, so an envelope captured off the
+    // broker could be replayed into the LAN listener inside the clock-skew
+    // window and arrive looking genuine.
+    #[test]
+    fn an_envelope_admitted_on_one_route_is_refused_on_the_other() {
+        let (mgr, _) = manager_with_identity();
+        let msg = mgr.seal("peer-node", "offer", "sdp".to_string()).unwrap();
+        let shared = ParkingMutex::new(EnvelopeVerifier::new());
+
+        assert!(
+            admit(&shared, "peer-node", &msg),
+            "the message as it genuinely arrives the first time"
+        );
+        assert!(
+            !admit(&shared, "peer-node", &msg),
+            "the same envelope replayed over the other transport"
+        );
+    }
+
+    #[test]
+    fn a_message_addressed_to_someone_else_is_dropped_before_verification() {
+        let (mgr, _) = manager_with_identity();
+        let msg = mgr.seal("peer-node", "offer", "sdp".to_string()).unwrap();
+        let shared = ParkingMutex::new(EnvelopeVerifier::new());
+
+        assert!(!admit(&shared, "a-different-device", &msg));
     }
 
     #[test]
