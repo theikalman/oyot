@@ -35,6 +35,7 @@ import {
     type IceEnvelope,
 } from './signaling/envelope';
 import { isPolite as politeAgainst, reconnectDelay, shouldSweep } from './signaling/negotiation';
+import { canReachForPairing, unreachableForPairing, type ReachInputs } from './pairReach';
 
 // One negotiation session per paired peer, keyed by peer node_id. Implements the
 // WHATWG "perfect negotiation" pattern so two peers that offer at the same time
@@ -861,7 +862,52 @@ export async function initiateOffer(
 // the id the user typed had already been cleared from the field, so there was
 // nothing to retry with.
 const PAIR_REQUEST_TIMEOUT_MS = 90_000;
+
+// How long to let discovery catch up before giving up on a pair request.
+//
+// Pairing over the local network needs the other device to have been found,
+// which mDNS usually manages in a second or two but not instantly. Someone who
+// opens both apps and types an id straight away would otherwise be told there
+// is no route, when waiting a moment is all that was needed. Short enough that
+// a genuinely absent device is reported quickly.
+const PAIR_DISCOVERY_WAIT_MS = 10_000;
 let pairRequestTimer: ReturnType<typeof setTimeout> | null = null;
+
+function reachInputs(peerNodeId: string): ReachInputs {
+    const state = get(syncStore);
+    return {
+        onLocalNetwork: get(lanPeerIds).has(peerNodeId),
+        brokerConfigured: !!state.brokerUrl,
+        brokerStatus: state.brokerStatus,
+        mode: state.syncMode,
+    };
+}
+
+// Resolves as soon as this peer can be reached, or false if it cannot inside
+// the wait. Driven by the store rather than by polling, so a device that
+// appears after half a second is paired with after half a second.
+function waitForPairRoute(peerNodeId: string): Promise<boolean> {
+    if (canReachForPairing(reachInputs(peerNodeId))) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+        let done = false;
+        let unsubscribe: (() => void) | null = null;
+        const finish = (reachable: boolean) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            unsubscribe?.();
+            resolve(reachable);
+        };
+        const timer = setTimeout(() => finish(false), PAIR_DISCOVERY_WAIT_MS);
+        unsubscribe = syncStore.subscribe(() => {
+            if (canReachForPairing(reachInputs(peerNodeId))) finish(true);
+        });
+        // `subscribe` calls back once synchronously, while `unsubscribe` is
+        // still null, so the subscription is dropped here instead.
+        if (done) unsubscribe();
+    });
+}
 
 function clearPairRequestTimer(): void {
     if (pairRequestTimer) {
@@ -877,6 +923,17 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     }
     clearPairRequestTimer();
     syncStore.setPairingState('requesting');
+
+    // Wait for the other device to be found before deciding it cannot be
+    // reached. Without a broker this is the only way to it, and discovery is
+    // not instant.
+    if (!(await waitForPairRoute(peerNodeId))) {
+        const reason = unreachableForPairing(reachInputs(peerNodeId));
+        log.debug(`[sync] sendPairRequest(${peerNodeId}) has no route: ${reason}`);
+        syncStore.setPairingState(null);
+        throw new Error(reason);
+    }
+
     try {
         log.debug(`[sync] sendPairRequest() -> ${peerNodeId}`);
         await invoke('signaling_publish_pair_request', { peerNodeId });

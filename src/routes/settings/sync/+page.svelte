@@ -195,11 +195,15 @@
         try {
             await sendPairRequest(nodeId);
         } catch (e) {
-            // Publishing the request can fail outright, for instance when the
-            // broker connection dropped between rendering the form and
-            // pressing the button. Nothing said so before.
+            // Publishing the request can fail outright: the device may not be
+            // on this network and the broker may be down, or gone between
+            // rendering the form and pressing the button. The transport knows
+            // which, so say what it said rather than blaming the broker, which
+            // the user may not even have.
             console.error('Failed to send pair request:', e);
-            toasts.error('Could not reach the broker to send that request');
+            toasts.error(
+                e instanceof Error && e.message ? e.message : 'Could not send that pairing request',
+            );
         }
     }
 
