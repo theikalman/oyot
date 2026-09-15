@@ -1,12 +1,15 @@
 use crate::crypto::{self, EnvelopeVerifier};
 use crate::db::AppState;
 use crate::identity::LocalIdentity;
+use crate::network::lan_discovery::{LanDiscovery, LanPeer};
+use crate::network::lan_signaling;
 use crate::network::mqtt_client::{MqttEvent, MqttSignalingClient, SignalingMessage};
 use crate::network::route::{choose_route, Route, RouteInputs};
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{broadcast, mpsc};
@@ -28,6 +31,13 @@ const PAIR_REQUEST_COOLDOWN_MS: i64 = 30_000;
 /// from many keys would grow it; the oldest entry is dropped, which at worst
 /// lets that sender ask once more.
 const MAX_PAIR_REQUEST_SENDERS: usize = 64;
+
+/// How long a peer's local route is left alone after it failed.
+///
+/// Long enough not to retry a route that is not working on every message,
+/// short enough that a peer whose wifi dropped for a moment is not stuck on
+/// the broker for the rest of the session.
+const LAN_COOLDOWN_MS: i64 = 60_000;
 
 /// Whether a pairing prompt from `from` should be shown, given when that
 /// sender last raised one. Records the time when it allows.
@@ -83,6 +93,15 @@ pub struct SignalingManager {
     /// dismissed should stay dismissed no matter which transport the next copy
     /// of the request arrives on.
     pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
+    /// Who is reachable on this network, once discovery is running. `None`
+    /// before startup attaches it, and on a build that has no discovery.
+    lan: Arc<ParkingMutex<Option<Arc<LanDiscovery>>>>,
+    /// When each peer's local route last failed, so a route that is not
+    /// working is not retried on every message.
+    lan_cooldowns: Arc<ParkingMutex<HashMap<String, i64>>>,
+    /// The user asked for local-network sync only, so the broker is not an
+    /// option even when it is connected.
+    local_only: AtomicBool,
 }
 
 impl SignalingManager {
@@ -95,7 +114,50 @@ impl SignalingManager {
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
             verifier: Arc::new(ParkingMutex::new(EnvelopeVerifier::new())),
             pair_prompts: Arc::new(ParkingMutex::new(Vec::new())),
+            lan: Arc::new(ParkingMutex::new(None)),
+            lan_cooldowns: Arc::new(ParkingMutex::new(HashMap::new())),
+            local_only: AtomicBool::new(false),
         }
+    }
+
+    /// Let the manager see who is on this network. Called once at startup.
+    pub fn attach_lan(&self, lan: Arc<LanDiscovery>) {
+        *self.lan.lock() = Some(lan);
+    }
+
+    /// Whether the broker is off the table, from the user's setting.
+    pub fn set_local_only(&self, local_only: bool) {
+        self.local_only.store(local_only, Ordering::Relaxed);
+        trace!("[Signaling] local-network-only is now {}", local_only);
+    }
+
+    /// Where this peer can be reached on the local network, if anywhere.
+    ///
+    /// A peer inside a failure cooldown reads as unreachable, which is what
+    /// sends the next message over the broker instead.
+    fn lan_peer(&self, peer_id: &str) -> Option<LanPeer> {
+        let cooling = {
+            let cooldowns = self.lan_cooldowns.lock();
+            cooldowns
+                .get(peer_id)
+                .is_some_and(|at| crypto::now_ms() - at < LAN_COOLDOWN_MS)
+        };
+        if cooling {
+            return None;
+        }
+        let lan = self.lan.lock().clone();
+        lan.and_then(|lan| lan.peer(peer_id))
+    }
+
+    /// Record that this peer's local route did not work.
+    ///
+    /// Called when a send fails outright, and by the frontend when a
+    /// negotiation started over the local network never completes.
+    pub fn note_lan_failure(&self, peer_id: &str) {
+        trace!("[Signaling] local route to {} is in cooldown", peer_id);
+        self.lan_cooldowns
+            .lock()
+            .insert(peer_id.to_string(), crypto::now_ms());
     }
 
     /// The inbound half, for a route to hand received messages to.
@@ -318,27 +380,32 @@ impl SignalingManager {
         }
     }
 
-    /// Which transport should carry a message to this peer.
-    ///
-    /// Only the broker answers yes for now. The LAN inputs arrive with step 3
-    /// of ADR 0018; this is the seam they plug into, and `choose_route` already
-    /// holds the rule they will be read by.
-    fn route_for(&self, _peer_id: &str) -> Option<Route> {
-        choose_route(RouteInputs {
-            local_only: false,
-            lan_available: false,
-            broker_connected: self.publish_tx.lock().is_some(),
-        })
+    fn broker_connected(&self) -> bool {
+        self.publish_tx.lock().is_some()
     }
 
     /// Sign one message and send it to a peer by whichever route can reach it.
     ///
     /// Every outgoing message goes through here, so there is no path that
     /// publishes an unsigned envelope.
+    ///
+    /// A local send that fails is not retried locally: the peer goes into
+    /// cooldown and, unless the user asked for local-only, the same message
+    /// goes out over the broker immediately. A refused connection is knowledge
+    /// we have now, and waiting out a negotiation that can never complete to
+    /// act on it would cost half a minute per message.
     async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
-        let Some(route) = self.route_for(peer_id) else {
+        let lan_peer = self.lan_peer(peer_id);
+        let local_only = self.local_only.load(Ordering::Relaxed);
+        let inputs = RouteInputs {
+            local_only,
+            lan_available: lan_peer.is_some(),
+            broker_connected: self.broker_connected(),
+        };
+        let Some(route) = choose_route(inputs) else {
             return Err(format!("no signaling route to {peer_id}"));
         };
+
         trace!(
             "[Signaling] publish {} to peer_id={} over {}",
             msg_type,
@@ -346,18 +413,27 @@ impl SignalingManager {
             route.label()
         );
         let msg = self.seal(peer_id, msg_type, payload)?;
-        match route {
-            Route::Broker => {
-                let topic = format!("signaling/{}/{}", peer_id, msg_type);
-                let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-                self.send_publish(topic, bytes).await
+
+        if route == Route::Lan {
+            let Some(peer) = lan_peer else {
+                return Err(format!("no local address for {peer_id}"));
+            };
+            match lan_signaling::send_to(&peer.addrs, peer.port, &msg).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    warn_log!("[Signaling] local send to {} failed: {}", peer_id, e);
+                    self.note_lan_failure(peer_id);
+                    if local_only || !self.broker_connected() {
+                        return Err(e);
+                    }
+                    trace!("[Signaling] falling back to the broker for {}", peer_id);
+                }
             }
-            // Arrives with step 3 of ADR 0018, and `route_for` cannot return
-            // it before then. An error rather than an `unreachable!`: these
-            // calls run on detached tasks, where a panic takes sync down
-            // silently and a returned error is logged by the caller.
-            Route::Lan => Err(format!("no local-network route to {peer_id}")),
         }
+
+        let topic = format!("signaling/{}/{}", peer_id, msg_type);
+        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
+        self.send_publish(topic, bytes).await
     }
 
     fn pair_payload(&self, accepted: Option<bool>) -> Result<String, String> {

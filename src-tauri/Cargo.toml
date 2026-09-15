@@ -42,6 +42,14 @@ tauri-plugin-os = "2"
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.5"
 
+# Local-network discovery (ADR 0018). Not on iOS: this binds a raw multicast
+# socket, which there needs the `com.apple.developer.networking.multicast`
+# entitlement and an approval request with a turnaround measured in weeks.
+# iOS browses through Bonjour (NWBrowser) instead, which needs only an
+# Info.plist entry, and plugs into the same `Discovery` surface.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+mdns-sd = "0.21"
+
 
 # Defaults left the release binary unoptimised for size, which matters most on
 # Android where the Rust library ships inside the APK. `opt-level = "s"` is the
