@@ -22,6 +22,24 @@
         return connectedPeers.some((p) => p.room_id === roomId);
     }
 
+    // How this connection was arranged, which is not the same as where the
+    // notes travel: the documents go directly between the two devices either
+    // way. What it answers is whether this peer would still be reachable with
+    // the internet gone.
+    function routeLabel(roomId: string): { text: string; title: string } | null {
+        const route = connectedPeers.find((p) => p.room_id === roomId)?.route;
+        if (route === 'lan') {
+            return {
+                text: 'Local network',
+                title: 'Found on this network. This peer needs no internet.',
+            };
+        }
+        if (route === 'broker') {
+            return { text: 'Via broker', title: 'Arranged through the signaling broker.' };
+        }
+        return null;
+    }
+
     // The app reconnects paired devices automatically (on startup, when signaling
     // recovers, and with backoff after a drop). The "Reconnect" action lets the
     // user bypass the backoff wait and force an attempt right now.
@@ -73,7 +91,13 @@
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>
                         {#if pstatus === 'connected'}
-                            <span class="peer-sync">{syncLabel(pair)}</span>
+                            {@const route = routeLabel(pair.room_id)}
+                            <span class="peer-sync">
+                                {syncLabel(pair)}{#if route}<span
+                                        class="peer-route"
+                                        title={route.title}>&nbsp;·&nbsp;{route.text}</span
+                                    >{/if}
+                            </span>
                         {:else if pair.last_synchronized}
                             <span class="peer-sync"
                                 >Last sync: {formatLastSync(pair.last_synchronized)}</span
@@ -187,6 +211,9 @@
     .peer-sync {
         font-size: 10px;
         color: var(--text-muted);
+    }
+    .peer-route {
+        color: var(--text-secondary);
     }
     .peer-actions {
         display: flex;

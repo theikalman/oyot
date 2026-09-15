@@ -9,6 +9,7 @@ import {
     brokerStatus,
     canSignal,
     lanStatus,
+    lanPeerIds,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
@@ -908,6 +909,58 @@ export function disconnectPeer(roomId: string): void {
         teardownSession(session.peerNodeId);
     }
     syncStore.removeConnectedPeer(roomId);
+}
+
+// Switch between using the broker as a fallback and refusing it outright.
+//
+// Applied now rather than at the next launch, and to the connection rather
+// than only to the routing: a device that goes on holding a broker session
+// open has not stopped using the broker, whatever the setting says.
+//
+// Peers that are not on this network are disconnected on the way in. "Local
+// network only" that keeps syncing to a device on the other side of the
+// country would be a promise the user cannot check and would be right not to
+// believe. They are not suppressed, so switching back brings them straight
+// home.
+export async function setSyncMode(mode: SyncMode): Promise<void> {
+    log.debug(`[sync] setSyncMode(${mode})`);
+    await invoke('save_sync_mode', { mode });
+    syncStore.setSyncMode(mode);
+
+    if (mode === 'local-only') {
+        await invoke('broker_disconnect').catch((e) =>
+            console.error('[sync] broker_disconnect failed:', e),
+        );
+        syncStore.setBrokerStatus('disconnected');
+        disconnectPeersOffThisNetwork();
+        if (!get(canSignal)) pauseAllReconnects();
+        return;
+    }
+
+    const brokerUrl = await invoke<string | null>('get_mqtt_broker_url');
+    if (!brokerUrl || brokerUrl.trim() === '') {
+        log.debug('[sync] no broker configured, nothing to reconnect to');
+        return;
+    }
+    syncStore.setBrokerStatus('connecting');
+    try {
+        await invoke('broker_connect', { brokerUrl });
+    } catch (e) {
+        console.error('[sync] Failed to connect to MQTT broker:', e);
+        syncStore.setBrokerStatus('error');
+    }
+}
+
+function disconnectPeersOffThisNetwork(): void {
+    const local = get(lanPeerIds);
+    for (const peerNodeId of [...sessions.keys()]) {
+        if (local.has(peerNodeId)) continue;
+        const session = sessions.get(peerNodeId);
+        if (!session) continue;
+        log.debug(`[sync] [${peerNodeId}] not on this network, disconnecting for local-only`);
+        syncStore.removeConnectedPeer(session.roomId);
+        teardownSession(peerNodeId);
+    }
 }
 
 export function disconnectAll(): void {

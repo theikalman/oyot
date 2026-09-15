@@ -11,20 +11,28 @@
         connectedPeers,
         pendingPairRequest,
         pairingState,
+        canSignal,
+        lanStatus,
+        lanPeers,
+        syncMode,
         type UserIdentity,
         type DevicePair,
         type ConnectedPeer,
         type PendingPairRequest,
         type PairingState,
+        type LanStatus,
+        type SyncMode,
     } from '$lib/stores/sync';
     import {
         sendPairRequest,
         respondToPairRequest,
         disconnectPeer,
         reconnectPeer,
+        setSyncMode,
     } from '$lib/sync';
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
+    import { SyncModeSelector } from '$lib/settings';
     import { SignalingConfig } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
@@ -42,6 +50,20 @@
     let brokerUser = $state<string | null>(null);
     let brokerPass = $state<string | null>(null);
     let copySuccess = $state(false);
+    let mode = $state<SyncMode>('auto');
+    let lanState = $state<LanStatus>('off');
+    let nearby = $state(0);
+    // Switching drops or opens a broker connection, so the choice is held
+    // until that has actually happened rather than snapping back a moment
+    // later if it fails.
+    let switchingMode = $state(false);
+    // A switch that fails leaves the radio the user clicked checked while the
+    // app is still in the old mode: the DOM changed, nothing Svelte tracks
+    // did, so nothing puts it back and the control contradicts the highlight
+    // beside it. Bumping this remounts the selector, which rebuilds the inputs
+    // from the mode that is actually in force.
+    let modeEpoch = $state(0);
+    let canReachAnything = $state(false);
 
     onMount(() => {
         void invoke<{ username: string | null; password: string | null }>('get_mqtt_credentials')
@@ -75,6 +97,18 @@
         const un9 = brokerError.subscribe((v) => {
             signalingErr = v;
         });
+        const un10 = syncMode.subscribe((v) => {
+            mode = v;
+        });
+        const un11 = lanStatus.subscribe((v) => {
+            lanState = v;
+        });
+        const un12 = lanPeers.subscribe((v) => {
+            nearby = v.length;
+        });
+        const un13 = canSignal.subscribe((v) => {
+            canReachAnything = v;
+        });
 
         return () => {
             un1();
@@ -85,6 +119,10 @@
             un7();
             un8();
             un9();
+            un10();
+            un11();
+            un12();
+            un13();
         };
     });
 
@@ -119,10 +157,29 @@
             syncStore.setBrokerUrl(url);
             brokerUser = username || null;
             brokerPass = password || null;
-            await invoke('broker_connect', { brokerUrl: url });
+            // Storing an address is not asking to use it: connecting here
+            // while the device is set to local network only would undo the
+            // setting from the section above it.
+            if (mode !== 'local-only') {
+                await invoke('broker_connect', { brokerUrl: url });
+            }
         } catch (e) {
             console.error('Failed to save MQTT settings:', e);
             toasts.error(typeof e === 'string' ? e : 'Could not save the broker settings');
+        }
+    }
+
+    async function handleModeChange(next: SyncMode) {
+        if (next === mode || switchingMode) return;
+        switchingMode = true;
+        try {
+            await setSyncMode(next);
+        } catch (e) {
+            console.error('Failed to change the sync mode:', e);
+            toasts.error('Could not change how this device connects');
+            modeEpoch += 1;
+        } finally {
+            switchingMode = false;
         }
     }
 
@@ -184,7 +241,10 @@
         }
     }
 
-    let isConnected = $derived(status === 'connected');
+    // Pairing needs a way to reach the other device, which the local network
+    // now also provides: a device discovered on it can be paired with while
+    // both are offline.
+    let canPair = $derived(canReachAnything);
 
     // Schema v3 replaced UUID device identity with an Ed25519 keypair and
     // cleared every stored pairing, because a pairing records a peer's node_id
@@ -237,26 +297,43 @@
         onRename={handleRename}
     />
 
+    {#key modeEpoch}
+        <SyncModeSelector
+            {mode}
+            lanStatus={lanState}
+            {nearby}
+            busy={switchingMode}
+            onChange={handleModeChange}
+        />
+    {/key}
+
     <SignalingConfig
         {brokerUrl}
         {status}
         error={signalingErr}
         username={brokerUser}
         password={brokerPass}
+        inactive={mode === 'local-only'}
         onSave={handleSaveBrokerUrl}
     />
 
-    {#if isConnected}
+    {#if canPair}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
     {:else}
-        <!-- Pairing needs the broker, so the form cannot work here. It used to
-             vanish with no explanation, which reads as a missing feature
-             rather than a prerequisite. -->
+        <!-- Pairing needs a route to the other device, so the form cannot work
+             here. It used to vanish with no explanation, which reads as a
+             missing feature rather than a prerequisite. -->
         <section class="section">
             <h2>Pair a Device</h2>
             <p class="section-note">
-                Connect to a broker first. Pairing is arranged through it, so there is nothing this
-                device can do until it is reachable.
+                {#if mode === 'local-only'}
+                    Put both devices on the same network. This one is set to local network only, so
+                    it will not arrange a pairing any other way.
+                {:else}
+                    Connect to a broker, or put both devices on the same network. Pairing is
+                    arranged over one of the two, so there is nothing this device can do until one
+                    of them is available.
+                {/if}
             </p>
         </section>
     {/if}

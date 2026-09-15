@@ -8,10 +8,20 @@
         error: string | null;
         username: string | null;
         password: string | null;
+        /** The device is set to local network only, so the broker is not used. */
+        inactive?: boolean;
         onSave: (settings: { url: string; username: string; password: string }) => void;
     }
 
-    let { brokerUrl, status, error, username, password, onSave }: Props = $props();
+    let {
+        brokerUrl,
+        status,
+        error,
+        username,
+        password,
+        inactive = false,
+        onSave,
+    }: Props = $props();
 
     // A boolean could not tell "still trying" from "tried and failed", so a
     // wrong address or a rejected login read as an ordinary disconnection and
@@ -114,7 +124,7 @@
                 <p class="status-detail error">{urlError}</p>
             {/if}
             <button type="submit" class="btn-primary" disabled={!inputUrl.trim()}>
-                Save & Connect
+                {inactive ? 'Save' : 'Save & Connect'}
             </button>
         </form>
     {:else}
@@ -123,12 +133,21 @@
                 <span class="url">{brokerUrl}</span>
                 <button class="btn-link" onclick={() => (isEditing = true)}>Edit</button>
             </div>
-            <div class="status-row">
-                <span class="status-dot {status}"></span>
-                <span class="status-label">{LABELS[status]}</span>
-            </div>
-            {#if status === 'error' && error}
-                <p class="status-detail">{error}</p>
+            {#if inactive}
+                <!-- Saying "Disconnected" here would read as a fault. It is a
+                     choice the user made one section up. -->
+                <div class="status-row">
+                    <span class="status-dot disconnected"></span>
+                    <span class="status-label">Not in use, this device is local network only</span>
+                </div>
+            {:else}
+                <div class="status-row">
+                    <span class="status-dot {status}"></span>
+                    <span class="status-label">{LABELS[status]}</span>
+                </div>
+                {#if status === 'error' && error}
+                    <p class="status-detail">{error}</p>
+                {/if}
             {/if}
         </div>
     {/if}
