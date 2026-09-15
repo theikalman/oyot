@@ -582,32 +582,43 @@ pub fn search_documents(
 /// This used to take a `_target_title` it ignored and return every non-deleted
 /// document, which made it look implemented while being a stub. It now reads
 /// the edge table the editor maintains on save.
+///
+/// Split from the command the way `query_all_documents` is, so a test can run
+/// the real SQL. Inline in the command it was reachable only from a running
+/// app, and it shipped with an unsubstituted `{HAS_CONTENT}` in it that
+/// SQLite rejected on every call.
+fn query_backlinks(
+    db: &rusqlite::Connection,
+    doc_id: &str,
+) -> Result<Vec<DocumentSummary>, String> {
+    let sql = format!(
+        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
+                {HAS_CONTENT} as has_content
+           FROM document_links l
+           JOIN documents d ON d.id = l.source_id
+           LEFT JOIN document_index i ON d.id = i.document_id
+          WHERE l.target_id = ?1
+            AND d.is_deleted = 0
+          ORDER BY d.updated_at DESC"
+    );
+    let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let backlinks: Vec<DocumentSummary> = stmt
+        .query_map(params![doc_id], row_to_document_summary)
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(backlinks)
+}
+
 #[tauri::command]
 pub fn get_backlinks(
     state: tauri::State<'_, AppState>,
     doc_id: String,
 ) -> Result<Vec<DocumentSummary>, String> {
     let db = state.db.lock();
-    let mut stmt = db
-        .prepare(
-            "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                    {HAS_CONTENT} as has_content
-               FROM document_links l
-               JOIN documents d ON d.id = l.source_id
-               LEFT JOIN document_index i ON d.id = i.document_id
-              WHERE l.target_id = ?1
-                AND d.is_deleted = 0
-              ORDER BY d.updated_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let backlinks: Vec<DocumentSummary> = stmt
-        .query_map(params![&doc_id], row_to_document_summary)
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(backlinks)
+    query_backlinks(&db, &doc_id)
 }
 
 /// One task item, with enough of its document to group and open it.
@@ -804,6 +815,53 @@ mod tests {
             .into_iter()
             .map(|t| (t.document_title, t.text))
             .collect()
+    }
+
+    fn add_link(db: &Connection, source: &str, target: &str) {
+        db.execute(
+            "INSERT INTO document_links (source_id, target_id) VALUES (?1, ?2)",
+            params![source, target],
+        )
+        .unwrap();
+    }
+
+    // The query shipped with `{HAS_CONTENT}` in it, unsubstituted, because it
+    // was written as a plain string where every other query of its shape is
+    // built with format!. SQLite rejected it at prepare time, so every call
+    // failed and no note ever showed a backlink. Nothing could catch it: the
+    // SQL only ran inside a command, and no test could reach a command.
+    #[test]
+    fn a_note_lists_the_notes_that_link_to_it() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_doc(&db, "d3", "note", "Three", 30);
+        add_link(&db, "d2", "d1");
+        add_link(&db, "d3", "d1");
+
+        let titles: Vec<String> = query_backlinks(&db, "d1")
+            .expect("the query must be valid SQL")
+            .into_iter()
+            .map(|d| d.title)
+            .collect();
+
+        assert_eq!(titles, vec!["Three".to_string(), "Two".to_string()]);
+    }
+
+    #[test]
+    fn a_note_nothing_links_to_has_no_backlinks() {
+        let db = db();
+        assert!(query_backlinks(&db, "d1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_note_stops_being_listed_as_a_backlink() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_link(&db, "d2", "d1");
+        db.execute("UPDATE documents SET is_deleted = 1 WHERE id = 'd2'", [])
+            .unwrap();
+
+        assert!(query_backlinks(&db, "d1").unwrap().is_empty());
     }
 
     // The requirement the page exists for: everything the user wrote down,

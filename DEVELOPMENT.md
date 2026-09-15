@@ -152,6 +152,35 @@ inside the 120 second window. Filling the sender map still takes 32 distinct
 keypairs, and the prize is one replayed signaling message, which the pairing
 check and perfect negotiation both absorb.
 
+**The local network is untrusted in the same way, and shares one verifier.**
+Discovery and the local signaling channel carry the same signed envelope, so
+nothing about the trust story changes with the transport. The verifier and its
+replay history are shared between the two routes rather than one per
+transport: separate histories would let a message captured off the broker be
+replayed into the local listener inside the 120 second window, with the nonce
+that should have caught it recorded in the other copy.
+
+What the local network exposes is not quite what the broker sees. The mDNS TXT
+record carries this device's `node_id`, an id for this run of the process and
+a version, and deliberately not the device name, so joining a café network
+does not announce "Aji's laptop" to everyone on it. The envelope is signed but
+not encrypted, so anyone on the network can read the SDP inside, which is the
+same exposure the broker already has. Note content travels inside WebRTC's
+DTLS either way.
+
+The `node_id` is stable and is now broadcast on every network the device
+joins, which is a tracking vector that did not exist before: someone present
+on two different networks can tell it was the same device both times.
+Advertising a hash of the id and the hour instead would stay recognisable to
+paired peers, who can compute it for each peer they know, and mean nothing to
+anyone else. Not done, and worth doing before this is on by default on mobile.
+
+The listener accepts a connection from anyone on the network, so it caps the
+frame size before allocating, times out a connection that does not deliver,
+and rate limits arrivals per source address. What it does not do is answer
+differently for a paired device than for a stranger, so it does not leak who
+this device is paired with.
+
 A pairing prompt from one sender is rate limited to one per 30 seconds.
 Anyone who learns a `node_id` can publish to its topic, and a valid request
 puts a modal in front of the user, so without this an unpaired device could
@@ -188,9 +217,109 @@ device, and point it at `mqtts://host:8883`. Credentials are stored in the
 same plaintext `config.json` as the rest of the configuration, alongside the
 signing key.
 
+You do not need a broker at all to develop against two devices on one
+network. See [Local network sync](#local-network-sync).
+
 The secret key lives in the app database rather than the OS keychain. Anything
 that can read it can already read the notes, so this is coherent rather than
 ideal; moving it is tracked as follow-up work in the ADR.
+
+## Local network sync
+
+Two devices on the same network reach each other directly, with no internet
+and no broker. This is a second signaling transport rather than a second sync
+mechanism: discovery answers "where is that device", and everything after that
+is the same WebRTC data channel and the same document protocol. Note data
+already travelled directly between devices on one network; what needed the
+internet was the introduction. See
+[ADR 0018](docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md).
+
+`src-tauri/src/network/lan_discovery.rs` advertises `_oyot._tcp.local` and
+browses for the same. `lan_signaling.rs` listens on an ephemeral port and
+carries the same signed envelope, one message per connection.
+`route.rs` holds the choice between the two transports, which is made per peer
+and never races them.
+
+### Trying it
+
+You need two devices. Two instances on one machine will not do: they share an
+app data directory, so they share an identity, and a device ignores its own
+advertisement.
+
+1. Stop the broker, so nothing can fall back to it: `docker compose down`.
+2. On both devices, open Settings > Sync and choose **Local network only**.
+   The setting is stored as `sync_mode` in `config.json`.
+3. Pair as usual, by ID or by QR code. Discovery supplies the address; the
+   confirmation is unchanged, and still the thing that decides a pairing.
+
+`Local network: On, N devices nearby` in that section is the quickest check
+that discovery works on the network you are actually on. The count includes
+devices you have not paired with, because "is anything being found at all" is
+the question when it does not work.
+
+In a dev build the Rust side traces to stderr, so `[LAN]` lines appear in the
+terminal running `make dev`, and the frontend's `[sync]` lines in the webview
+console. Between them they say which route each message took and why a route
+was written off.
+
+### The firewall prompt
+
+The listener binds a port, so macOS and Windows ask whether to allow incoming
+connections the first time a build runs. Answering no leaves a state that is
+hard to read: this device goes on advertising, so the status line can still
+say `On`, while nothing on the network can open a connection to it. Depending
+on the platform the same block can also stop this device hearing other
+devices' advertisements. If local sync stops working after a rebuild, check
+there first, since a new binary can be treated as a new application.
+
+### When it does not work
+
+Access point client isolation, which is common on guest and café networks,
+passes mDNS and blocks device-to-device traffic. Discovery finds the peer, the
+connection never forms, and after eight seconds that peer's local route is
+written off for a minute and the broker takes over. Under Automatic that is a
+delay; under Local network only it is a peer that does not sync. If that turns
+out to be the common case rather than the rare one, lengthen the cooldown
+rather than shortening the eight seconds.
+
+Platform support is not even, and this ships in stages:
+
+| Platform              | Discovery                                                                                                                                                                                                                                                                     |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                                                                                               |
+| Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. Backgrounded it still advertises and still accepts connections, but hears nothing, and discovery finds the network again on its own when it comes back. Not yet run on a real device. |
+| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead and falls back to the broker until it has one.                                                                     |
+
+A device on a build without any of this is simply not discovered, has no
+listener, and syncs through the broker exactly as it did before. Mixed pairs
+are the normal case for a while.
+
+### Still to do: the iOS backend
+
+Deliberately not built yet, and the largest known gap in this feature. iOS
+falls back to the broker, which is what it did before local sync existed, so
+nothing is broken there; it just does not get the feature.
+
+Everything above the `backend` module in `lan_discovery.rs` is platform
+independent and already shared: the peer table, the TXT parsing, the pruning
+and the event emission. An iOS backend is a `spawn` that returns a `Handle`,
+and it needs to:
+
+- Browse and advertise through `NWBrowser` and `NWListener` in a small Tauri
+  plugin. These are permitted where a raw multicast socket is not, which is
+  the whole reason for the split.
+- Declare `NSLocalNetworkUsageDescription` and `NSBonjourServices` (listing
+  `_oyot._tcp`) in `Info.plist`. The first is the wording of the permission
+  prompt the user sees. Without the second, iOS will not resolve the service
+  at all.
+- Feed what it finds into the same `PeerTable` and start the existing
+  `lan_signaling` listener, which is plain TCP and needs nothing special from
+  the platform.
+
+What it must not need is `com.apple.developer.networking.multicast`. That is
+the entitlement `mdns-sd` would require, granted only by a request Apple
+reviews by hand, and avoiding it is why iOS gets its own backend rather than
+the one every other platform uses.
 
 ## Project Structure
 
@@ -212,7 +341,7 @@ oyot/
 ├── src-tauri/               # Rust backend
 │   ├── src/
 │   │   ├── commands/        # Tauri commands, the only frontend surface
-│   │   ├── network/         # MQTT client and signaling manager
+│   │   ├── network/         # Signaling: MQTT, local network, route choice
 │   │   ├── db.rs            # Connection setup and AppState
 │   │   └── lib.rs           # Schema, migrations, command registration
 │   ├── capabilities/        # Plugin ACLs for the webview
@@ -226,8 +355,10 @@ oyot/
 ```
 
 WebRTC lives entirely in the frontend (`src/lib/sync/transport.ts`). Rust owns
-the database, the attachment store, the MQTT signaling transport and identity;
-it does not participate in the peer connection itself.
+the database, the attachment store, identity, and both signaling transports:
+the MQTT client and the local network path, plus the decision about which of
+them carries a given message. It does not participate in the peer connection
+itself.
 
 ## Tech Stack
 
