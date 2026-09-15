@@ -5,8 +5,8 @@
     import {
         syncStore,
         identity,
-        signalingStatus,
-        signalingError,
+        brokerStatus,
+        brokerError,
         pairedDevices,
         connectedPeers,
         pendingPairRequest,
@@ -37,7 +37,7 @@
     let connected = $state<ConnectedPeer[]>([]);
     let pending: PendingPairRequest | null = $state(null);
     let pairState = $state<PairingState>(null);
-    let signalingUrl = $state<string | null>(null);
+    let brokerUrl = $state<string | null>(null);
     let signalingErr = $state<string | null>(null);
     let brokerUser = $state<string | null>(null);
     let brokerPass = $state<string | null>(null);
@@ -54,7 +54,7 @@
         const un1 = identity.subscribe((v) => {
             localIdentity = v;
         });
-        const un2 = signalingStatus.subscribe((v) => {
+        const un2 = brokerStatus.subscribe((v) => {
             status = v;
         });
         const un4 = pairedDevices.subscribe((v) => {
@@ -67,12 +67,12 @@
             pending = v;
         });
         const un7 = syncStore.subscribe((s) => {
-            signalingUrl = s.signalingUrl;
+            brokerUrl = s.brokerUrl;
         });
         const un8 = pairingState.subscribe((v) => {
             pairState = v;
         });
-        const un9 = signalingError.subscribe((v) => {
+        const un9 = brokerError.subscribe((v) => {
             signalingErr = v;
         });
 
@@ -99,14 +99,14 @@
         }
     }
 
-    async function handleSaveSignalingUrl(settings: {
+    async function handleSaveBrokerUrl(settings: {
         url: string;
         username: string;
         password: string;
     }) {
         const { url, username, password } = settings;
         try {
-            log.debug('handleSaveSignalingUrl', url);
+            log.debug('handleSaveBrokerUrl', url);
 
             // Saving the URL validates it in Rust, so an address the client
             // could never connect with is rejected here rather than stored
@@ -116,10 +116,10 @@
                 username: username || null,
                 password: password || null,
             });
-            syncStore.setSignalingUrl(url);
+            syncStore.setBrokerUrl(url);
             brokerUser = username || null;
             brokerPass = password || null;
-            await invoke('mqtt_connect', { brokerUrl: url });
+            await invoke('broker_connect', { brokerUrl: url });
         } catch (e) {
             console.error('Failed to save MQTT settings:', e);
             toasts.error(typeof e === 'string' ? e : 'Could not save the broker settings');
@@ -238,12 +238,12 @@
     />
 
     <SignalingConfig
-        {signalingUrl}
+        {brokerUrl}
         {status}
         error={signalingErr}
         username={brokerUser}
         password={brokerPass}
-        onSave={handleSaveSignalingUrl}
+        onSave={handleSaveBrokerUrl}
     />
 
     {#if isConnected}

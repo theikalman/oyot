@@ -6,12 +6,13 @@ import {
     syncStore,
     pendingPairRequest,
     pairingState,
-    signalingStatus,
+    brokerStatus,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
     type DevicePair,
-    type SignalingStatus,
+    type BrokerStatus,
+    type SignalingRoute,
 } from '../stores/sync';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
@@ -210,7 +211,7 @@ async function sendDescription(
     desc: RTCSessionDescription,
 ): Promise<void> {
     const payload = serializeDesc(session.epoch, desc.toJSON());
-    const cmd = desc.type === 'answer' ? 'mqtt_publish_answer' : 'mqtt_publish_offer';
+    const cmd = desc.type === 'answer' ? 'signaling_publish_answer' : 'signaling_publish_offer';
     log.debug(`[sync] [${peerId}] -> ${desc.type} (epoch=${session.epoch})`);
     await invoke(cmd, { peerId, sdp: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ${desc.type}:`, e),
@@ -223,7 +224,7 @@ async function sendIceCandidate(
     candidate: RTCIceCandidate,
 ): Promise<void> {
     const payload = serializeIce(session.epoch, candidate.toJSON());
-    await invoke('mqtt_publish_ice_candidate', { peerId, candidate: payload }).catch((e) =>
+    await invoke('signaling_publish_ice_candidate', { peerId, candidate: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ICE candidate:`, e),
     );
 }
@@ -611,7 +612,7 @@ function scheduleReconnect(peerNodeId: string): void {
     const session = sessions.get(peerNodeId);
     if (!session || session.reconnectTimer) return;
     if (suppressReconnect.has(peerNodeId)) return;
-    if (get(signalingStatus) !== 'connected') return;
+    if (get(brokerStatus) !== 'connected') return;
 
     const pair = get(pairedDevices).find((p) => p.peer_node_id === peerNodeId);
     if (!pair) {
@@ -634,7 +635,7 @@ function scheduleReconnect(peerNodeId: string): void {
             teardownSession(peerNodeId);
             return;
         }
-        if (suppressReconnect.has(peerNodeId) || get(signalingStatus) !== 'connected') return;
+        if (suppressReconnect.has(peerNodeId) || get(brokerStatus) !== 'connected') return;
         void ensurePeerConnection(
             current.peer_node_id,
             current.room_id,
@@ -662,7 +663,7 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
         console.warn('[sync] reconnectPeer() called before identity was loaded, aborting');
         return;
     }
-    if (get(signalingStatus) !== 'connected') {
+    if (get(brokerStatus) !== 'connected') {
         console.warn(`[sync] reconnectPeer(${peerNodeId}) ignored - signaling not connected`);
         return;
     }
@@ -701,7 +702,7 @@ export async function reconnectPeer(peerNodeId: string): Promise<void> {
 
 export async function reconnectAllPairedDevices(reason: string): Promise<void> {
     if (!identity || sweepRunning) return;
-    if (get(signalingStatus) !== 'connected') return;
+    if (get(brokerStatus) !== 'connected') return;
     sweepRunning = true;
     log.debug(`[sync] reconnectAllPairedDevices(${reason})`);
     try {
@@ -772,7 +773,7 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     syncStore.setPairingState('requesting');
     try {
         log.debug(`[sync] sendPairRequest() -> ${peerNodeId}`);
-        await invoke('mqtt_publish_pair_request', { peerNodeId });
+        await invoke('signaling_publish_pair_request', { peerNodeId });
     } catch (e) {
         console.error('[sync] Failed to send pair request:', e);
         syncStore.setPairingState(null);
@@ -798,14 +799,14 @@ export async function respondToPairRequest(accept: boolean): Promise<void> {
     try {
         if (accept) {
             log.debug(`[sync] Accepting pair request from ${req.from}`);
-            await invoke('mqtt_accept_pair_request', {
+            await invoke('signaling_accept_pair_request', {
                 peerNodeId: req.from,
                 peerUserId: req.user_id,
                 peerDisplayName: req.display_name,
             });
         } else {
             log.debug(`[sync] Declining pair request from ${req.from}`);
-            await invoke('mqtt_decline_pair_request', { peerNodeId: req.from });
+            await invoke('signaling_decline_pair_request', { peerNodeId: req.from });
         }
     } catch (e) {
         console.error('[sync] Failed to respond to pair request:', e);
@@ -854,30 +855,30 @@ export async function initSync(): Promise<void> {
         const mqttBroker = await invoke<string | null>('get_mqtt_broker_url');
         log.debug(`[sync] MQTT broker URL from config: ${mqttBroker || '(none)'}`);
         if (mqttBroker && mqttBroker.trim() !== '') {
-            syncStore.setSignalingUrl(mqttBroker);
-            syncStore.setSignalingStatus('connecting');
+            syncStore.setBrokerUrl(mqttBroker);
+            syncStore.setBrokerStatus('connecting');
             try {
                 log.debug(`[sync] Connecting to MQTT broker ${mqttBroker}...`);
-                await invoke('mqtt_connect', { brokerUrl: mqttBroker });
+                await invoke('broker_connect', { brokerUrl: mqttBroker });
             } catch (e) {
                 console.error('[sync] Failed to connect to MQTT broker:', e);
-                syncStore.setSignalingStatus('error');
+                syncStore.setBrokerStatus('error');
             }
         } else {
             console.warn('[sync] No MQTT broker URL configured, signaling will not start');
-            syncStore.setSignalingStatus('disconnected');
+            syncStore.setBrokerStatus('disconnected');
         }
 
         await refreshPairedDevices();
 
-        if (get(signalingStatus) === 'connected') {
+        if (get(brokerStatus) === 'connected') {
             void reconnectAllPairedDevices('init');
         }
 
         log.debug('[sync] initSync() complete, event listeners active');
     } catch (error) {
         console.error('[sync] Failed to init sync:', error);
-        syncStore.setSignalingStatus('error');
+        syncStore.setBrokerStatus('error');
     }
 }
 
@@ -888,9 +889,10 @@ async function setupEventListeners(): Promise<void> {
         from: string;
         user_id: string;
         display_name: string;
-    }>('mqtt-pair-request-received', (event) => {
+        route: SignalingRoute;
+    }>('signaling-pair-request-received', (event) => {
         log.debug(
-            `[sync] event: mqtt-pair-request-received from=${event.payload.from} display_name=${event.payload.display_name}`,
+            `[sync] event: pair-request from=${event.payload.from} display_name=${event.payload.display_name} route=${event.payload.route}`,
         );
         syncStore.setPendingPairRequest(event.payload);
     });
@@ -900,9 +902,10 @@ async function setupEventListeners(): Promise<void> {
         user_id: string;
         display_name: string;
         accepted: boolean;
-    }>('mqtt-pair-response-received', async (event) => {
-        const { from, user_id, display_name, accepted } = event.payload;
-        log.debug(`[sync] event: mqtt-pair-response-received from=${from} accepted=${accepted}`);
+        route: SignalingRoute;
+    }>('signaling-pair-response-received', async (event) => {
+        const { from, user_id, display_name, accepted, route } = event.payload;
+        log.debug(`[sync] event: pair-response from=${from} accepted=${accepted} route=${route}`);
         clearPairRequestTimer();
         if (accepted) {
             syncStore.setPairingState(null);
@@ -917,9 +920,10 @@ async function setupEventListeners(): Promise<void> {
         sdp: string;
         room_id: string;
         display_name: string;
-    }>('mqtt-offer-received', async (event) => {
-        const { from, sdp, room_id, display_name } = event.payload;
-        log.debug(`[sync] event: mqtt-offer-received from=${from} room_id=${room_id}`);
+        route: SignalingRoute;
+    }>('signaling-offer-received', async (event) => {
+        const { from, sdp, room_id, display_name, route } = event.payload;
+        log.debug(`[sync] event: offer from=${from} room_id=${room_id} route=${route}`);
         try {
             const { boot, epoch, description } = parseDescPayload(sdp);
             await handleDescription(from, {
@@ -934,11 +938,11 @@ async function setupEventListeners(): Promise<void> {
         }
     });
 
-    const unlistenAnswer = await listen<{ from: string; sdp: string }>(
-        'mqtt-answer-received',
+    const unlistenAnswer = await listen<{ from: string; sdp: string; route: SignalingRoute }>(
+        'signaling-answer-received',
         async (event) => {
-            const { from, sdp } = event.payload;
-            log.debug(`[sync] event: mqtt-answer-received from=${from}`);
+            const { from, sdp, route } = event.payload;
+            log.debug(`[sync] event: answer from=${from} route=${route}`);
             try {
                 const { boot, epoch, description } = parseDescPayload(sdp);
                 await handleDescription(from, { boot, epoch, description });
@@ -948,11 +952,11 @@ async function setupEventListeners(): Promise<void> {
         },
     );
 
-    const unlistenIce = await listen<{ from: string; candidate: string }>(
-        'mqtt-ice-candidate-received',
+    const unlistenIce = await listen<{ from: string; candidate: string; route: SignalingRoute }>(
+        'signaling-ice-candidate-received',
         async (event) => {
-            const { from, candidate } = event.payload;
-            log.debug(`[sync] event: mqtt-ice-candidate-received from=${from}`);
+            const { from, candidate, route } = event.payload;
+            log.debug(`[sync] event: ice-candidate from=${from} route=${route}`);
             try {
                 const { boot, epoch, candidate: cand } = parseIcePayload(candidate);
                 await handleIceCandidate(from, { boot, epoch, candidate: cand });
@@ -963,21 +967,21 @@ async function setupEventListeners(): Promise<void> {
     );
 
     // Emitted once per run of failed connection attempts, never after a
-    // session has been up. `mqtt_connect` resolves before a single packet is
+    // session has been up. `broker_connect` resolves before a single packet is
     // exchanged, so this is the only signal that the broker is unreachable or
     // refusing us.
-    const unlistenError = await listen<string>('mqtt-error', (event) => {
-        log.debug(`[sync] event: mqtt-error -> ${event.payload}`);
-        syncStore.setSignalingError(event.payload);
+    const unlistenError = await listen<string>('broker-error', (event) => {
+        log.debug(`[sync] event: broker-error -> ${event.payload}`);
+        syncStore.setBrokerError(event.payload);
     });
 
-    const unlistenStatus = await listen<string>('mqtt-status', (event) => {
-        const next = event.payload as SignalingStatus;
-        const prev = get(signalingStatus);
-        log.debug(`[sync] event: mqtt-status -> ${next} (was ${prev})`);
-        syncStore.setSignalingStatus(next);
+    const unlistenStatus = await listen<string>('broker-status', (event) => {
+        const next = event.payload as BrokerStatus;
+        const prev = get(brokerStatus);
+        log.debug(`[sync] event: broker-status -> ${next} (was ${prev})`);
+        syncStore.setBrokerStatus(next);
         if (next === 'connected' && prev !== 'connected') {
-            void reconnectAllPairedDevices('mqtt-connected');
+            void reconnectAllPairedDevices('broker-connected');
         } else if (next === 'disconnected' || next === 'error') {
             pauseAllReconnects();
         }

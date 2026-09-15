@@ -25,7 +25,10 @@ export interface PendingPairRequest {
     display_name: string;
 }
 
-export type SignalingStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type BrokerStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+// Which transport carried a signaling message, or connected a peer.
+export type SignalingRoute = 'lan' | 'broker';
 export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
 
 // Per-room document-sync progress, driven by DocSyncProtocol.
@@ -44,11 +47,11 @@ const EMPTY_ROOM_SYNC: RoomSync = { phase: 'idle', pending: 0, total: 0, lastSyn
 function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
-        signalingUrl: null as string | null,
-        signalingStatus: 'disconnected' as SignalingStatus,
+        brokerUrl: null as string | null,
+        brokerStatus: 'disconnected' as BrokerStatus,
         // Why signaling could not connect, when the status is 'error'. Null
         // otherwise. Without it the UI can say something is wrong but not what.
-        signalingError: null as string | null,
+        brokerError: null as string | null,
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
@@ -62,17 +65,17 @@ function createSyncStore() {
         subscribe,
         set,
         setIdentity: (identity: UserIdentity) => update((s) => ({ ...s, identity })),
-        setSignalingUrl: (url: string | null) => update((s) => ({ ...s, signalingUrl: url })),
-        setSignalingStatus: (status: SignalingStatus) =>
+        setBrokerUrl: (url: string | null) => update((s) => ({ ...s, brokerUrl: url })),
+        setBrokerStatus: (status: BrokerStatus) =>
             update((s) => ({
                 ...s,
-                signalingStatus: status,
+                brokerStatus: status,
                 // Any status that is not an error clears the reason, so a
                 // recovered connection does not keep explaining an old one.
-                signalingError: status === 'error' ? s.signalingError : null,
+                brokerError: status === 'error' ? s.brokerError : null,
             })),
-        setSignalingError: (reason: string) =>
-            update((s) => ({ ...s, signalingStatus: 'error', signalingError: reason })),
+        setBrokerError: (reason: string) =>
+            update((s) => ({ ...s, brokerStatus: 'error', brokerError: reason })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
         setConnectedPeers: (peers: ConnectedPeer[]) =>
@@ -150,8 +153,8 @@ function createSyncStore() {
 
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
-export const signalingStatus = derived(syncStore, ($s) => $s.signalingStatus);
-export const signalingError = derived(syncStore, ($s) => $s.signalingError);
+export const brokerStatus = derived(syncStore, ($s) => $s.brokerStatus);
+export const brokerError = derived(syncStore, ($s) => $s.brokerError);
 export const pairedDevices = derived(syncStore, ($s) => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, ($s) => $s.connectedPeers);
 export const connectedPeerIds = derived(

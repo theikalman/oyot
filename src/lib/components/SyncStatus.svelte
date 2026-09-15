@@ -1,9 +1,9 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import { signalingStatus, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
+    import { brokerStatus, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
 
-    let signaling = $derived($signalingStatus);
+    let signaling = $derived($brokerStatus);
     let peers = $derived($connectedPeers);
     let phase = $derived($aggregateSyncPhase);
 

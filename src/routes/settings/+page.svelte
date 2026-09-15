@@ -2,7 +2,7 @@
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import { appStore, theme } from '$lib/stores/app';
-    import { signalingStatus, connectedPeers } from '$lib/stores/sync';
+    import { brokerStatus, connectedPeers } from '$lib/stores/sync';
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
 
@@ -10,7 +10,7 @@
     let syncSummary = $derived(
         $connectedPeers.length > 0
             ? `${$connectedPeers.length} device${$connectedPeers.length !== 1 ? 's' : ''} connected`
-            : $signalingStatus === 'connected'
+            : $brokerStatus === 'connected'
               ? 'Ready to pair'
               : 'Offline',
     );
