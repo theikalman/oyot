@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import type { PairingState } from '$lib/stores/sync';
     import { nodeIdError } from '$lib/sync/nodeId';
+    import { clearsPairField } from '$lib/sync/pairingField';
 
     interface Props {
         pairingState: PairingState;
@@ -39,11 +40,17 @@
         onPair(trimmed);
     }
 
-    // Clear the field only once the pairing has actually gone through.
-    // Clearing on send meant a request that was declined, or never answered,
-    // left the user with nothing to retry and a 43-character id to find again.
+    // Clear the field when a pairing has actually gone through. The rule, and
+    // why it is a rule rather than a condition written out here, is in
+    // sync/pairingField.ts.
+    //
+    // `previousState` is deliberately not $state: it is written from inside
+    // the effect, and a tracked write would make the effect re-run itself.
+    // Nothing reads `nodeIdInput` here either, so typing does not re-run it.
+    let previousState: PairingState = null;
     $effect(() => {
-        if (pairingState === null && nodeIdInput) nodeIdInput = '';
+        if (clearsPairField(previousState, pairingState)) nodeIdInput = '';
+        previousState = pairingState;
     });
 
     function handleKeydown(event: KeyboardEvent) {
