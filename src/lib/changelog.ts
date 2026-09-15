@@ -31,7 +31,7 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
-        version: '0.0.12-alpha',
+        version: '0.0.13-alpha',
         date: '2026-09-15',
         summary:
             'Sync over the local network, with no internet and no broker in the middle. iPhone and iPad still go through a broker.',
@@ -55,6 +55,14 @@ export const RELEASES: Release[] = [
             {
                 kind: 'fixed',
                 text: 'The Node ID box on the pairing screen keeps what you type or scan into it. It was clearing itself as you typed, which left no way to pair from that screen at all.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Notes list the notes that link to them again. The query behind that list was not valid and failed on every note, so the list was always empty.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The sync indicator no longer reads "Sync error" while your devices are syncing happily over the local network. It was reporting an unreachable broker as a fault even when nothing needed one.',
             },
         ],
     },
