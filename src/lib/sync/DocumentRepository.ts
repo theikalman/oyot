@@ -7,6 +7,7 @@ import { appStore } from '../stores/app';
 import { bumpIndexRevision } from '../stores/derivedIndex';
 import { getOpenDoc, registerOpenDoc } from '../editor/openDocs';
 import { REMOTE_ORIGIN } from '../editor/origin';
+import { renameTagInDoc } from '../tags/renameInDoc';
 import { contentHash } from './hash';
 import { createWriteQueue } from './writeQueue';
 import {
@@ -231,6 +232,71 @@ export class DocumentRepository {
                 index: index ?? null,
             });
             if (index) bumpIndexRevision();
+        });
+    }
+
+    /**
+     * Rewrite one document's `#from` chips to say `#to`.
+     *
+     * Queued like every other write to a document: this is a read-modify-write
+     * over the column `save_yjs_update` overwrites outright, so two of these
+     * landing at once, or one landing beside a peer's delta, would lose an
+     * edit.
+     *
+     * Returns how many chips changed and, separately, the update a peer needs.
+     * The two come apart when the document is open in the editor: the edit goes
+     * into the live Y.Doc, whose update listener already saves and broadcasts
+     * it, and sending it a second time from here would be an echo.
+     *
+     * This method does not broadcast. `transport` owns the repository, so the
+     * repository cannot import the broadcaster back without the two becoming
+     * circular at load; the caller sends what it is handed.
+     */
+    async renameTagIn(
+        docId: string,
+        from: string,
+        to: string,
+    ): Promise<{ changed: number; broadcast: string | null }> {
+        return this.write(docId, async () => {
+            // Resolved before the document is touched, so the edit below stays
+            // synchronous from lookup to encode.
+            const indexer = await loadRemoteIndexer();
+
+            // No await between the lookup and the encode: the editor cannot
+            // swap the document out from under an edit that never yields.
+            const live = getOpenDoc(docId);
+            if (live) {
+                const changed = renameTagInDoc(live, from, to);
+                return { changed, broadcast: null };
+            }
+
+            const current = await this.loadDoc(docId);
+            const before = Y.encodeStateVector(current);
+            const changed = renameTagInDoc(current, from, to);
+            if (changed === 0) {
+                current.destroy();
+                return { changed: 0, broadcast: null };
+            }
+
+            // The delta is what the rename added, not the document: a peer that
+            // has the note already needs one attribute, and sending the whole
+            // thing would undo nothing but cost everything.
+            const delta = Y.encodeStateAsUpdate(current, before);
+            const merged = Y.encodeStateAsUpdate(current);
+            const index = readIndex(indexer, current);
+            current.destroy();
+
+            const hash = await contentHash(merged);
+            await invoke('save_yjs_update', {
+                docId,
+                update: bytesToBase64(delta),
+                mergedState: bytesToBase64(merged),
+                contentHash: bytesToBase64(hash),
+                origin: 'local',
+                index,
+            });
+            bumpIndexRevision();
+            return { changed, broadcast: bytesToBase64(delta) };
         });
     }
 
