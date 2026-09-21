@@ -464,6 +464,7 @@ pub fn run() {
             get_all_todos,
             get_all_tags,
             get_documents_by_tag,
+            get_tag_count,
             get_or_create_today_journal,
             get_theme,
             save_theme,

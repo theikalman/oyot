@@ -743,6 +743,29 @@ pub fn get_all_tags(state: tauri::State<'_, AppState>) -> Result<Vec<TagHit>, St
     query_all_tags(&db)
 }
 
+/// How many distinct tags the corpus holds.
+///
+/// Its own query rather than a count of `get_all_tags`, because the sidebar
+/// badge is the one caller that runs on every save: the list costs a row per
+/// tag over IPC to answer a question worth one integer.
+pub fn count_tags(db: &rusqlite::Connection) -> Result<i64, String> {
+    db.query_row(
+        "SELECT COUNT(DISTINCT t.name)
+           FROM document_tags t
+           JOIN documents d ON d.id = t.document_id
+          WHERE d.is_deleted = 0",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_tag_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+    let db = state.db.lock();
+    count_tags(&db)
+}
+
 /// Every live document carrying `name`.
 ///
 /// Ordered the way the todo index orders its groups, and for the same reasons:
@@ -1140,6 +1163,35 @@ mod tests {
     #[test]
     fn a_corpus_with_no_tags_offers_none() {
         assert!(offered(&db()).is_empty());
+    }
+
+    // The sidebar badge. Distinct tags, not rows: a tag on three notes is one
+    // tag, which is what the tag page counts too.
+    #[test]
+    fn the_badge_counts_each_tag_once() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_tag(&db, "d1", "work");
+        add_tag(&db, "d2", "work");
+        add_tag(&db, "d2", "home");
+
+        assert_eq!(count_tags(&db).unwrap(), 2);
+    }
+
+    #[test]
+    fn the_badge_ignores_a_deleted_documents_tags() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_tag(&db, "d1", "work");
+        add_tag(&db, "d2", "home");
+        tombstone_document(&db, "d2", 900).unwrap();
+
+        assert_eq!(count_tags(&db).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_badge_is_zero_with_no_tags() {
+        assert_eq!(count_tags(&db()).unwrap(), 0);
     }
 
     /// The documents one tag's page lists, in the order it lists them.

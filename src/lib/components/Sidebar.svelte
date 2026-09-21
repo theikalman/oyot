@@ -20,6 +20,8 @@
     import SidebarDeviceList from './SidebarDeviceList.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
+    import { indexRevision } from '../stores/derivedIndex';
+    import { refreshTagCount, tagCount } from '../tags/tagCount';
 
     // Navigate; the document route loads it. Fetching and assigning the store
     // here meant the URL never changed, so there was nothing to go back to.
@@ -96,6 +98,16 @@
     // Both the index and any one tag's page, so the item stays lit while the
     // user is reading a tag rather than only on the list itself.
     let onTagsPage = $derived(page.url.pathname.startsWith('/tags'));
+
+    // Unlike the todo badge above, this cannot be derived from what is already
+    // in memory: a tag belongs to no single document, so nothing in the
+    // document store knows about one. Asked again on every change to any
+    // document's derived rows, which is what a tag being added, renamed or
+    // removed is, here or on another device.
+    $effect(() => {
+        void $indexRevision;
+        void refreshTagCount();
+    });
 
     function goToTodos() {
         void openTodos();
@@ -442,6 +454,9 @@
                             />
                         </svg>
                         <span class="nav-label">Tags</span>
+                        {#if $tagCount > 0}
+                            <span class="nav-count">{$tagCount}</span>
+                        {/if}
                     </button>
                 </div>
             {/if}
