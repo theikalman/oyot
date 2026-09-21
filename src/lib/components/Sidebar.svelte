@@ -9,7 +9,7 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
-    import { openDocument, openHome, openTodos } from '../services/navigation';
+    import { openDocument, openHome, openTags, openTodos } from '../services/navigation';
     import { page } from '$app/state';
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
@@ -93,9 +93,17 @@
         ),
     );
     let onTodosPage = $derived(page.url.pathname === '/todos');
+    // Both the index and any one tag's page, so the item stays lit while the
+    // user is reading a tag rather than only on the list itself.
+    let onTagsPage = $derived(page.url.pathname.startsWith('/tags'));
 
     function goToTodos() {
         void openTodos();
+        dismissOnSmallScreen();
+    }
+
+    function goToTags() {
+        void openTags();
         dismissOnSmallScreen();
     }
 
@@ -416,6 +424,24 @@
                         {#if openTodoCount > 0}
                             <span class="nav-count">{openTodoCount}</span>
                         {/if}
+                    </button>
+                    <button class="nav-item" class:active={onTagsPage} onclick={goToTags}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M9 9h.01" />
+                            <path
+                                d="M3.6 13.83l6.58 6.58a2 2 0 0 0 2.83 0l6.59-6.59a2 2 0 0 0 .58-1.41V4a2 2 0 0 0-2-2h-7.83a2 2 0 0 0-1.41.58L3.6 11a2 2 0 0 0 0 2.83"
+                            />
+                        </svg>
+                        <span class="nav-label">Tags</span>
                     </button>
                 </div>
             {/if}

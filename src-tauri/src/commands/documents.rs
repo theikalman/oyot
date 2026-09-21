@@ -743,6 +743,54 @@ pub fn get_all_tags(state: tauri::State<'_, AppState>) -> Result<Vec<TagHit>, St
     query_all_tags(&db)
 }
 
+/// Every live document carrying `name`.
+///
+/// Ordered the way the todo index orders its groups, and for the same reasons:
+/// a journal is read by its day, so it belongs in date order, and a note has no
+/// date, so recency is all there is to go on. The id breaks a tie, because two
+/// notes saved in the same millisecond would otherwise be free to swap places
+/// between two reads of the page.
+///
+/// The name is matched exactly. Tags are normalized to one spelling before they
+/// are ever written (see src/lib/tiptap/tags.ts), so a LIKE here would only
+/// find tags that should not exist.
+fn query_documents_with_tag(
+    db: &rusqlite::Connection,
+    name: &str,
+) -> Result<Vec<DocumentSummary>, String> {
+    let sql = format!(
+        "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
+                {HAS_CONTENT} as has_content
+           FROM document_tags t
+           JOIN documents d ON d.id = t.document_id
+           LEFT JOIN document_index i ON d.id = i.document_id
+          WHERE t.name = ?1
+            AND d.is_deleted = 0
+          ORDER BY d.type ASC,
+                   CASE WHEN d.type = 'journal' THEN d.title END DESC,
+                   CASE WHEN d.type = 'note' THEN d.updated_at END DESC,
+                   d.id ASC"
+    );
+    let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let docs: Vec<DocumentSummary> = stmt
+        .query_map(params![name], row_to_document_summary)
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(docs)
+}
+
+#[tauri::command]
+pub fn get_documents_by_tag(
+    state: tauri::State<'_, AppState>,
+    name: String,
+) -> Result<Vec<DocumentSummary>, String> {
+    let db = state.db.lock();
+    query_documents_with_tag(&db, &name)
+}
+
 /// Today's journal, and whether opening it was news.
 #[derive(Debug, Serialize)]
 pub struct TodayJournal {
@@ -1092,6 +1140,94 @@ mod tests {
     #[test]
     fn a_corpus_with_no_tags_offers_none() {
         assert!(offered(&db()).is_empty());
+    }
+
+    /// The documents one tag's page lists, in the order it lists them.
+    fn tagged(db: &Connection, name: &str) -> Vec<String> {
+        query_documents_with_tag(db, name)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.title)
+            .collect()
+    }
+
+    #[test]
+    fn a_tag_lists_the_documents_that_mention_it() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_doc(&db, "d3", "note", "Three", 30);
+        add_tag(&db, "d1", "work");
+        add_tag(&db, "d3", "work");
+        add_tag(&db, "d2", "home");
+
+        assert_eq!(
+            tagged(&db, "work"),
+            vec!["Three".to_string(), "One".to_string()]
+        );
+    }
+
+    // Journals first and in date order, notes after and in recency order: the
+    // same grouping the todo index uses, because a journal is read by its day
+    // and a note by its name.
+    #[test]
+    fn journals_come_first_and_in_date_order() {
+        let db = db();
+        add_doc(&db, "j1", "journal", "2026-09-14", 10);
+        add_doc(&db, "j2", "journal", "2026-09-21", 10);
+        add_tag(&db, "j1", "gym");
+        add_tag(&db, "j2", "gym");
+        add_tag(&db, "d1", "gym");
+
+        assert_eq!(
+            tagged(&db, "gym"),
+            vec![
+                "2026-09-21".to_string(),
+                "2026-09-14".to_string(),
+                "One".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_deleted_document_is_not_listed_under_its_tag() {
+        let db = db();
+        add_tag(&db, "d1", "work");
+        tombstone_document(&db, "d1", 900).unwrap();
+        assert!(tagged(&db, "work").is_empty());
+    }
+
+    // Tags are normalized to one spelling before they are written, so the
+    // match is exact. A page asked for a tag nobody uses shows nothing rather
+    // than guessing at what was meant.
+    #[test]
+    fn a_tag_nobody_uses_lists_nothing() {
+        let db = db();
+        add_tag(&db, "d1", "work");
+        assert!(tagged(&db, "wor").is_empty());
+        assert!(tagged(&db, "Work").is_empty());
+        assert!(tagged(&db, "").is_empty());
+    }
+
+    // The counts ride along so the page can show what is outstanding in a note
+    // without a second query.
+    #[test]
+    fn a_listed_document_carries_its_todo_counts() {
+        let db = db();
+        add_tag(&db, "d1", "work");
+        db.execute(
+            "INSERT INTO document_index (document_id, title, todo_count, completed_todo_count)
+             VALUES ('d1', 'One', 3, 1)",
+            [],
+        )
+        .unwrap();
+
+        let hit = &query_documents_with_tag(&db, "work").unwrap()[0];
+        assert_eq!(hit.todo_count, 3);
+        assert_eq!(hit.completed_todo_count, 1);
+        // The fixture's blob is two bytes, which is what an empty Yjs
+        // document encodes to, so this is "no content" rather than a
+        // mis-substituted expression: the query would not have prepared at all.
+        assert!(!hit.has_content);
     }
 
     fn content(db: &Connection) -> (Option<Vec<u8>>, Option<Vec<u8>>) {

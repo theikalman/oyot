@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { TagSummary } from '$lib/tiptap/tags';
+import { normalizeTagName, type TagSummary } from '$lib/tiptap/tags';
+import type { DocumentSummary } from '$lib/types';
 
 /** One tag row, as SQL reports it. */
 interface TagHit {
@@ -28,4 +29,16 @@ export async function loadAllTags(): Promise<TagSummary[]> {
         console.error('[tags] failed to load the tag list:', error);
         return [];
     }
+}
+
+/**
+ * The live documents carrying `name`, journals first, each group in the order
+ * the todo index uses.
+ *
+ * Throws rather than swallowing, unlike `loadAllTags`: this answers the whole
+ * of the page it feeds, and an empty list would read as "no note mentions this
+ * tag" when the truth is that nothing was asked.
+ */
+export async function loadDocumentsForTag(name: string): Promise<DocumentSummary[]> {
+    return invoke<DocumentSummary[]>('get_documents_by_tag', { name: normalizeTagName(name) });
 }
