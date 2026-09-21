@@ -74,9 +74,36 @@ export function taskItemText(node: ProseMirrorNode): string {
     for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);
         if (LIST_NODES.has(child.type.name)) break;
-        parts.push(child.textContent);
+        parts.push(inlineText(child));
     }
     return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TODO_TEXT);
+}
+
+/**
+ * What a node says, counting the nodes that say something without holding text.
+ *
+ * `textContent` returns nothing for an atom, and a document link is an atom,
+ * so an item reading "ask [Groceries] about milk" was indexed as "ask about
+ * milk" and one that was nothing but a link was indexed as an empty row. The
+ * index page then showed a task that is not the task in the note, which is
+ * worse than showing nothing.
+ *
+ * The title is the one the link carries, which is what the search text uses
+ * too, so the two agree. It is a snapshot taken when the link was inserted and
+ * goes stale if the target is renamed, until the linking document is saved
+ * again.
+ */
+function inlineText(node: ProseMirrorNode): string {
+    if (node.isText) return node.text ?? '';
+    if (node.type.name === 'documentLink') {
+        const title = node.attrs.title;
+        return typeof title === 'string' ? title : '';
+    }
+    let out = '';
+    node.forEach((child) => {
+        out += inlineText(child);
+    });
+    return out;
 }
 
 /** How many task items enclose the node at `pos`. */

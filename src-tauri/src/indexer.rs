@@ -51,7 +51,13 @@ pub struct DocumentIndexInput {
 /// v2 added `document_todos`. The bump is what makes the startup backfill
 /// re-render every document with content, which is the only way a todo
 /// written before this existed reaches the index page.
-pub const INDEX_VERSION: i64 = 2;
+///
+/// v3 is the same rows read better: a task item's text now includes the title
+/// of any document it links to, where before an atom contributed nothing and
+/// "ask [Groceries] about milk" was stored as "ask about milk". Rows already
+/// written hold the shortened text and would keep it until their document was
+/// next saved, so the bump re-renders them.
+pub const INDEX_VERSION: i64 = 3;
 
 /// Record the title only, for paths that change a title without seeing content
 /// (a rename, or materialising a row learned from a peer). Leaves counts,
