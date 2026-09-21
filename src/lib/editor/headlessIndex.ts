@@ -4,10 +4,7 @@ import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
 import { createContentExtensions } from './extensions';
 import { extractDocumentIndex, type DocumentIndex } from './documentIndex';
-
-// The fragment the Collaboration extension binds to. Must match the field name
-// the editor is configured with, or this reads an empty document.
-const CONTENT_FIELD = 'content';
+import { CONTENT_FIELD } from './contentField';
 
 // Built once. Deriving a schema walks every extension, and this runs on the
 // sync path where a first pair can merge hundreds of documents in a row.

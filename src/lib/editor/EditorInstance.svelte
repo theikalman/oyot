@@ -15,6 +15,7 @@
         registerImageCommand,
     } from '$lib/tiptap';
     import { createCollaborationExtension } from './yjs';
+    import { CONTENT_FIELD } from './contentField';
     import { REMOTE_ORIGIN } from './origin';
     import { unregisterOpenDoc } from './openDocs';
     import { locateTaskItem } from './taskItems';
@@ -104,7 +105,7 @@
         // since then has already made stale.
         const newYDoc = await documentRepository.openDocument(docId);
 
-        const collabExt = createCollaborationExtension(newYDoc, 'content');
+        const collabExt = createCollaborationExtension(newYDoc, CONTENT_FIELD);
 
         const ed = new Editor({
             element,
