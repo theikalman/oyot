@@ -3,6 +3,8 @@
         id: string;
         title: string;
         icon?: string;
+        /** A second, quieter line: what the row is, beyond its name. */
+        subtitle?: string;
     }
 </script>
 
@@ -21,9 +23,21 @@
          * being filtered by; the caret is still in the editor.
          */
         queryLabel?: Writable<string>;
+        /**
+         * What to say when there are no rows. The default answers "did my
+         * filter match anything"; a caller whose empty list means something
+         * else (nothing to list yet, type to make one) says so instead.
+         */
+        emptyLabel?: string;
     }
 
-    let { items, selectedIndex, onCommand, queryLabel }: Props = $props();
+    let {
+        items,
+        selectedIndex,
+        onCommand,
+        queryLabel,
+        emptyLabel = 'No results',
+    }: Props = $props();
 
     let listElement: HTMLUListElement | undefined = $state();
 
@@ -40,7 +54,7 @@
         <div class="suggestion-query">Filtering: {$queryLabel}</div>
     {/if}
     {#if $items.length === 0}
-        <div class="suggestion-empty">No results</div>
+        <div class="suggestion-empty">{emptyLabel}</div>
     {:else}
         <ul class="suggestion-list" bind:this={listElement}>
             {#each $items as item, index (item.id)}
@@ -65,6 +79,9 @@
                     <span class="item-icon">{@html item.icon || '📄'}</span>
                     <span class="item-content">
                         <span class="item-title">{item.title}</span>
+                        {#if item.subtitle}
+                            <span class="item-subtitle">{item.subtitle}</span>
+                        {/if}
                     </span>
                 </li>
             {/each}
@@ -146,6 +163,14 @@
         font-size: 14px;
         font-weight: 500;
         color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .item-subtitle {
+        font-size: 12px;
+        color: var(--text-muted);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;

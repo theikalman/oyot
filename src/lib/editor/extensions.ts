@@ -8,6 +8,7 @@ import TableHeader from '@tiptap/extension-table-header';
 import Typography from '@tiptap/extension-typography';
 import type { Extensions } from '@tiptap/core';
 import { DocumentLinkNode } from '$lib/tiptap/nodes/DocumentLinkNode';
+import { TagNode } from '$lib/tiptap/nodes/TagNode';
 import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
 
 /**
@@ -46,5 +47,6 @@ export function createContentExtensions(): Extensions {
         TableCell,
         Typography,
         DocumentLinkNode,
+        TagNode,
     ];
 }

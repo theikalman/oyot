@@ -38,3 +38,17 @@ export function openDocumentAtTodo(docId: string, ordinal: number): Promise<void
 export function openTodos(): Promise<void> {
     return goto(resolve('/todos'));
 }
+
+// The tag index: every tag any note or journal carries.
+export function openTags(): Promise<void> {
+    return goto(resolve('/tags'));
+}
+
+// One tag's page: the notes and journals that mention it.
+//
+// The name rides in the URL, so a tag is a link that survives a reload and the
+// back button undoes. `resolve` encodes it, which it has to: a tag name is the
+// user's words and may hold spaces.
+export function openTag(name: string): Promise<void> {
+    return goto(resolve('/tags/[name]', { name }));
+}

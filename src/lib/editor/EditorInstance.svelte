@@ -12,9 +12,11 @@
         registerDocumentLinkCommand,
         registerDateCommand,
         registerTodoCommand,
+        registerTagCommand,
         registerImageCommand,
     } from '$lib/tiptap';
     import { createCollaborationExtension } from './yjs';
+    import { CONTENT_FIELD } from './contentField';
     import { REMOTE_ORIGIN } from './origin';
     import { unregisterOpenDoc } from './openDocs';
     import { locateTaskItem } from './taskItems';
@@ -104,7 +106,7 @@
         // since then has already made stale.
         const newYDoc = await documentRepository.openDocument(docId);
 
-        const collabExt = createCollaborationExtension(newYDoc, 'content');
+        const collabExt = createCollaborationExtension(newYDoc, CONTENT_FIELD);
 
         const ed = new Editor({
             element,
@@ -137,6 +139,7 @@
         registerDocumentLinkCommand();
         registerDateCommand();
         registerTodoCommand();
+        registerTagCommand();
         registerImageCommand();
 
         // The only thing that schedules a save. Tiptap's `onUpdate` used to do
@@ -451,6 +454,27 @@
     }
     .editor-content :global(.document-link-title) {
         font-weight: 500;
+    }
+
+    /* A tag reads as one object in the middle of a sentence: rounded, quiet,
+       and clearly not the words around it. Not the accent colour, which is
+       already what a document link uses, so the two are told apart at a
+       glance. */
+    .editor-content :global(.tag-chip) {
+        display: inline;
+        background-color: var(--bg-hover);
+        color: var(--text-secondary);
+        padding: 1px 8px;
+        border-radius: 10px;
+        border: 1px solid var(--border-light);
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    .editor-content :global(.tag-chip.ProseMirror-selectednode) {
+        outline: 2px solid var(--accent-color);
+        outline-offset: 1px;
     }
 
     .editor-content :global(ul[data-type='taskList']) {
