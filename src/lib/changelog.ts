@@ -31,7 +31,7 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
-        version: '0.0.14-alpha',
+        version: '0.0.15-alpha',
         date: '2026-09-15',
         summary:
             'Sync over the local network, with no internet and no broker in the middle. iPhone and iPad still go through a broker.',
@@ -71,6 +71,14 @@ export const RELEASES: Release[] = [
             {
                 kind: 'fixed',
                 text: 'Pairing waits for the other device to be found on the network rather than failing the moment you paste an ID, and when it cannot find it, it says whether nothing was on the network, or the broker was not connected.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Choosing a note from the /document list inserts a link to it. Clicking one did nothing at all, and never had.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The todo page shows the note a task links to as part of the task. "Ask [Groceries] about milk" was listed as "Ask about milk", and a task that was nothing but a link was listed as an empty row. Tasks already written correct themselves on the next launch.',
             },
         ],
     },
