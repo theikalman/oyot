@@ -1,4 +1,5 @@
-use tauri::Manager;
+use crate::db::AppState;
+use tauri::{Manager, State};
 
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     let config_path = match app.path().app_data_dir() {
@@ -101,4 +102,49 @@ pub fn save_mqtt_credentials(
     json["mqtt_username"] = serde_json::json!(username.filter(|s| !s.trim().is_empty()));
     json["mqtt_password"] = serde_json::json!(password.filter(|s| !s.is_empty()));
     write_config(&app, json)
+}
+
+/// Local network first, broker when a peer is not on it. The default.
+pub const SYNC_MODE_AUTO: &str = "auto";
+/// The local network or nothing. No broker connection is made at all.
+pub const SYNC_MODE_LOCAL_ONLY: &str = "local-only";
+
+/// How the user wants devices reached, defaulting to `auto`.
+///
+/// An unreadable or unknown value reads as the default rather than as an
+/// error: the alternative is an app that will not sync because a config file
+/// has a typo in it.
+#[tauri::command]
+pub fn get_sync_mode(app: tauri::AppHandle) -> String {
+    let json = read_config(&app);
+    json.get("sync_mode")
+        .and_then(|v| v.as_str())
+        .filter(|s| *s == SYNC_MODE_AUTO || *s == SYNC_MODE_LOCAL_ONLY)
+        .unwrap_or(SYNC_MODE_AUTO)
+        .to_string()
+}
+
+/// Store the mode and apply it now.
+///
+/// Applying it to the running manager is the point: "local network only" that
+/// takes effect at the next launch would still be publishing to the broker in
+/// the meantime, which is exactly what the setting promises not to do.
+/// Stopping the broker client itself is the frontend's call, since it owns
+/// when signaling starts.
+#[tauri::command]
+pub fn save_sync_mode(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<(), String> {
+    if mode != SYNC_MODE_AUTO && mode != SYNC_MODE_LOCAL_ONLY {
+        return Err(format!("Invalid sync mode: {mode}"));
+    }
+    let mut json = read_config(&app);
+    json["sync_mode"] = serde_json::json!(mode);
+    write_config(&app, json)?;
+    state
+        .signaling_manager
+        .set_local_only(mode == SYNC_MODE_LOCAL_ONLY);
+    Ok(())
 }

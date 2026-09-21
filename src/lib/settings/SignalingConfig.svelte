@@ -1,22 +1,32 @@
 <script lang="ts">
-    import type { SignalingStatus } from '$lib/stores/sync';
+    import type { BrokerStatus } from '$lib/stores/sync';
 
     interface Props {
-        signalingUrl: string | null;
-        status: SignalingStatus;
+        brokerUrl: string | null;
+        status: BrokerStatus;
         /** Why the connection failed, when `status` is 'error'. */
         error: string | null;
         username: string | null;
         password: string | null;
+        /** The device is set to local network only, so the broker is not used. */
+        inactive?: boolean;
         onSave: (settings: { url: string; username: string; password: string }) => void;
     }
 
-    let { signalingUrl, status, error, username, password, onSave }: Props = $props();
+    let {
+        brokerUrl,
+        status,
+        error,
+        username,
+        password,
+        inactive = false,
+        onSave,
+    }: Props = $props();
 
     // A boolean could not tell "still trying" from "tried and failed", so a
     // wrong address or a rejected login read as an ordinary disconnection and
     // the user had nothing to act on.
-    const LABELS: Record<SignalingStatus, string> = {
+    const LABELS: Record<BrokerStatus, string> = {
         connected: 'Connected to MQTT',
         connecting: 'Connecting...',
         disconnected: 'Disconnected',
@@ -50,7 +60,7 @@
     let lastSeenUrl: string | null | undefined;
 
     $effect(() => {
-        const incoming = signalingUrl;
+        const incoming = brokerUrl;
         if (incoming === lastSeenUrl) return;
         lastSeenUrl = incoming;
         inputUrl = incoming ?? '';
@@ -114,21 +124,30 @@
                 <p class="status-detail error">{urlError}</p>
             {/if}
             <button type="submit" class="btn-primary" disabled={!inputUrl.trim()}>
-                Save & Connect
+                {inactive ? 'Save' : 'Save & Connect'}
             </button>
         </form>
     {:else}
         <div class="signaling-display">
             <div class="url-row">
-                <span class="url">{signalingUrl}</span>
+                <span class="url">{brokerUrl}</span>
                 <button class="btn-link" onclick={() => (isEditing = true)}>Edit</button>
             </div>
-            <div class="status-row">
-                <span class="status-dot {status}"></span>
-                <span class="status-label">{LABELS[status]}</span>
-            </div>
-            {#if status === 'error' && error}
-                <p class="status-detail">{error}</p>
+            {#if inactive}
+                <!-- Saying "Disconnected" here would read as a fault. It is a
+                     choice the user made one section up. -->
+                <div class="status-row">
+                    <span class="status-dot disconnected"></span>
+                    <span class="status-label">Not in use, this device is local network only</span>
+                </div>
+            {:else}
+                <div class="status-row">
+                    <span class="status-dot {status}"></span>
+                    <span class="status-label">{LABELS[status]}</span>
+                </div>
+                {#if status === 'error' && error}
+                    <p class="status-detail">{error}</p>
+                {/if}
             {/if}
         </div>
     {/if}

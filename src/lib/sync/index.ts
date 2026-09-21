@@ -14,6 +14,7 @@ export {
     respondToPairRequest,
     disconnectPeer,
     reconnectPeer,
+    setSyncMode,
     documentRepository,
     broadcastLocalUpdate,
     broadcastDocCreated,

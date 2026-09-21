@@ -32,17 +32,20 @@ export function registerDocumentLinkCommand(): void {
         label: 'Link Document',
         icon: '<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M14 17H8m8-4H8m12-3.012V17.2c0 1.68 0 2.52-.327 3.162a3 3 0 0 1-1.311 1.311C17.72 22 16.88 22 15.2 22H8.8c-1.68 0-2.52 0-3.162-.327a3 3 0 0 1-1.311-1.311C4 19.72 4 18.88 4 17.2V6.8c0-1.68 0-2.52.327-3.162a3 3 0 0 1-1.311-1.311C6.28 2 7.12 2 8.8 2h3.212c.733 0 1.1 0 1.446.083.306.073.598.195.867.36.303.185.562.444 1.08.963l3.19 3.188c.518.519.777.778.963 1.081a3 3 0 0 1 .36.867c.082.346.082.712.082 1.446"/></svg>',
         onSelect: (props: CommandSelectProps) => {
-            currentEditor = props.editor as Editor;
+            const editor = props.editor as Editor;
+            const rect = getAnchorClientRect(editor, props.range);
 
-            const rect = getAnchorClientRect(props.editor as Editor, props.range);
-
-            (props.editor as Editor).chain().focus().deleteRange(props.range).run();
+            editor.chain().focus().deleteRange(props.range).run();
 
             if (rect) {
-                showDocumentSuggestionPopup(rect);
+                // The editor is handed to the popup rather than assigned here
+                // first: opening closes any previous popup, and closing forgets
+                // the editor, so an assignment before this line was wiped by
+                // the very call that was meant to use it.
+                showDocumentSuggestionPopup(editor, rect);
             }
 
-            exitSuggestion((props.editor as Editor).view);
+            exitSuggestion(editor.view);
         },
     };
 
@@ -121,8 +124,11 @@ function onPopupKeydown(e: KeyboardEvent): void {
     }
 }
 
-function showDocumentSuggestionPopup(rect: DOMRect): void {
+function showDocumentSuggestionPopup(editor: Editor, rect: DOMRect): void {
     closeDocumentPopup();
+    // After the close, never before it: `closeDocumentPopup` clears this, and
+    // it is the one piece of state the popup cannot do its job without.
+    currentEditor = editor;
 
     documentPopup = document.createElement('div');
     documentPopup.className = 'document-suggestion-popup';
@@ -165,7 +171,14 @@ function showDocumentSuggestionPopup(rect: DOMRect): void {
 
 function handleDocumentSelect(id: string): void {
     const item = get(popupItems).find((i) => i.id === id);
-    if (item && currentEditor) {
+    // Both of these were a silent no-op, which is how choosing a document came
+    // to do nothing at all and stay that way: the popup closed, no link was
+    // inserted, and nothing anywhere said so.
+    if (!item) {
+        console.error(`[document-link] '${id}' is no longer in the list, nothing inserted`);
+    } else if (!currentEditor) {
+        console.error('[document-link] no editor to insert into, the link was dropped');
+    } else {
         currentEditor
             .chain()
             .focus()

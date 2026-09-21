@@ -31,6 +31,58 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.15-alpha',
+        date: '2026-09-15',
+        summary:
+            'Sync over the local network, with no internet and no broker in the middle. iPhone and iPad still go through a broker.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Devices on the same network find each other and sync directly, with no internet connection and no broker. Pairing works there too, so two devices can be introduced with nothing but the network they are both on.',
+            },
+            {
+                kind: 'added',
+                text: 'Settings > Sync can be set to use the local network only, in which case the app never contacts a broker at all and devices elsewhere stop syncing until they are back on your network.',
+            },
+            {
+                kind: 'improved',
+                text: 'A paired device now says whether it was reached over the local network or through the broker.',
+            },
+            {
+                kind: 'improved',
+                text: 'Losing the broker no longer stops the app trying to reconnect. Anything it can still reach, it still reaches.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The Node ID box on the pairing screen keeps what you type or scan into it. It was clearing itself as you typed, which left no way to pair from that screen at all.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Notes list the notes that link to them again. The query behind that list was not valid and failed on every note, so the list was always empty.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The sync indicator no longer reads "Sync error" while your devices are syncing happily over the local network. It was reporting an unreachable broker as a fault even when nothing needed one.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Two devices on one network reconnect after one of them is closed and reopened. A local connection that failed once was set aside for a minute, and with no broker to fall back to there was nothing left to try, so both devices sat on "Connecting..." indefinitely.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Pairing waits for the other device to be found on the network rather than failing the moment you paste an ID, and when it cannot find it, it says whether nothing was on the network, or the broker was not connected.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Choosing a note from the /document list inserts a link to it. Clicking one did nothing at all, and never had.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The todo page shows the note a task links to as part of the task. "Ask [Groceries] about milk" was listed as "Ask about milk", and a task that was nothing but a link was listed as an empty row. Tasks already written correct themselves on the next launch.',
+            },
+        ],
+    },
+    {
         version: '0.0.10-alpha',
         date: '2026-09-14',
         summary: 'The editor toolbar stays on one row and scrolls sideways on small screens.',

@@ -33,6 +33,10 @@ const link = (targetId: string, title: string) =>
 const task = (checked: boolean, text: string, ...nested: PMNode[]) =>
     schema.nodes.taskItem.create({ checked }, [text ? para(t(text)) : para(), ...nested]);
 const taskList = (...items: PMNode[]) => schema.nodes.taskList.create(null, items);
+// A task item whose paragraph holds arbitrary inline content, for the cases
+// where the item is not just a run of text.
+const taskOf = (checked: boolean, ...content: PMNode[]) =>
+    schema.nodes.taskItem.create({ checked }, [para(...content)]);
 
 describe('extractDocumentIndex', () => {
     it('collects the plain text', () => {
@@ -125,6 +129,27 @@ describe('extractDocumentIndex', () => {
         const d = doc(taskList(task(false, ''), task(false, 'second')));
         const todos = extractDocumentIndex(d).todos;
         expect(todos.map((todo) => todo.text)).toEqual(['', 'second']);
+    });
+
+    // A document link is an atom, so `textContent` returns nothing for it. The
+    // todo index showed "ask about milk" for an item that reads "ask
+    // Groceries about milk", which is the wrong task.
+    it('reads the document a todo links to as part of its text', () => {
+        const d = doc(
+            taskList(taskOf(false, t('ask '), link('n1', 'Groceries'), t(' about milk'))),
+        );
+        expect(extractDocumentIndex(d).todos[0].text).toBe('ask Groceries about milk');
+    });
+
+    // Worse than wrong: an empty row, for an item that says something.
+    it('reads a todo that is nothing but a link', () => {
+        const d = doc(taskList(taskOf(false, link('n1', 'Groceries'))));
+        expect(extractDocumentIndex(d).todos[0].text).toBe('Groceries');
+    });
+
+    it('still follows a link that is inside a todo', () => {
+        const d = doc(taskList(taskOf(false, t('see '), link('n2', 'Project Ideas'))));
+        expect(extractDocumentIndex(d).linkTargets).toEqual(['n2']);
     });
 
     it('truncates a very long todo', () => {
