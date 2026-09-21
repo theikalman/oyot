@@ -121,12 +121,33 @@ describe('indexFromYDoc', () => {
         expect(indexFromYDoc(ydoc).attachmentHashes).toEqual([hash]);
     });
 
+    // The picker offers a tag because some document was indexed holding it, and
+    // most of the corpus arrives by sync rather than being typed here. A tag
+    // that did not survive this round trip would be a tag only the device it
+    // was coined on could ever offer.
+    it('collects the tags on a document nobody has opened', () => {
+        const ydoc = ydocOf([
+            {
+                type: 'paragraph',
+                content: [
+                    { type: 'text', text: 'planning ' },
+                    { type: 'tag', attrs: { name: 'holiday' } },
+                ],
+            },
+        ]);
+
+        const index = indexFromYDoc(ydoc);
+        expect(index.tags).toEqual(['holiday']);
+        expect(index.text).toBe('planning holiday');
+    });
+
     it('returns an empty index for an empty document', () => {
         const ydoc = ydocOf([]);
         expect(indexFromYDoc(ydoc)).toEqual({
             text: '',
             linkTargets: [],
             attachmentHashes: [],
+            tags: [],
             todos: [],
             todoCount: 0,
             completedTodoCount: 0,

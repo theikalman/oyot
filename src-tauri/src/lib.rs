@@ -87,6 +87,24 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
 
+        -- Which documents carry which tags. The only record of which tags
+        -- exist at all: a tag is offered by the picker because some document
+        -- was indexed holding it, so a tag lives exactly as long as the last
+        -- chip spelling it and there is no list to curate. Derived from
+        -- content, so it is written wherever content arrives, as links and
+        -- todos are.
+        --
+        -- `name` is already normalized by the time it gets here (lower case,
+        -- trimmed, no leading hash), which is what makes the primary key the
+        -- whole of a tag's identity.
+        CREATE TABLE IF NOT EXISTS document_tags (
+            document_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            PRIMARY KEY (document_id, name),
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_tags_name ON document_tags(name);
+
         CREATE TABLE IF NOT EXISTS attachments (
             hash TEXT PRIMARY KEY,
             mime_type TEXT NOT NULL,
@@ -130,7 +148,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -367,6 +385,28 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v8: the tags a document carries. Nothing is backfilled, and
+    // `indexer::INDEX_VERSION` is deliberately not bumped with it: a tag is a
+    // node type that did not exist before this build, so no document written by
+    // any earlier one can contain one. There is nothing for a re-render of the
+    // corpus to find, and a bump would also stall attachment collection until
+    // it finished.
+    if version < 8 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS document_tags (
+                 document_id TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 PRIMARY KEY (document_id, name),
+                 FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_document_tags_name ON document_tags(name);",
+        )
+        .map_err(|e| format!("Migration v8 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 8;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -422,6 +462,7 @@ pub fn run() {
             search_documents,
             get_backlinks,
             get_all_todos,
+            get_all_tags,
             get_or_create_today_journal,
             get_theme,
             save_theme,
@@ -983,6 +1024,36 @@ mod migration_tests {
             .unwrap();
         let left: i64 = db
             .query_row("SELECT COUNT(*) FROM document_todos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    // A database from before tags existed, which is every install shipped so
+    // far. Nothing is backfilled: no earlier build could write a tag, so an
+    // empty table is the whole truth about what the corpus is tagged with.
+    #[test]
+    fn migrates_v7_to_v8_and_adds_the_tag_table() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("DROP TABLE document_tags; PRAGMA user_version = 7;")
+            .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        db.execute_batch(
+            "INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('d1', 'note', 'One', 1, 1);
+             INSERT INTO document_tags (document_id, name) VALUES ('d1', 'work');",
+        )
+        .unwrap();
+
+        // A tag is only ever offered because a live document carries it, so the
+        // rows must go when the document does.
+        db.execute("DELETE FROM documents WHERE id = 'd1'", [])
+            .unwrap();
+        let left: i64 = db
+            .query_row("SELECT COUNT(*) FROM document_tags", [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 0);
     }

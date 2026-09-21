@@ -15,6 +15,12 @@ const schema = new Schema({
             atom: true,
             attrs: { targetId: { default: null }, title: { default: null } },
         },
+        tag: {
+            group: 'inline',
+            inline: true,
+            atom: true,
+            attrs: { name: { default: null } },
+        },
         taskList: { group: 'block', content: 'taskItem+' },
         taskItem: { content: 'paragraph block*', attrs: { checked: { default: false } } },
         image: {
@@ -30,6 +36,7 @@ const para = (...content: PMNode[]) => schema.nodes.paragraph.create(null, conte
 const doc = (...content: PMNode[]) => schema.nodes.doc.create(null, content);
 const link = (targetId: string, title: string) =>
     schema.nodes.documentLink.create({ targetId, title });
+const tag = (name: string) => schema.nodes.tag.create({ name });
 const task = (checked: boolean, text: string, ...nested: PMNode[]) =>
     schema.nodes.taskItem.create({ checked }, [text ? para(t(text)) : para(), ...nested]);
 const taskList = (...items: PMNode[]) => schema.nodes.taskList.create(null, items);
@@ -190,6 +197,7 @@ describe('extractDocumentIndex', () => {
             text: '',
             linkTargets: [],
             attachmentHashes: [],
+            tags: [],
             todos: [],
             todoCount: 0,
             completedTodoCount: 0,
@@ -199,5 +207,49 @@ describe('extractDocumentIndex', () => {
     it('ignores a link with no target', () => {
         const d = doc(para(schema.nodes.documentLink.create({ targetId: null, title: 'x' })));
         expect(extractDocumentIndex(d).linkTargets).toEqual([]);
+    });
+
+    it('collects tags in document order', () => {
+        const d = doc(para(t('a '), tag('work'), t(' b')), para(tag('urgent')));
+        expect(extractDocumentIndex(d).tags).toEqual(['work', 'urgent']);
+    });
+
+    // The rows are replaced wholesale on every pass, and the primary key is the
+    // document and the name, so a repeated tag is one tag.
+    it('deduplicates a tag used twice', () => {
+        const d = doc(para(tag('work')), para(tag('work')));
+        expect(extractDocumentIndex(d).tags).toEqual(['work']);
+    });
+
+    // A chip written by an older build, or pasted in, may not be normalized.
+    // The rows and the picker both assume one spelling per tag.
+    it('normalizes what it finds, and so deduplicates across spellings', () => {
+        const d = doc(para(tag('Work')), para(tag('  #work ')));
+        expect(extractDocumentIndex(d).tags).toEqual(['work']);
+    });
+
+    it('ignores a tag with no name', () => {
+        const d = doc(para(schema.nodes.tag.create({ name: null }), tag('  ')));
+        expect(extractDocumentIndex(d).tags).toEqual([]);
+    });
+
+    // A tag is how the user says what a note is about, so searching for one
+    // should find the notes carrying it.
+    it('indexes a tag name as text', () => {
+        const d = doc(para(t('planning '), tag('holiday')));
+        expect(extractDocumentIndex(d).text).toBe('planning holiday');
+    });
+
+    // An atom contributes nothing to `textContent`, so "call mum #urgent" would
+    // be recorded as "call mum" and the todo index would show a task that is
+    // not the task in the note.
+    it('reads a tag inside a todo as part of its text', () => {
+        const d = doc(taskList(taskOf(false, t('call mum '), tag('urgent'))));
+        expect(extractDocumentIndex(d).todos[0].text).toBe('call mum #urgent');
+    });
+
+    it('still collects a tag that is inside a todo', () => {
+        const d = doc(taskList(taskOf(false, t('call mum '), tag('urgent'))));
+        expect(extractDocumentIndex(d).tags).toEqual(['urgent']);
     });
 });

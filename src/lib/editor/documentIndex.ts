@@ -1,5 +1,6 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
+import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 
 /** Everything the todo index page needs about one task item. */
 export interface TodoEntry {
@@ -41,6 +42,16 @@ export interface DocumentIndex {
     text: string;
     /** Ids of documents this one links to, deduplicated. */
     linkTargets: string[];
+    /**
+     * The tags this document carries, normalized and deduplicated, in document
+     * order.
+     *
+     * The only record of which tags exist. The picker offers a tag because some
+     * document was indexed holding it, so a tag lives exactly as long as the
+     * last chip spelling it: there is no list of tags to curate, and none to go
+     * stale.
+     */
+    tags: string[];
     /**
      * Content hashes of the images this document embeds, deduplicated.
      *
@@ -99,6 +110,13 @@ function inlineText(node: ProseMirrorNode): string {
         const title = node.attrs.title;
         return typeof title === 'string' ? title : '';
     }
+    // Same reasoning as the link above: a tag is an atom, so "call mum #urgent"
+    // would otherwise be recorded as "call mum" and the index page would show a
+    // task that is not the task in the note.
+    if (node.type.name === TAG_NODE_NAME) {
+        const name = normalizeTagName(String(node.attrs.name ?? ''));
+        return name ? `#${name}` : '';
+    }
     let out = '';
     node.forEach((child) => {
         out += inlineText(child);
@@ -120,6 +138,7 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
     const parts: string[] = [];
     const linkTargets = new Set<string>();
     const attachmentHashes = new Set<string>();
+    const tags = new Set<string>();
     const todos: TodoEntry[] = [];
 
     doc.descendants((node, pos) => {
@@ -150,6 +169,17 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
                 // task list nested inside it holds items of its own.
                 return true;
             }
+            case TAG_NODE_NAME: {
+                const name = normalizeTagName(String(node.attrs.name ?? ''));
+                if (name) {
+                    tags.add(name);
+                    // Worth matching on as well as recording: a tag is how the
+                    // user refers to a note's subject, so searching for one
+                    // should find the notes carrying it.
+                    parts.push(name);
+                }
+                return false; // atom, nothing inside to walk
+            }
             case 'image': {
                 // The hash is what says this attachment is still in use. It is
                 // noise in the search text, so it is collected and not pushed
@@ -170,6 +200,7 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
         text: parts.join(' ').replace(/\s+/g, ' ').trim(),
         linkTargets: [...linkTargets],
         attachmentHashes: [...attachmentHashes],
+        tags: [...tags],
         todos,
         todoCount: todos.length,
         completedTodoCount: todos.filter((todo) => todo.checked).length,

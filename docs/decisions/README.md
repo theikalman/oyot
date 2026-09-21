@@ -29,6 +29,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md)          | Binary chunk frames, and a development broker that is anonymous on purpose          | Accepted |
 | [0017](0017-a-cross-document-todo-index.md)                        | A cross-document todo index, addressed by ordinal                                   | Accepted |
 | [0018](0018-local-network-sync-as-a-second-signaling-transport.md) | Sync on the local network by adding a second signaling transport                    | Accepted |
+| [0019](0019-tags-as-inline-nodes-with-one-spelling.md)             | Tags are inline nodes, and a tag has exactly one spelling                           | Accepted |
 
 ## Format
 

@@ -532,11 +532,10 @@ mod tests {
     fn index_with(hashes: &[&str]) -> DocumentIndexInput {
         DocumentIndexInput {
             text: "body".into(),
-            link_targets: vec![],
             attachment_hashes: hashes.iter().map(|s| s.to_string()).collect(),
-            todo_count: 0,
-            completed_todo_count: 0,
-            todos: vec![],
+            // The rest defaulted, so a field added to the index is not a field
+            // added to every fixture that does not care about it.
+            ..Default::default()
         }
     }
 

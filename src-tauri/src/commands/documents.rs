@@ -690,6 +690,59 @@ pub fn get_all_todos(state: tauri::State<'_, AppState>) -> Result<Vec<TodoHit>, 
     query_all_todos(&db)
 }
 
+/// One tag, and how much of the corpus carries it.
+#[derive(Debug, Serialize)]
+pub struct TagHit {
+    /// Normalized: lower case, trimmed, no leading hash. The only spelling.
+    pub name: String,
+    /// Live documents holding this tag. One row per document per tag, so a
+    /// count of rows is a count of documents.
+    pub document_count: i64,
+}
+
+/// Every tag in the corpus, most used first.
+///
+/// The order is what the picker offers, and it does not re-rank: a tag on
+/// thirty notes is more likely to be the one being reached for than a tag used
+/// once, and a name tiebreak keeps the list from reshuffling between two tags
+/// that happen to be level.
+///
+/// Tombstoned documents are excluded rather than relying on their rows having
+/// been cleared. `clear_document_index` does remove them, but a tag that only
+/// exists in the bin would be offered as if it were in use, and a picker is
+/// read far more often than a document is deleted.
+pub fn query_all_tags(db: &Connection) -> Result<Vec<TagHit>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT t.name, COUNT(*) AS n
+               FROM document_tags t
+               JOIN documents d ON d.id = t.document_id
+              WHERE d.is_deleted = 0
+              GROUP BY t.name
+              ORDER BY n DESC, t.name ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let tags: Vec<TagHit> = stmt
+        .query_map([], |row| {
+            Ok(TagHit {
+                name: row.get(0)?,
+                document_count: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(tags)
+}
+
+#[tauri::command]
+pub fn get_all_tags(state: tauri::State<'_, AppState>) -> Result<Vec<TagHit>, String> {
+    let db = state.db.lock();
+    query_all_tags(&db)
+}
+
 /// Today's journal, and whether opening it was news.
 #[derive(Debug, Serialize)]
 pub struct TodayJournal {
@@ -806,6 +859,23 @@ mod tests {
             params![doc_id, ordinal, text],
         )
         .unwrap();
+    }
+
+    fn add_tag(db: &Connection, doc_id: &str, name: &str) {
+        db.execute(
+            "INSERT INTO document_tags (document_id, name) VALUES (?1, ?2)",
+            params![doc_id, name],
+        )
+        .unwrap();
+    }
+
+    /// The tags as the picker reads them: the name, and how many notes use it.
+    fn offered(db: &Connection) -> Vec<(String, i64)> {
+        query_all_tags(db)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.name, t.document_count))
+            .collect()
     }
 
     /// The todos as the index page reads them: which document, which item.
@@ -968,6 +1038,62 @@ mod tests {
         assert_eq!(hit.doc_type, "note");
     }
 
+    // The order is what the picker offers: a tag on thirty notes is more likely
+    // to be the one being reached for than a tag used once.
+    #[test]
+    fn tags_are_offered_most_used_first() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_tag(&db, "d1", "work");
+        add_tag(&db, "d2", "work");
+        add_tag(&db, "d2", "home");
+
+        assert_eq!(
+            offered(&db),
+            vec![("work".to_string(), 2), ("home".to_string(), 1)]
+        );
+    }
+
+    // Level tags are broken by name, so the list does not reshuffle between two
+    // reads for no reason the user can see.
+    #[test]
+    fn tags_used_equally_are_ordered_by_name() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_tag(&db, "d1", "zebra");
+        add_tag(&db, "d2", "apple");
+
+        assert_eq!(
+            offered(&db),
+            vec![("apple".to_string(), 1), ("zebra".to_string(), 1)]
+        );
+    }
+
+    // A tag that only exists in the bin would be offered as if it were in use.
+    #[test]
+    fn a_deleted_document_offers_no_tags() {
+        let db = db();
+        add_tag(&db, "d1", "work");
+        db.execute("UPDATE documents SET is_deleted = 1 WHERE id = 'd1'", [])
+            .unwrap();
+        assert!(offered(&db).is_empty());
+    }
+
+    // Journals hold as much of the writing as notes do, and a tag put on one is
+    // a tag the user expects to see again.
+    #[test]
+    fn a_journal_contributes_its_tags() {
+        let db = db();
+        add_doc(&db, "j1", "journal", "2026-09-21", 20);
+        add_tag(&db, "j1", "gym");
+        assert_eq!(offered(&db), vec![("gym".to_string(), 1)]);
+    }
+
+    #[test]
+    fn a_corpus_with_no_tags_offers_none() {
+        assert!(offered(&db()).is_empty());
+    }
+
     fn content(db: &Connection) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         db.query_row(
             "SELECT crdt_state, content_hash FROM documents WHERE id = 'd1'",
@@ -1010,12 +1136,9 @@ mod tests {
             "d1",
             "One",
             &crate::indexer::DocumentIndexInput {
-                attachment_hashes: vec![],
                 text: "findable".into(),
-                link_targets: vec![],
-                todo_count: 0,
-                completed_todo_count: 0,
-                todos: vec![],
+                tags: vec!["work".to_string()],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1030,6 +1153,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, 0, "a deleted document must not stay searchable");
+
+        let tags: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM document_tags WHERE document_id = 'd1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tags, 0, "and its tags must stop being offered");
     }
 
     #[test]
@@ -1140,12 +1272,8 @@ mod tests {
             "d1",
             "One",
             &crate::indexer::DocumentIndexInput {
-                attachment_hashes: vec![],
                 text: "the quarterly meeting notes".into(),
-                link_targets: vec![],
-                todo_count: 0,
-                completed_todo_count: 0,
-                todos: vec![],
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1183,12 +1311,8 @@ mod tests {
             "d1",
             "One",
             &crate::indexer::DocumentIndexInput {
-                attachment_hashes: vec![],
                 text: "findable".into(),
-                link_targets: vec![],
-                todo_count: 0,
-                completed_todo_count: 0,
-                todos: vec![],
+                ..Default::default()
             },
         )
         .unwrap();

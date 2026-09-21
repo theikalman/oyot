@@ -32,6 +32,11 @@ pub struct DocumentIndexInput {
     /// Content hashes of the images this document embeds.
     #[serde(default)]
     pub attachment_hashes: Vec<String>,
+    /// The tags this document carries, already normalized by the extractor.
+    /// Defaulted so a payload from a build that predates tags still
+    /// deserialises.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub todo_count: i32,
     pub completed_todo_count: i32,
     /// Every task item in the document, in document order. Defaulted so a
@@ -51,6 +56,10 @@ pub struct DocumentIndexInput {
 /// v2 added `document_todos`. The bump is what makes the startup backfill
 /// re-render every document with content, which is the only way a todo
 /// written before this existed reaches the index page.
+///
+/// Not bumped for tags: a tag is a node type no earlier build could write, so
+/// there is nothing in the corpus for a re-render to find, and a bump would
+/// stall attachment collection until one had run anyway.
 ///
 /// v3 is the same rows read better: a task item's text now includes the title
 /// of any document it links to, where before an atom contributed nothing and
@@ -148,6 +157,23 @@ pub fn update_document_index(
         .map_err(|e| e.to_string())?;
     }
 
+    // And again for tags: the chips in the document now are the whole truth
+    // about which tags it carries. Removing the last chip spelling a tag is how
+    // a tag stops existing, so a stale row here would leave the picker offering
+    // a tag that is nowhere in the corpus.
+    db.execute(
+        "DELETE FROM document_tags WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
+    for name in &index.tags {
+        db.execute(
+            "INSERT OR IGNORE INTO document_tags (document_id, name) VALUES (?, ?)",
+            params![doc_id, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     // And again for todos: the items in the document now are the whole truth
     // about what todos it has. Replacing also renumbers, which is what keeps
     // an ordinal pointing at the line it named.
@@ -217,6 +243,12 @@ pub fn clear_document_index(db: &rusqlite::Connection, doc_id: &str) -> Result<(
         params![doc_id],
     )
     .map_err(|e| e.to_string())?;
+    // ...and its tags stop being offered, for the same reason.
+    db.execute(
+        "DELETE FROM document_tags WHERE document_id = ?",
+        params![doc_id],
+    )
+    .map_err(|e| e.to_string())?;
     db.execute(
         "DELETE FROM document_search WHERE document_id = ?",
         params![doc_id],
@@ -270,6 +302,7 @@ mod tests {
             text: text.to_string(),
             link_targets: links.iter().map(|s| s.to_string()).collect(),
             attachment_hashes: vec![],
+            tags: vec![],
             todo_count: todo,
             completed_todo_count: done,
             todos: vec![],
@@ -281,6 +314,96 @@ mod tests {
             attachment_hashes: hashes.iter().map(|s| s.to_string()).collect(),
             ..index("body", &[], 0, 0)
         }
+    }
+
+    fn with_tags(tags: &[&str]) -> DocumentIndexInput {
+        DocumentIndexInput {
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            ..index("body", &[], 0, 0)
+        }
+    }
+
+    /// The tag rows for a document, in a stable order for comparison.
+    fn tags_of(db: &Connection, doc_id: &str) -> Vec<String> {
+        let mut stmt = db
+            .prepare("SELECT name FROM document_tags WHERE document_id = ? ORDER BY name")
+            .unwrap();
+        stmt.query_map([doc_id], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    }
+
+    #[test]
+    fn tags_are_recorded() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work", "urgent"])).unwrap();
+        assert_eq!(tags_of(&db, "a"), vec!["urgent", "work"]);
+    }
+
+    // Removing the last chip spelling a tag is the only way a tag stops
+    // existing, so a row left behind would leave the picker offering a tag that
+    // is nowhere in the corpus.
+    #[test]
+    fn tags_are_replaced_wholesale() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work", "urgent"])).unwrap();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work"])).unwrap();
+        assert_eq!(tags_of(&db, "a"), vec!["work"]);
+    }
+
+    #[test]
+    fn a_document_with_no_tags_has_no_rows() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work"])).unwrap();
+        update_document_index(&db, "a", "Alpha", &with_tags(&[])).unwrap();
+        assert!(tags_of(&db, "a").is_empty());
+    }
+
+    // The extractor deduplicates, but the write must not depend on it having:
+    // the primary key is the document and the name.
+    #[test]
+    fn a_repeated_tag_is_one_row() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work", "work"])).unwrap();
+        assert_eq!(tags_of(&db, "a"), vec!["work"]);
+    }
+
+    #[test]
+    fn clearing_removes_tags() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work"])).unwrap();
+        clear_document_index(&db, "a").unwrap();
+        assert!(tags_of(&db, "a").is_empty());
+    }
+
+    #[test]
+    fn deleting_a_document_row_cascades_to_its_tags() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work"])).unwrap();
+        db.execute("DELETE FROM documents WHERE id = 'a'", [])
+            .unwrap();
+        assert!(tags_of(&db, "a").is_empty());
+    }
+
+    // Two documents can carry the same tag; that is the whole point of one.
+    #[test]
+    fn two_documents_can_carry_the_same_tag() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &with_tags(&["work"])).unwrap();
+        update_document_index(&db, "b", "Beta", &with_tags(&["work"])).unwrap();
+        assert_eq!(tags_of(&db, "a"), vec!["work"]);
+        assert_eq!(tags_of(&db, "b"), vec!["work"]);
+    }
+
+    // A payload from a build that predates tags carries no `tags` field at all.
+    #[test]
+    fn an_index_payload_without_tags_still_deserialises() {
+        let parsed: DocumentIndexInput = serde_json::from_str(
+            r#"{"text":"body","linkTargets":[],"todoCount":0,"completedTodoCount":0}"#,
+        )
+        .expect("must parse");
+        assert!(parsed.tags.is_empty());
     }
 
     fn with_todos(todos: &[(&str, bool, i64)]) -> DocumentIndexInput {
