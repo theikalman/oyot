@@ -178,3 +178,15 @@ pub fn probe_stored_addresses(state: State<'_, AppState>) {
 pub fn list_reachable_peers(state: State<'_, AppState>) -> Vec<crate::network::peers::Peer> {
     state.peers.all()
 }
+
+/// Which of this device's addresses a given peer would reach it at.
+///
+/// For rewriting an obfuscated ICE candidate (ADR 0023). `None` when the peer
+/// is not reachable, or when the route to it cannot be worked out, and the
+/// caller then publishes only what the WebView gave it.
+#[tauri::command]
+pub fn local_address_toward(state: State<'_, AppState>, peer_node_id: String) -> Option<String> {
+    let peer = state.peers.best(&peer_node_id)?;
+    let target = peer.addrs.first().copied()?;
+    crate::network::peers::local_source_address(target).map(|addr| addr.to_string())
+}

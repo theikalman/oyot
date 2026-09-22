@@ -20,6 +20,7 @@ import {
     type PeerSource,
 } from '../stores/sync';
 import { refreshEndpoints } from './endpoints';
+import { isObfuscated, rewriteCandidate } from './iceRewrite';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
 import { DocSyncProtocol, type SyncProgressSink } from './channel/DocSyncProtocol';
@@ -65,6 +66,10 @@ interface PeerSession {
     ignoreOffer: boolean;
     isSettingRemoteAnswerPending: boolean;
     dataChannel: RTCDataChannel | null;
+    // Our own address as this peer would see it, for rewriting obfuscated ICE
+    // candidates (ADR 0023). Null when the peer is on this network, where the
+    // mDNS candidate name resolves and nothing needs rewriting.
+    localAddress: string | null;
     framed: FramedChannel | null;
     proto: DocSyncProtocol | null;
     reconnectAttempts: number;
@@ -231,10 +236,45 @@ async function sendIceCandidate(
     session: PeerSession,
     candidate: RTCIceCandidate,
 ): Promise<void> {
-    const payload = serializeIce(session.epoch, candidate.toJSON());
+    const init = candidate.toJSON();
+    await publishIce(peerId, session, init);
+
+    // A peer that is not on this network cannot resolve an mDNS candidate
+    // name, so the candidate as the WebView produced it is dead on arrival
+    // there. Publish a copy naming the address that peer would reach us at
+    // (ADR 0023). The original goes out either way: it is the working one for
+    // anyone who can resolve it, and ICE discards what does not check out.
+    if (!session.localAddress || !isObfuscated(init.candidate ?? '')) return;
+    const rewritten = rewriteCandidate(init, session.localAddress);
+    if (!rewritten) return;
+    log.debug(`[sync] [${peerId}] also publishing that candidate as ${session.localAddress}`);
+    await publishIce(peerId, session, rewritten);
+}
+
+async function publishIce(
+    peerId: string,
+    session: PeerSession,
+    init: RTCIceCandidateInit,
+): Promise<void> {
+    const payload = serializeIce(session.epoch, init);
     await invoke('signaling_publish_ice_candidate', { peerId, candidate: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ICE candidate:`, e),
     );
+}
+
+// The address this peer would reach us at, when it is not on this network.
+//
+// Read once per session rather than per candidate: candidates arrive in a
+// burst, and the answer is a property of the route, which does not change
+// under a session without the session being rebuilt.
+async function localAddressToward(peerNodeId: string): Promise<string | null> {
+    if (get(lanPeerIds).has(peerNodeId)) return null;
+    try {
+        return await invoke<string | null>('local_address_toward', { peerNodeId });
+    } catch (e) {
+        console.warn(`[sync] [${peerNodeId}] could not work out our address toward it:`, e);
+        return null;
+    }
 }
 
 async function calculateRoomId(userA: string, userB: string): Promise<string> {
@@ -352,6 +392,7 @@ async function ensurePeerConnection(
         ignoreOffer: false,
         isSettingRemoteAnswerPending: false,
         dataChannel: null,
+        localAddress: null,
         framed: null,
         proto: null,
         reconnectAttempts: existing?.reconnectAttempts ?? 0,
@@ -377,6 +418,13 @@ async function ensurePeerConnection(
             session.makingOffer = false;
         }
     };
+
+    // Started before the offer and not awaited: candidates cannot be gathered
+    // until a description is set, so this has resolved long before the first
+    // one arrives, and a session must not wait on a command to exist.
+    void localAddressToward(peerNodeId).then((addr) => {
+        session.localAddress = addr;
+    });
 
     pc.onicecandidate = ({ candidate }) => {
         if (candidate) void sendIceCandidate(peerNodeId, session, candidate);

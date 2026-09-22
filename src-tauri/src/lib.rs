@@ -527,6 +527,7 @@ pub fn run() {
             signaling_start,
             signaling_stop,
             probe_stored_addresses,
+            local_address_toward,
             list_reachable_peers,
             list_export_attachments,
             export_notes,
