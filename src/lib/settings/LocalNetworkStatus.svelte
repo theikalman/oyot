@@ -9,9 +9,31 @@
         portTaken: boolean;
         /** Devices currently answering at an address stored for them. */
         remoteCount: number;
+        /** Whether any address is stored at all, answering or not. */
+        anyStoredAddress: boolean;
+        onCheckAddresses: () => Promise<void>;
     }
 
-    let { lanStatus, nearby, portTaken, remoteCount }: Props = $props();
+    let { lanStatus, nearby, portTaken, remoteCount, anyStoredAddress, onCheckAddresses }: Props =
+        $props();
+
+    // Addresses are retried on a 45 second timer, which is the right cadence
+    // for a device that comes and goes and the wrong one for someone who has
+    // just fixed a firewall rule and is watching this line. It lives here
+    // rather than beside the addresses themselves, because those are spread
+    // over the device rows and this asks about all of them at once.
+    let checking = $state(false);
+
+    async function handleCheck() {
+        checking = true;
+        try {
+            await onCheckAddresses();
+        } finally {
+            // Long enough to read as an action having happened. The probe
+            // finishes when it finishes, and the status line says so.
+            setTimeout(() => (checking = false), 1500);
+        }
+    }
 
     // The second route (ADR 0023). Counted the same way as the local one: how
     // many devices are answering, whether or not they are paired.
@@ -59,6 +81,11 @@
     <div class="status-row">
         <span class="status-dot {remoteCount > 0 ? 'active' : 'off'}"></span>
         <span class="status-label">Stored addresses: {remoteLabel}</span>
+        {#if anyStoredAddress}
+            <button class="check-now" onclick={handleCheck} disabled={checking}>
+                {checking ? 'Checking…' : 'Check now'}
+            </button>
+        {/if}
     </div>
 
     {#if lanStatus === 'error'}
@@ -122,6 +149,22 @@
     .status-label {
         font-size: 12px;
         color: var(--text-muted);
+    }
+    .check-now {
+        padding: 0;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--accent-color);
+    }
+    .check-now:hover {
+        text-decoration: underline;
+    }
+    .check-now:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        text-decoration: none;
     }
     .status-detail {
         margin: 8px 0 0 0;

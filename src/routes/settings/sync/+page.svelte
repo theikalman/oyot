@@ -35,7 +35,7 @@
     import { LocalNetworkStatus } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
-    import { RemoteAddressList } from '$lib/settings';
+    import { UnpairedAddressList } from '$lib/settings';
     import { PairingDialog } from '$lib/settings';
     import Modal from '$lib/components/Modal.svelte';
 
@@ -168,6 +168,9 @@
         }
     }
 
+    // Deliberately lets the error out: the row that asked for this shows what
+    // was wrong with the address next to the field it was typed in, which is
+    // more use than a toast that has to name the device to make sense.
     async function handleAddEndpoint(nodeId: string, address: string) {
         const saved = await saveEndpoint(nodeId, address);
         toasts.success(`Added ${saved.host}:${saved.port}. Checking whether it answers…`);
@@ -247,6 +250,8 @@
         {nearby}
         {portTaken}
         remoteCount={onStoredAddress.size}
+        anyStoredAddress={endpoints.length > 0}
+        onCheckAddresses={handleCheckAddresses}
     />
 
     <PairDeviceForm
@@ -258,19 +263,20 @@
     <ConnectedPeerList
         pairedDevices={paired}
         connectedPeers={connected}
+        {endpoints}
         {onStoredAddress}
         onDisconnect={handleDisconnect}
         onReconnect={handleReconnect}
         onRemove={handleRemovePeer}
+        onAddAddress={handleAddEndpoint}
+        onForgetAddress={handleForgetEndpoint}
     />
 
-    <RemoteAddressList
+    <UnpairedAddressList
         {endpoints}
         pairedDevices={paired}
         reachable={onStoredAddress}
-        onAdd={handleAddEndpoint}
         onForget={handleForgetEndpoint}
-        onCheckNow={handleCheckAddresses}
     />
 
     {#if pending}

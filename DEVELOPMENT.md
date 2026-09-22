@@ -361,22 +361,27 @@ available and you would be testing the wrong thing.
    address is stored and probed before the request goes out, so a wrong one is
    reported as a wrong address rather than as a device that did not answer.
 2. Accept the prompt on the other device.
-3. On that device, under "Devices Somewhere Else", pick the first device and
-   add its address. **Both directions need one**: either device may be the one
-   that starts a reconnect, and the one without an address cannot.
+3. On that device, find the first one under "Paired Devices" and use "Add an
+   address" on its row. **Both directions need one**: either device may be the
+   one that starts a reconnect, and the one without an address cannot.
 
-A row saying `No answer` with "has never answered" means the address, the other
+An address reading "has never answered" means the address itself, the other
 device being asleep, or a tailnet ACL that does not allow port 19701 between
-your own devices. "Check now" re-probes without waiting out the 45 second
-interval.
+your own devices. "Check now", beside the stored-address line under Sync
+Connection, re-probes without waiting out the 45 second interval.
 
 The form asks which way first and then shows only that way's fields, so a
 blank address is never ambiguous between "it is on this network" and "I have
 not filled that in yet". `sync/pairMethod.ts` holds what follows from the
 choice: what the Pair button needs, that an address typed and then abandoned is
-not used, and the one warning worth raising before anything is sent. The Node
-ID is typed once, here; the address section picks from paired devices rather
-than asking for an id again.
+not used, and the one warning worth raising before anything is sent.
+
+A node id is typed exactly once, when pairing. Afterwards a device's addresses
+live on its own row under "Paired Devices" (`PeerAddresses.svelte`), where the
+row already says which device this is. The only addresses not shown there are
+ones belonging to a pairing that never completed, since an address is stored
+before the request goes out; `UnpairedAddressList.svelte` is where those can be
+removed, and it renders nothing at all when there are none.
 
 ## Project Structure
 
@@ -386,7 +391,7 @@ oyot/
 │   ├── lib/
 │   │   ├── components/      # Sidebar, toasts, sync status
 │   │   ├── editor/          # Tiptap editor, save service, Yjs helpers
-│   │   ├── settings/        # Pairing and sync settings UI
+│   │   ├── settings/        # Pairing, addresses and sync settings UI
 │   │   ├── services/        # Document actions, theme, toasts
 │   │   ├── stores/          # Svelte stores (app state, sync state)
 │   │   ├── sync/            # Peer sync: transport, protocol, framing, ICE
