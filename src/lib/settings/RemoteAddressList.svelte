@@ -9,9 +9,10 @@
         reachable: Set<string>;
         onAdd: (nodeId: string, address: string) => Promise<void>;
         onForget: (nodeId: string, host: string, port: number) => Promise<void>;
+        onCheckNow: () => Promise<void>;
     }
 
-    let { endpoints, pairedDevices, reachable, onAdd, onForget }: Props = $props();
+    let { endpoints, pairedDevices, reachable, onAdd, onForget, onCheckNow }: Props = $props();
 
     let nodeIdInput = $state('');
     let addressInput = $state('');
@@ -51,6 +52,22 @@
     function handleKeydown(event: KeyboardEvent) {
         if (event.key === 'Enter') void handleAdd();
     }
+
+    // Addresses are retried on a 45 second timer, which is the right cadence
+    // for a device that comes and goes and the wrong one for someone who has
+    // just fixed a firewall rule and is watching the row.
+    let checking = $state(false);
+
+    async function handleCheckNow() {
+        checking = true;
+        try {
+            await onCheckNow();
+        } finally {
+            // Long enough to read as an action having happened. The probe
+            // itself finishes when it finishes, and the row says so.
+            setTimeout(() => (checking = false), 1500);
+        }
+    }
 </script>
 
 <section class="section">
@@ -64,6 +81,11 @@
     </p>
 
     {#if endpoints.length > 0}
+        <div class="list-actions">
+            <button class="btn-secondary" onclick={handleCheckNow} disabled={checking}>
+                {checking ? 'Checking…' : 'Check now'}
+            </button>
+        </div>
         <ul class="address-list">
             {#each endpoints as endpoint (endpoint.peer_node_id + endpoint.host + endpoint.port)}
                 <li class="address-item">
@@ -148,6 +170,27 @@
         font-size: 13px;
         line-height: 1.6;
         color: var(--text-muted);
+    }
+    .list-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 8px;
+    }
+    .btn-secondary {
+        padding: 6px 12px;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border-light);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .btn-secondary:hover {
+        background: var(--bg-hover);
+    }
+    .btn-secondary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
     .address-list {
         list-style: none;

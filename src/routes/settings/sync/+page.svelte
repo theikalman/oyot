@@ -29,6 +29,7 @@
         reconnectPeer,
         saveEndpoint,
         forgetEndpoint,
+        probeStoredAddresses,
     } from '$lib/sync';
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
@@ -183,6 +184,15 @@
         toasts.success(`Added ${saved.host}:${saved.port}. Checking whether it answers…`);
     }
 
+    async function handleCheckAddresses() {
+        try {
+            await probeStoredAddresses();
+        } catch (e) {
+            console.error('Failed to check stored addresses:', e);
+            toasts.error('Could not check those addresses');
+        }
+    }
+
     async function handleForgetEndpoint(nodeId: string, host: string, port: number) {
         try {
             await forgetEndpoint(nodeId, host, port);
@@ -287,6 +297,7 @@
         reachable={onStoredAddress}
         onAdd={handleAddEndpoint}
         onForget={handleForgetEndpoint}
+        onCheckNow={handleCheckAddresses}
     />
 
     {#if pending}
