@@ -1,6 +1,8 @@
 # 0018: Sync on the local network by adding a second signaling transport, not a second sync mechanism
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md), which
+  removes the broker this ADR kept as the fallback, leaving the local network
+  as the only transport
 - **Date:** 2026-09-15
 - **Amends:** [0001](0001-mqtt-over-iroh-for-signaling.md), which chose MQTT as
   _the_ signaling transport and left the app unable to sync without an
