@@ -31,6 +31,46 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.16-alpha',
+        date: '2026-09-22',
+        summary:
+            'Tags: a way to say what a note is about that cuts across titles and links, with a page for every tag. Plus an index of every journal day, and an export of the whole corpus as Markdown.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Type /tag in a note to put a tag on it. The picker lists the tags you already use, most used first, and offers to create a new one. A tag is one chip in the line rather than loose text, so backspace takes the whole of it.',
+            },
+            {
+                kind: 'added',
+                text: 'Tags joins Todos under Index in the sidebar. It lists every tag in the corpus with how many notes carry it, and opening one shows the journals and notes that mention it. A tag is a link, so it survives a reload and the back button undoes it.',
+            },
+            {
+                kind: 'added',
+                text: 'A tag can be renamed everywhere it appears, including in notes that are not open. Renaming onto a tag that already exists merges the two, and the dialog says so, and says what will actually be stored, before it happens.',
+            },
+            {
+                kind: 'added',
+                text: "Journals under Index lists every day there is a journal for, newest first and gathered under its month, with the weekday, that day's tags and what is still open on it. Days with nothing written can be hidden.",
+            },
+            {
+                kind: 'added',
+                text: 'Settings > Data writes every note out as its own Markdown file, with the images they embed, in one zip you pick the location for. An image whose bytes have not reached this device is noted in a warning rather than linked to a file the archive does not contain.',
+            },
+            {
+                kind: 'improved',
+                text: 'The Todos page opens with completed items hidden. It is there to show what is still to do, and unticking the box brings the full history back.',
+            },
+            {
+                kind: 'improved',
+                text: 'The sidebar shows how many tags there are, the way it already showed how many todos.',
+            },
+            {
+                kind: 'improved',
+                text: 'The journal index says what its numbers count. "2 open" now reads "2 open todos" and the line above the list reads "7 days with a journal, 5 written in", rather than leaving a column of bare numbers to be worked out.',
+            },
+        ],
+    },
+    {
         version: '0.0.15-alpha',
         date: '2026-09-15',
         summary:
