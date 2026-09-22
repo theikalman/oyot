@@ -4,7 +4,11 @@
 //
 // When you bump the version, add an entry here in the same commit.
 
-export type ChangeKind = 'added' | 'improved' | 'fixed' | 'security';
+// 'removed' was added for 0.0.17-alpha. Taking a feature away under
+// "Improved" would be the changelog telling the user what we want them to
+// think rather than what happened, and a release whose headline is a removal
+// needs somewhere honest to put it.
+export type ChangeKind = 'added' | 'improved' | 'fixed' | 'security' | 'removed';
 
 export interface Change {
     kind: ChangeKind;
@@ -27,6 +31,7 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
     improved: 'Improved',
     fixed: 'Fixed',
     security: 'Security',
+    removed: 'Removed',
 };
 
 export const RELEASES: Release[] = [
