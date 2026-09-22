@@ -9,6 +9,8 @@ import {
     canSignal,
     lanStatus,
     lanPeerIds,
+    addressPeerIds,
+    endpointPeerIds,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
@@ -17,6 +19,7 @@ import {
     type Peer,
     type PeerSource,
 } from '../stores/sync';
+import { refreshEndpoints } from './endpoints';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
 import { DocSyncProtocol, type SyncProgressSink } from './channel/DocSyncProtocol';
@@ -775,6 +778,8 @@ function reachInputs(peerNodeId: string): ReachInputs {
     return {
         onLocalNetwork: get(lanPeerIds).has(peerNodeId),
         discovering: get(lanStatus) === 'active',
+        onStoredAddress: get(addressPeerIds).has(peerNodeId),
+        hasStoredAddress: get(endpointPeerIds).has(peerNodeId),
     };
 }
 
@@ -910,8 +915,7 @@ export async function initSync(): Promise<void> {
         // One-time hash backfill for rows written before the hashing code existed.
         void repo.backfillHashes().catch((e) => console.warn('[sync] hash backfill failed:', e));
 
-        // The only way a peer is ever found, so nothing else to start.
-        await startLocalNetwork();
+        await startSignaling();
 
         await finishInit();
     } catch (error) {
@@ -930,29 +934,33 @@ async function finishInit(): Promise<void> {
     log.debug('[sync] initSync() complete, event listeners active');
 }
 
-// Start advertising on this network and listening for peers on it.
+// Start listening, and start both ways of finding a peer: this network, and
+// the addresses the user has stored (ADR 0023).
 //
-// A failure here means no sync at all, which it did not before ADR 0022: there
-// is nothing behind this. It is still not fatal to the app, because a note app
-// that cannot reach another device is a note app, and the causes are often
-// temporary and outside it - a firewall prompt the user has not answered, or a
-// platform with no discovery backend yet. `canSignal` is false throughout, so
-// nothing tries to reach a peer it cannot.
-async function startLocalNetwork(): Promise<void> {
+// Discovery failing is no longer the end of it. A device with no mDNS at all -
+// iOS, or a firewall prompt nobody answered - still syncs with whatever it has
+// an address for, so the failure is reported and the listener stays up. Only
+// the listener itself failing means no sync at all.
+async function startSignaling(): Promise<void> {
     try {
-        const { port, on_default_port } = await invoke<{
+        const { port, on_default_port, discovery_error } = await invoke<{
             port: number;
             on_default_port: boolean;
-        }>('lan_start');
+            discovery_error: string | null;
+        }>('signaling_start');
         syncStore.setListener(port, on_default_port);
         log.debug(
             `[sync] signaling listening on port ${port}${on_default_port ? '' : ' (not the default port, so a stored address cannot reach this device)'}`,
         );
-        // Seeds the list from whatever discovery already knows, which matters
-        // when sync is restarted rather than started.
+        if (discovery_error) {
+            console.warn('[sync] local network discovery unavailable:', discovery_error);
+        }
+        // Seeds the list from whatever is already known, which matters when
+        // sync is restarted rather than started.
         syncStore.setPeers(await invoke<Peer[]>('list_reachable_peers'));
+        await refreshEndpoints();
     } catch (e) {
-        console.warn('[sync] local network sync unavailable:', e);
+        console.warn('[sync] sync transport unavailable:', e);
         syncStore.setLanStatus('error');
     }
 }
@@ -1045,9 +1053,10 @@ async function setupEventListeners(): Promise<void> {
         syncStore.setLanStatus(next);
         if (next === 'active' && prev !== 'active') {
             void reconnectAllPairedDevices('lan-active');
-        } else if (next !== 'active') {
-            // Discovery going down is now the whole of "nothing can be
-            // reached", so there is nothing left for a backoff tick to try.
+        } else if (next !== 'active' && !get(canSignal)) {
+            // Discovery going down is only the end of it when nothing is
+            // reachable at a stored address either. Otherwise there is still
+            // somewhere for a backoff tick to go (ADR 0023).
             pauseAllReconnects();
         }
     });
@@ -1099,6 +1108,6 @@ export function shutdownSync(): void {
     suppressReconnect.clear();
     // Stop advertising before the window goes: a peer acting on an
     // advertisement we left behind would find a closed port.
-    void invoke('lan_stop').catch((e) => console.warn('[sync] lan_stop failed:', e));
+    void invoke('signaling_stop').catch((e) => console.warn('[sync] signaling_stop failed:', e));
     syncStore.setLanStatus('off');
 }

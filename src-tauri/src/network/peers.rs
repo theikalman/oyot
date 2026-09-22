@@ -32,9 +32,7 @@ pub const PEER_TTL_MS: i64 = 90_000;
 pub enum PeerSource {
     /// It announced itself on this network.
     Mdns,
-    /// It answered a probe at an address the user stored for it. Written by
-    /// the endpoint prober, which lands with the rest of ADR 0023.
-    #[allow(dead_code)]
+    /// It answered a probe at an address the user stored for it.
     Address,
 }
 
@@ -133,7 +131,6 @@ impl PeerTable {
     }
 
     /// Drop one node's entry for one source. Reports whether there was one.
-    #[allow(dead_code)]
     pub fn remove(&mut self, node_id: &str, source: PeerSource) -> bool {
         self.peers.remove(&(node_id.to_string(), source)).is_some()
     }
@@ -226,7 +223,6 @@ impl Peers {
     }
 
     /// Forget one node's entry for one source.
-    #[allow(dead_code)]
     pub fn forget(&self, node_id: &str, source: PeerSource) {
         if self.table.lock().remove(node_id, source) {
             trace!("[peers] {} unreachable via {:?}", node_id, source);

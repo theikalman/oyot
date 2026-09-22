@@ -118,6 +118,10 @@ pub fn save_peer_endpoint(
     }
     trace!("[cmd] save_peer_endpoint {} -> {}:{}", node_id, host, port);
 
+    // Probe it now rather than at the next tick: someone who has just typed an
+    // address is waiting to find out whether it was the right one.
+    state.remote.probe_now();
+
     Ok(DeviceEndpoint {
         peer_node_id: node_id,
         host,

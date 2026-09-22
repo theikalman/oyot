@@ -55,6 +55,13 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long a whole send may take once connected.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long to wait for an answer on a connection that expects one.
+///
+/// Only `request` waits at all. A peer answers a probe from memory, so this is
+/// a round trip plus nothing, and waiting longer would only make a device that
+/// is not there take longer to report as not there.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Frames allowed from one address per window, and how long that window is.
 ///
 /// Anyone on the network can connect to this listener. Verification already
@@ -218,6 +225,10 @@ pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
 }
 
 /// Read one message from a connection and hand it to the shared inbound path.
+///
+/// Writes an answer back on the same connection when there is one, which since
+/// ADR 0023 means a probe and nothing else. Everything else is still one
+/// message per connection: a peer that wants to reply opens its own.
 async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Result<(), String> {
     let body = tokio::time::timeout(READ_TIMEOUT, read_frame(&mut stream))
         .await
@@ -227,8 +238,39 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Res
         serde_json::from_slice(&body).map_err(|e| format!("unreadable envelope: {e}"))?;
 
     trace!("[LAN] {} from {}", msg.msg_type, from);
-    inbound.receive(msg).await;
+    let reply = inbound.receive(msg).await;
+
+    if let Some(reply) = reply {
+        let body = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
+        tokio::time::timeout(WRITE_TIMEOUT, write_frame(&mut stream, &body))
+            .await
+            .map_err(|_| "reply timed out".to_string())??;
+    }
     Ok(())
+}
+
+/// Send one message to one address and wait for the answer.
+///
+/// The one exchange that expects a reply on its own connection. `send_to`
+/// stays fire-and-forget, because everything else is answered by the peer
+/// opening a connection back.
+pub async fn request(addr: SocketAddr, msg: &SignalingMessage) -> Result<SignalingMessage, String> {
+    let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
+
+    let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| "connection timed out".to_string())?
+        .map_err(|e| e.to_string())?;
+
+    tokio::time::timeout(WRITE_TIMEOUT, write_frame(&mut stream, &body))
+        .await
+        .map_err(|_| "send timed out".to_string())??;
+
+    let reply = tokio::time::timeout(REPLY_TIMEOUT, read_frame(&mut stream))
+        .await
+        .map_err(|_| "no answer".to_string())??;
+
+    serde_json::from_slice(&reply).map_err(|e| format!("unreadable answer: {e}"))
 }
 
 /// Send one message to a peer on this network.

@@ -36,6 +36,17 @@ export interface Peer {
     seen_at: number;
 }
 
+// An address the user stored for a device, as `endpoints.rs` holds it. A row
+// is a guess until a probe answers it; `last_ok` is the difference between
+// "not connected right now" and "this has never worked" (ADR 0023).
+export interface DeviceEndpoint {
+    peer_node_id: string;
+    host: string;
+    port: number;
+    added_at: number;
+    last_ok: number | null;
+}
+
 export interface PendingPairRequest {
     from: string;
     user_id: string;
@@ -71,6 +82,7 @@ function createSyncStore() {
         listenPort: null as number | null,
         onDefaultPort: false,
         peers: [] as Peer[],
+        endpoints: [] as DeviceEndpoint[],
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
@@ -97,6 +109,7 @@ function createSyncStore() {
         setListener: (listenPort: number, onDefaultPort: boolean) =>
             update((s) => ({ ...s, listenPort, onDefaultPort })),
         setPeers: (peers: Peer[]) => update((s) => ({ ...s, peers })),
+        setEndpoints: (endpoints: DeviceEndpoint[]) => update((s) => ({ ...s, endpoints })),
         addPeer: (peer: Peer) =>
             update((s) => ({
                 ...s,
@@ -204,14 +217,30 @@ export const lanPeerIds = derived(lanPeers, ($p) => new Set($p.map((peer) => pee
 // Reachable by any route at all, which is what the reconnect paths ask about.
 export const reachablePeerIds = derived(syncStore, ($s) => new Set($s.peers.map((p) => p.node_id)));
 
+// Reachable at a stored address: an address that has answered a probe, which
+// is the only evidence there is that one works.
+export const addressPeerIds = derived(
+    syncStore,
+    ($s) => new Set($s.peers.filter((p) => p.source === 'address').map((p) => p.node_id)),
+);
+
+export const deviceEndpoints = derived(syncStore, ($s) => $s.endpoints);
+export const endpointPeerIds = derived(
+    syncStore,
+    ($s) => new Set($s.endpoints.map((e) => e.peer_node_id)),
+);
+
 // Whether there is any way to reach a peer right now.
 //
 // ADR 0018 introduced this so that no single transport could define whether
-// the app was able to sync at all. ADR 0022 left one transport, so it collapses
-// back onto discovery being up. Kept as a name of its own because the reconnect
-// paths ask this question rather than "is mDNS running", and because it is the
-// seam a second route would go back into.
-export const canSignal = derived(syncStore, ($s) => $s.lanStatus === 'active');
+// the app was able to sync at all. ADR 0022 left one transport and it collapsed
+// onto discovery being up. ADR 0023 puts the second route back, and this is the
+// seam it was kept for: a device with no mDNS at all still syncs with whatever
+// has answered at a stored address.
+export const canSignal = derived(
+    syncStore,
+    ($s) => $s.lanStatus === 'active' || $s.peers.some((p) => p.source === 'address'),
+);
 export const pairedDevices = derived(syncStore, ($s) => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, ($s) => $s.connectedPeers);
 export const connectedPeerIds = derived(

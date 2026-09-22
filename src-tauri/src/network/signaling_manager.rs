@@ -115,11 +115,13 @@ impl SignalingManager {
     ///
     /// `node_id` and the user id are snapshots taken when the listener starts;
     /// neither changes after startup.
-    pub fn inbound(&self, app: AppHandle, node_id: &str) -> Inbound {
+    pub fn inbound(&self, app: AppHandle, node_id: &str, boot_id: &str) -> Inbound {
         Inbound {
             app,
             node_id: node_id.to_string(),
             our_user_id: self.get_user_id(),
+            boot_id: boot_id.to_string(),
+            identity: self.identity.clone(),
             verifier: self.verifier.clone(),
             pair_prompts: self.pair_prompts.clone(),
             authorized_peers: self.authorized_peers.clone(),
@@ -173,25 +175,28 @@ impl SignalingManager {
     /// Wraps a message in a signed envelope. Fails when no identity is loaded,
     /// which would otherwise mean publishing something no peer can verify.
     fn seal(&self, to: &str, msg_type: &str, payload: String) -> Result<SignalingMessage, String> {
-        let guard = self.identity.lock();
-        let me = guard
-            .as_ref()
-            .ok_or_else(|| "cannot sign: identity not loaded".to_string())?;
+        seal_with(&self.identity, to, msg_type, payload)
+    }
 
-        let from = me.public.node_id.clone();
-        let ts = crypto::now_ms();
-        let nonce = crypto::random_nonce();
-        let sig = crypto::sign(&me.signing_key, &from, to, msg_type, &payload, ts, &nonce);
+    /// Seal a message for a peer, ready to send (ADR 0023's prober needs one
+    /// without going through `publish`, which would look the peer up in the
+    /// very table the probe is about to fill).
+    pub fn seal_for(
+        &self,
+        to: &str,
+        msg_type: &str,
+        payload: String,
+    ) -> Result<SignalingMessage, String> {
+        self.seal(to, msg_type, payload)
+    }
 
-        Ok(SignalingMessage {
-            from,
-            to: Some(to.to_string()),
-            msg_type: msg_type.to_string(),
-            payload,
-            ts,
-            nonce,
-            sig,
-        })
+    /// Whether a message we received out-of-band is one we can trust: addressed
+    /// to us, signed by the node it claims, recent, and not seen before.
+    ///
+    /// Shares the verifier with `Inbound`, so a nonce spent on a probe reply
+    /// cannot be spent again anywhere else.
+    pub fn admit_reply(&self, msg: &SignalingMessage) -> bool {
+        admit(&self.verifier, &self.get_node_id(), msg)
     }
 
     /// Records that we've agreed to pair with `node_id` this session, so a subsequent
@@ -290,6 +295,38 @@ impl SignalingManager {
     }
 }
 
+/// Wrap a payload in a signed envelope for one recipient.
+///
+/// A free function rather than a method because both halves of signaling need
+/// it now: the manager to publish, and `Inbound` to answer a probe on the
+/// connection it arrived on.
+fn seal_with(
+    identity: &ParkingMutex<Option<LocalIdentity>>,
+    to: &str,
+    msg_type: &str,
+    payload: String,
+) -> Result<SignalingMessage, String> {
+    let guard = identity.lock();
+    let me = guard
+        .as_ref()
+        .ok_or_else(|| "cannot sign: identity not loaded".to_string())?;
+
+    let from = me.public.node_id.clone();
+    let ts = crypto::now_ms();
+    let nonce = crypto::random_nonce();
+    let sig = crypto::sign(&me.signing_key, &from, to, msg_type, &payload, ts, &nonce);
+
+    Ok(SignalingMessage {
+        from,
+        to: Some(to.to_string()),
+        msg_type: msg_type.to_string(),
+        payload,
+        ts,
+        nonce,
+        sig,
+    })
+}
+
 /// Whether a message is addressed to us and provably came from the device it
 /// claims to, recently, and only once.
 ///
@@ -346,6 +383,12 @@ pub struct Inbound {
     /// Our own node_id, as the `to` every message must be addressed to.
     node_id: String,
     our_user_id: String,
+    /// This run of the process, which a `pong` carries so the asker can tell a
+    /// device that restarted from one that never went away.
+    boot_id: String,
+    /// The signing key, for the one message type that is answered here rather
+    /// than by the frontend.
+    identity: Arc<ParkingMutex<Option<LocalIdentity>>>,
     verifier: Arc<ParkingMutex<EnvelopeVerifier>>,
     pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
     authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
@@ -353,14 +396,37 @@ pub struct Inbound {
 
 impl Inbound {
     /// Verify, then dispatch. The single entry point for an arriving message.
-    pub async fn receive(&self, msg: SignalingMessage) {
+    ///
+    /// Returns a message to write back on the same connection, which only a
+    /// `ping` produces. Every other type is answered, if at all, by the
+    /// frontend opening a connection of its own, and returns `None` here.
+    pub async fn receive(&self, msg: SignalingMessage) -> Option<SignalingMessage> {
         if !admit(&self.verifier, &self.node_id, &msg) {
-            return;
+            return None;
         }
-        self.dispatch(msg).await;
+        self.dispatch(msg).await
     }
 
-    async fn dispatch(&self, msg: SignalingMessage) {
+    /// Answer a probe (ADR 0023).
+    ///
+    /// Answered for any correctly signed and correctly addressed sender, paired
+    /// or not: an address is how an unpaired device is reached in the first
+    /// place, so refusing strangers here would make pairing over a stored
+    /// address impossible. What the reply discloses is that this node is at
+    /// this address, to someone who already knew its node_id and could already
+    /// reach the port.
+    fn pong(&self, to: &str) -> Option<SignalingMessage> {
+        let payload = serde_json::json!({ "boot_id": self.boot_id }).to_string();
+        match seal_with(&self.identity, to, "pong", payload) {
+            Ok(msg) => Some(msg),
+            Err(e) => {
+                warn_log!("[Signaling] cannot answer a ping: {}", e);
+                None
+            }
+        }
+    }
+
+    async fn dispatch(&self, msg: SignalingMessage) -> Option<SignalingMessage> {
         trace!(
             "[Signaling] dispatch() type={} from={} our_user_id={}",
             msg.msg_type,
@@ -368,6 +434,10 @@ impl Inbound {
             self.our_user_id
         );
         match msg.msg_type.as_str() {
+            "ping" => return self.pong(&msg.from),
+            // The prober reads a pong off the connection it sent the ping on,
+            // so one arriving here is a stray. Saying so beats "unknown type".
+            "pong" => trace!("[Signaling] unsolicited pong from {}, ignoring", msg.from),
             "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
                 Ok(req) => {
                     let allowed = {
@@ -379,7 +449,7 @@ impl Inbound {
                             "[Signaling] Ignoring a repeat pair-request from {} inside the cooldown",
                             msg.from
                         );
-                        return;
+                        return None;
                     }
                     let _ = self.app.emit(
                         "signaling-pair-request-received",
@@ -438,6 +508,7 @@ impl Inbound {
                 );
             }
         }
+        None
     }
 
     /// Resolves an incoming offer's sender against two trust sources, in order:

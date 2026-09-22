@@ -174,9 +174,7 @@ pub fn remove_endpoints_for_peer(
     Ok(())
 }
 
-/// Record that this address answered. Written by the prober, which lands with
-/// the rest of ADR 0023.
-#[allow(dead_code)]
+/// Record that this address answered.
 pub fn mark_endpoint_ok(
     db: &rusqlite::Connection,
     user_id: &str,
