@@ -1,5 +1,11 @@
-use crate::db::AppState;
-use tauri::{Manager, State};
+//! The small pile of preferences in `config.json`.
+//!
+//! The broker address, its credentials and the sync mode used to live here
+//! too. ADR 0022 removed all three. Their keys are left in any file that
+//! already has them: an unrecognised key here has always been ignored, and
+//! clearing them is a migration rather than a read.
+
+use tauri::Manager;
 
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
     let config_path = match app.path().app_data_dir() {
@@ -42,109 +48,4 @@ pub fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     let mut json = read_config(&app);
     json["theme"] = serde_json::json!(theme);
     write_config(&app, json)
-}
-
-#[tauri::command]
-pub fn get_mqtt_broker_url(app: tauri::AppHandle) -> Option<String> {
-    let json = read_config(&app);
-    json.get("mqtt_broker_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Rejects a URL the client could not connect with, rather than storing it and
-/// leaving the user to work out why nothing happens.
-#[tauri::command]
-pub fn save_mqtt_broker_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    crate::network::mqtt_client::parse_broker_url(&url)?;
-    let mut json = read_config(&app);
-    json["mqtt_broker_url"] = serde_json::json!(url);
-    write_config(&app, json)
-}
-
-/// Broker credentials, for a broker that requires authentication.
-///
-/// Kept as separate fields rather than embedded in the URL: a password in a
-/// URL ends up in every log line that prints the URL, and it makes parsing
-/// host and port ambiguous. Stored in the same plaintext `config.json` as
-/// everything else, which is the same posture as the signing key and is
-/// documented as such.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct BrokerCredentials {
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
-
-#[tauri::command]
-pub fn get_mqtt_credentials(app: tauri::AppHandle) -> BrokerCredentials {
-    let json = read_config(&app);
-    let read = |key: &str| {
-        json.get(key)
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-    };
-    BrokerCredentials {
-        username: read("mqtt_username"),
-        password: read("mqtt_password"),
-    }
-}
-
-#[tauri::command]
-pub fn save_mqtt_credentials(
-    app: tauri::AppHandle,
-    username: Option<String>,
-    password: Option<String>,
-) -> Result<(), String> {
-    let mut json = read_config(&app);
-    // An empty field means "no credentials", so it clears rather than storing
-    // an empty username the broker would reject.
-    json["mqtt_username"] = serde_json::json!(username.filter(|s| !s.trim().is_empty()));
-    json["mqtt_password"] = serde_json::json!(password.filter(|s| !s.is_empty()));
-    write_config(&app, json)
-}
-
-/// Local network first, broker when a peer is not on it. The default.
-pub const SYNC_MODE_AUTO: &str = "auto";
-/// The local network or nothing. No broker connection is made at all.
-pub const SYNC_MODE_LOCAL_ONLY: &str = "local-only";
-
-/// How the user wants devices reached, defaulting to `auto`.
-///
-/// An unreadable or unknown value reads as the default rather than as an
-/// error: the alternative is an app that will not sync because a config file
-/// has a typo in it.
-#[tauri::command]
-pub fn get_sync_mode(app: tauri::AppHandle) -> String {
-    let json = read_config(&app);
-    json.get("sync_mode")
-        .and_then(|v| v.as_str())
-        .filter(|s| *s == SYNC_MODE_AUTO || *s == SYNC_MODE_LOCAL_ONLY)
-        .unwrap_or(SYNC_MODE_AUTO)
-        .to_string()
-}
-
-/// Store the mode and apply it now.
-///
-/// Applying it to the running manager is the point: "local network only" that
-/// takes effect at the next launch would still be publishing to the broker in
-/// the meantime, which is exactly what the setting promises not to do.
-/// Stopping the broker client itself is the frontend's call, since it owns
-/// when signaling starts.
-#[tauri::command]
-pub fn save_sync_mode(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    mode: String,
-) -> Result<(), String> {
-    if mode != SYNC_MODE_AUTO && mode != SYNC_MODE_LOCAL_ONLY {
-        return Err(format!("Invalid sync mode: {mode}"));
-    }
-    let mut json = read_config(&app);
-    json["sync_mode"] = serde_json::json!(mode);
-    write_config(&app, json)?;
-    state
-        .signaling_manager
-        .set_local_only(mode == SYNC_MODE_LOCAL_ONLY);
-    Ok(())
 }

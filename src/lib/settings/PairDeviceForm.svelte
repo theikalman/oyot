@@ -112,8 +112,8 @@
         {/if}
         {#if pairingState === 'timed-out'}
             <p class="pair-status error">
-                No answer from that device. Check it is running, on the same broker, and that the ID
-                is right, then try again.
+                No answer from that device. Check it is running, on the same network as this one,
+                and that the ID is right, then try again.
             </p>
         {/if}
         {#if scanError}

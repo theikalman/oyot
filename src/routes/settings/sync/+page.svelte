@@ -1,12 +1,9 @@
 <script lang="ts">
-    import { log } from '$lib/log';
     import { onMount } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import {
         syncStore,
         identity,
-        brokerStatus,
-        brokerError,
         pairedDevices,
         connectedPeers,
         pendingPairRequest,
@@ -14,70 +11,40 @@
         canSignal,
         lanStatus,
         lanPeers,
-        syncMode,
         type UserIdentity,
         type DevicePair,
         type ConnectedPeer,
         type PendingPairRequest,
         type PairingState,
         type LanStatus,
-        type SyncMode,
     } from '$lib/stores/sync';
     import {
         sendPairRequest,
         respondToPairRequest,
         disconnectPeer,
         reconnectPeer,
-        setSyncMode,
     } from '$lib/sync';
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
-    import { SyncModeSelector } from '$lib/settings';
-    import { SignalingConfig } from '$lib/settings';
+    import { LocalNetworkStatus } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
     import { PairingDialog } from '$lib/settings';
     import Modal from '$lib/components/Modal.svelte';
 
     let localIdentity: UserIdentity | null = $state(null);
-    let status = $state<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
     let paired = $state<DevicePair[]>([]);
     let connected = $state<ConnectedPeer[]>([]);
     let pending: PendingPairRequest | null = $state(null);
     let pairState = $state<PairingState>(null);
-    let brokerUrl = $state<string | null>(null);
-    let signalingErr = $state<string | null>(null);
-    let brokerUser = $state<string | null>(null);
-    let brokerPass = $state<string | null>(null);
     let copySuccess = $state(false);
-    let mode = $state<SyncMode>('auto');
     let lanState = $state<LanStatus>('off');
     let nearby = $state(0);
-    // Switching drops or opens a broker connection, so the choice is held
-    // until that has actually happened rather than snapping back a moment
-    // later if it fails.
-    let switchingMode = $state(false);
-    // A switch that fails leaves the radio the user clicked checked while the
-    // app is still in the old mode: the DOM changed, nothing Svelte tracks
-    // did, so nothing puts it back and the control contradicts the highlight
-    // beside it. Bumping this remounts the selector, which rebuilds the inputs
-    // from the mode that is actually in force.
-    let modeEpoch = $state(0);
     let canReachAnything = $state(false);
 
     onMount(() => {
-        void invoke<{ username: string | null; password: string | null }>('get_mqtt_credentials')
-            .then((c) => {
-                brokerUser = c.username;
-                brokerPass = c.password;
-            })
-            .catch((e) => console.error('Failed to read broker credentials:', e));
-
         const un1 = identity.subscribe((v) => {
             localIdentity = v;
-        });
-        const un2 = brokerStatus.subscribe((v) => {
-            status = v;
         });
         const un4 = pairedDevices.subscribe((v) => {
             paired = v;
@@ -88,17 +55,8 @@
         const un6 = pendingPairRequest.subscribe((v) => {
             pending = v;
         });
-        const un7 = syncStore.subscribe((s) => {
-            brokerUrl = s.brokerUrl;
-        });
         const un8 = pairingState.subscribe((v) => {
             pairState = v;
-        });
-        const un9 = brokerError.subscribe((v) => {
-            signalingErr = v;
-        });
-        const un10 = syncMode.subscribe((v) => {
-            mode = v;
         });
         const un11 = lanStatus.subscribe((v) => {
             lanState = v;
@@ -112,14 +70,10 @@
 
         return () => {
             un1();
-            un2();
             un4();
             un5();
             un6();
-            un7();
             un8();
-            un9();
-            un10();
             un11();
             un12();
             un13();
@@ -137,52 +91,6 @@
         }
     }
 
-    async function handleSaveBrokerUrl(settings: {
-        url: string;
-        username: string;
-        password: string;
-    }) {
-        const { url, username, password } = settings;
-        try {
-            log.debug('handleSaveBrokerUrl', url);
-
-            // Saving the URL validates it in Rust, so an address the client
-            // could never connect with is rejected here rather than stored
-            // and left to fail silently later.
-            await invoke('save_mqtt_broker_url', { url });
-            await invoke('save_mqtt_credentials', {
-                username: username || null,
-                password: password || null,
-            });
-            syncStore.setBrokerUrl(url);
-            brokerUser = username || null;
-            brokerPass = password || null;
-            // Storing an address is not asking to use it: connecting here
-            // while the device is set to local network only would undo the
-            // setting from the section above it.
-            if (mode !== 'local-only') {
-                await invoke('broker_connect', { brokerUrl: url });
-            }
-        } catch (e) {
-            console.error('Failed to save MQTT settings:', e);
-            toasts.error(typeof e === 'string' ? e : 'Could not save the broker settings');
-        }
-    }
-
-    async function handleModeChange(next: SyncMode) {
-        if (next === mode || switchingMode) return;
-        switchingMode = true;
-        try {
-            await setSyncMode(next);
-        } catch (e) {
-            console.error('Failed to change the sync mode:', e);
-            toasts.error('Could not change how this device connects');
-            modeEpoch += 1;
-        } finally {
-            switchingMode = false;
-        }
-    }
-
     async function handleRename(displayName: string) {
         await invoke('set_display_name', { displayName });
         // Re-read rather than patching the store: Rust owns the identity, and
@@ -195,11 +103,9 @@
         try {
             await sendPairRequest(nodeId);
         } catch (e) {
-            // Publishing the request can fail outright: the device may not be
-            // on this network and the broker may be down, or gone between
-            // rendering the form and pressing the button. The transport knows
-            // which, so say what it said rather than blaming the broker, which
-            // the user may not even have.
+            // Sending the request can fail outright: the device may have left
+            // the network between rendering the form and pressing the button.
+            // The transport knows why, so say what it said.
             console.error('Failed to send pair request:', e);
             toasts.error(
                 e instanceof Error && e.message ? e.message : 'Could not send that pairing request',
@@ -245,9 +151,9 @@
         }
     }
 
-    // Pairing needs a way to reach the other device, which the local network
-    // now also provides: a device discovered on it can be paired with while
-    // both are offline.
+    // Pairing needs a way to reach the other device, and since ADR 0022 the
+    // local network is the only one there is. Two devices on one wifi can
+    // still be introduced with no internet at all.
     let canPair = $derived(canReachAnything);
 
     // Schema v3 replaced UUID device identity with an Ed25519 keypair and
@@ -301,25 +207,7 @@
         onRename={handleRename}
     />
 
-    {#key modeEpoch}
-        <SyncModeSelector
-            {mode}
-            lanStatus={lanState}
-            {nearby}
-            busy={switchingMode}
-            onChange={handleModeChange}
-        />
-    {/key}
-
-    <SignalingConfig
-        {brokerUrl}
-        {status}
-        error={signalingErr}
-        username={brokerUser}
-        password={brokerPass}
-        inactive={mode === 'local-only'}
-        onSave={handleSaveBrokerUrl}
-    />
+    <LocalNetworkStatus lanStatus={lanState} {nearby} />
 
     {#if canPair}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
@@ -330,13 +218,13 @@
         <section class="section">
             <h2>Pair a Device</h2>
             <p class="section-note">
-                {#if mode === 'local-only'}
-                    Put both devices on the same network. This one is set to local network only, so
-                    it will not arrange a pairing any other way.
+                {#if lanState === 'error'}
+                    This device could not advertise itself on the network, so it cannot arrange a
+                    pairing. A firewall prompt may be waiting to be answered.
                 {:else}
-                    Connect to a broker, or put both devices on the same network. Pairing is
-                    arranged over one of the two, so there is nothing this device can do until one
-                    of them is available.
+                    Put both devices on the same network, with Oyot open on each. Pairing is
+                    arranged over that network, so there is nothing this device can do until it is
+                    searching.
                 {/if}
             </p>
         </section>
@@ -379,6 +267,19 @@
 </div>
 
 <style>
+    /* The stand-in for PairDeviceForm when there is no way to reach anything.
+       Its heading has to match the ones the section components draw, or it
+       renders at the browser's default h2 size and the page reads as though
+       this section belongs to something else. */
+    .section {
+        margin-bottom: 32px;
+    }
+    .section h2 {
+        margin: 0 0 16px 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
     .section-note {
         margin: 0;
         font-size: 13px;

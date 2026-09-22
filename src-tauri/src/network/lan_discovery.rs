@@ -1,9 +1,9 @@
 //! Finding this user's other devices on the local network.
 //!
 //! Advertises one mDNS service and browses for the same, so two devices on one
-//! wifi can reach each other with no internet and no broker. What they exchange
-//! once they have is unchanged: the same signed envelope, over
-//! `lan_signaling`, carrying the same offer, answer and ICE candidates.
+//! wifi can reach each other with no internet at all. Since ADR 0022 this is
+//! the only way a peer is ever found: a device that is not discovered here is
+//! a device this one cannot reach.
 //!
 //! The TXT record carries the node_id and nothing else identifying. A device
 //! name in it would broadcast "Aji's laptop" to every stranger on every network
@@ -457,8 +457,9 @@ mod backend {
 ///
 /// Browsing there goes through `NWBrowser`, which needs only an Info.plist
 /// entry, rather than the raw multicast socket this crate binds, which needs
-/// an entitlement Apple reviews by hand. Until that plugin exists the app
-/// falls back to the broker on iOS, which is what it does today.
+/// an entitlement Apple reviews by hand. Until that plugin exists an iOS
+/// device finds nobody, and since ADR 0022 removed the broker it had been
+/// falling back to, that means it does not sync at all.
 ///
 /// Everything above this module is platform independent and already shared,
 /// so the work is a `spawn` that returns a `Handle` and feeds the same

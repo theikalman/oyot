@@ -51,7 +51,7 @@ impl AppState {
         configure_connection(&conn)?;
         let db = Arc::new(parking_lot::Mutex::new(conn));
 
-        let signaling_manager = Arc::new(SignalingManager::new(Some(app_handle.clone())));
+        let signaling_manager = Arc::new(SignalingManager::new());
         let lan = Arc::new(LanDiscovery::new(Some(app_handle.clone())));
 
         Ok(Self {

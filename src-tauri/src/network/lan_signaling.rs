@@ -1,10 +1,10 @@
-//! The local-network signaling channel.
+//! The local-network signaling channel, and since ADR 0022 the only one.
 //!
-//! Carries exactly what the broker carries: a signed `SignalingMessage`, in a
-//! frame of its own, to a peer whose address `lan_discovery` found. The
-//! envelope is unchanged because it was never trusting the transport in the
-//! first place: ADR 0009 made the broker untrusted infrastructure, and an
-//! untrusted LAN is the same threat model.
+//! Carries a signed `SignalingMessage` in a frame of its own, to a peer whose
+//! address `lan_discovery` found. The envelope does not trust the transport:
+//! ADR 0009 treated the broker that used to carry it as untrusted
+//! infrastructure, and an untrusted LAN is the same threat model, so nothing
+//! about the envelope changed when the broker went.
 //!
 //! One connection per message, rather than a connection held open per peer.
 //! A signaling exchange is an offer, an answer and a handful of candidates, so
@@ -12,11 +12,11 @@
 //! there is no connection to notice the loss of, re-establish, or keep in step
 //! with the peer's own idea of it.
 //!
-//! See docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md.
+//! See docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md
+//! and docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md.
 
 use crate::crypto;
-use crate::network::mqtt_client::SignalingMessage;
-use crate::network::route::Route;
+use crate::network::message::SignalingMessage;
 use crate::network::signaling_manager::Inbound;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
@@ -180,7 +180,7 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Res
         serde_json::from_slice(&body).map_err(|e| format!("unreadable envelope: {e}"))?;
 
     trace!("[LAN] {} from {}", msg.msg_type, from);
-    inbound.receive(msg, Route::Lan).await;
+    inbound.receive(msg).await;
     Ok(())
 }
 
@@ -188,9 +188,8 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Res
 ///
 /// Tries the peer's addresses in turn, IPv4 first, and reports the last
 /// failure if none of them answer. A refused connection is worth knowing
-/// quickly: it is the signal that this peer's local route is not usable, which
-/// is cheaper to learn here than by waiting out a negotiation that never
-/// completes.
+/// quickly: it is cheaper to learn here than by waiting out a negotiation
+/// that never completes.
 pub async fn send_to(addrs: &[IpAddr], port: u16, msg: &SignalingMessage) -> Result<(), String> {
     if addrs.is_empty() {
         return Err("peer has no address on this network".to_string());

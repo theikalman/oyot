@@ -3,70 +3,37 @@ import { canReachForPairing, unreachableForPairing, type ReachInputs } from './p
 
 const base: ReachInputs = {
     onLocalNetwork: false,
-    brokerConfigured: false,
-    brokerStatus: 'disconnected',
-    mode: 'auto',
+    discovering: true,
 };
 
 describe('canReachForPairing', () => {
-    it('a device found on this network can be paired with, broker or not', () => {
+    it('a device found on this network can be paired with', () => {
         expect(canReachForPairing({ ...base, onLocalNetwork: true })).toBe(true);
     });
 
-    it('a connected broker reaches a device that is not on this network', () => {
-        expect(canReachForPairing({ ...base, brokerStatus: 'connected' })).toBe(true);
-    });
-
-    // The reported failure: no broker at all, and the other device not yet
-    // found, which is the normal state for the first second after it starts.
-    it('nothing found and no broker cannot be paired with', () => {
+    // The reported failure: the other device not yet found, and since ADR 0022
+    // nothing else to fall back on.
+    it('a device that has not been found cannot be paired with', () => {
         expect(canReachForPairing(base)).toBe(false);
     });
 
-    it('local-only ignores a connected broker', () => {
-        const got = canReachForPairing({ ...base, brokerStatus: 'connected', mode: 'local-only' });
-        expect(got).toBe(false);
-    });
-
-    it('local-only still pairs with a device on this network', () => {
-        const got = canReachForPairing({ ...base, onLocalNetwork: true, mode: 'local-only' });
+    it('being found is enough even while discovery is reported off', () => {
+        // The peer table is only populated by discovery, so this combination
+        // should not arise; if it does, an address in hand beats a status flag.
+        const got = canReachForPairing({ onLocalNetwork: true, discovering: false });
         expect(got).toBe(true);
     });
 });
 
 describe('unreachableForPairing', () => {
-    // A person with no broker should not be told their network is at fault,
-    // and a person with one should not be told to go and find a network.
-    it('says there is no broker when none is configured', () => {
-        expect(unreachableForPairing(base)).toContain('no broker is configured');
+    // Two problems, one symptom. Blaming the other device when this one is not
+    // even searching sends the user to the wrong machine.
+    it('says this device is not searching when discovery is off', () => {
+        const got = unreachableForPairing({ ...base, discovering: false });
+        expect(got).toContain('not searching');
     });
 
-    it('says the broker is not connected when one is configured', () => {
-        const got = unreachableForPairing({
-            ...base,
-            brokerConfigured: true,
-            brokerStatus: 'error',
-        });
-        expect(got).toContain('broker is not connected');
-    });
-
-    it('asks for patience while the broker is still connecting', () => {
-        const got = unreachableForPairing({
-            ...base,
-            brokerConfigured: true,
-            brokerStatus: 'connecting',
-        });
-        expect(got).toContain('Try again in a moment');
-    });
-
-    it('explains the setting rather than the network under local-only', () => {
-        const got = unreachableForPairing({ ...base, mode: 'local-only' });
-        expect(got).toContain('local network only');
-    });
-
-    it('always names what was not found', () => {
-        for (const mode of ['auto', 'local-only'] as const) {
-            expect(unreachableForPairing({ ...base, mode })).toContain('has not appeared');
-        }
+    it('says the other device has not appeared when discovery is running', () => {
+        expect(unreachableForPairing(base)).toContain('has not appeared');
     });
 });

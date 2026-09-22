@@ -54,9 +54,11 @@ class MainActivity : TauriActivity() {
       multicastLock = lock
       Log.d(TAG, "multicast lock acquired, local network discovery can receive")
     } catch (e: Exception) {
-      // Not fatal, and deliberately not surfaced: sync still works through the
-      // broker, and a device that cannot take this lock cannot be told
-      // anything useful about it.
+      // Not fatal, and deliberately not surfaced. This device goes on
+      // advertising and still accepts connections, so a peer that finds it can
+      // still reach it; what it loses is hearing the peers that advertise
+      // first. A device that cannot take this lock cannot be told anything
+      // useful about it either.
       Log.w(TAG, "could not take the multicast lock, local discovery will not hear peers", e)
     }
   }

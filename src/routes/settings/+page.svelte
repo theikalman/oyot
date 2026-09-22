@@ -12,8 +12,8 @@
     let syncSummary = $derived(
         $connectedPeers.length > 0
             ? `${$connectedPeers.length} device${$connectedPeers.length !== 1 ? 's' : ''} connected`
-            : // Ready when anything can carry a pairing, which the local
-              // network now can without a broker.
+            : // Ready when this device is searching the network, which is the
+              // only way it reaches anything (ADR 0022).
               $canSignal
               ? 'Ready to pair'
               : 'Offline',

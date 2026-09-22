@@ -1,43 +1,36 @@
+//! Who we are, who we trust, and how a signaling message gets to a peer.
+//!
+//! There is one way, and it is the local network. The broker that used to sit
+//! behind it, the per-peer route choice and the cooldown that moved a stalled
+//! peer onto the other route are all gone with ADR 0022; what is left is
+//! "where is this peer, and can we reach it there".
+
 use crate::crypto::{self, EnvelopeVerifier};
 use crate::db::AppState;
 use crate::identity::LocalIdentity;
 use crate::network::lan_discovery::{LanDiscovery, LanPeer};
 use crate::network::lan_signaling;
-use crate::network::mqtt_client::{MqttEvent, MqttSignalingClient, SignalingMessage};
-use crate::network::route::{choose_route, Route, RouteInputs};
+use crate::network::message::SignalingMessage;
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{broadcast, mpsc};
-
-// Topic plus payload, handed to the publish task that owns the live MQTT client.
-type PublishSender = mpsc::Sender<(String, Vec<u8>)>;
 
 /// How often one sender may raise a pairing prompt.
 ///
-/// A signature proves who sent a request, not that we want it. Anyone who
-/// learns a node_id can publish to its topic, and every valid request put a
-/// modal in front of the user, so an unpaired device could make the app
-/// unusable by asking repeatedly. Declining is still the answer to a request
-/// you did not expect; this only stops it being asked faster than a person
-/// can read it.
+/// A signature proves who sent a request, not that we want it. Anyone on this
+/// network can reach the listener, and every valid request put a modal in
+/// front of the user, so an unpaired device could make the app unusable by
+/// asking repeatedly. Declining is still the answer to a request you did not
+/// expect; this only stops it being asked faster than a person can read it.
 const PAIR_REQUEST_COOLDOWN_MS: i64 = 30_000;
 
 /// Distinct senders whose last request time we remember. Bounded, or asking
 /// from many keys would grow it; the oldest entry is dropped, which at worst
 /// lets that sender ask once more.
 const MAX_PAIR_REQUEST_SENDERS: usize = 64;
-
-/// How long a peer's local route is left alone after it failed.
-///
-/// Long enough not to retry a route that is not working on every message,
-/// short enough that a peer whose wifi dropped for a moment is not stuck on
-/// the broker for the rest of the session.
-const LAN_COOLDOWN_MS: i64 = 60_000;
 
 /// Whether a pairing prompt from `from` should be shown, given when that
 /// sender last raised one. Records the time when it allows.
@@ -71,62 +64,42 @@ struct PairPayload {
 }
 
 pub struct SignalingManager {
-    mqtt_client: Arc<ParkingMutex<Option<MqttSignalingClient>>>,
     /// This device's identity and signing key. Every outgoing message is signed
     /// with it, and `node_id` is the public half peers verify against.
     identity: Arc<ParkingMutex<Option<LocalIdentity>>>,
-    app_handle: Option<AppHandle>,
-    publish_tx: Arc<ParkingMutex<Option<PublishSender>>>,
     // Peers we've explicitly agreed to pair with during this session (accepted a
     // pair-request from them, or had our pair-request accepted). Consulted when an
     // "offer" arrives from a node_id that isn't already in the persisted device_pairs
     // table, so unsolicited offers from unpaired/unauthorized nodes get dropped instead
     // of silently auto-accepted.
     authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
-    /// Signature, freshness and replay checks for every inbound message, on
-    /// every route. One instance for the life of the process: it used to be
-    /// built per MQTT client generation, which was enough while the broker was
-    /// the only way in, and is not once a second transport can deliver the
-    /// same envelope. See `Inbound`.
+    /// Signature, freshness and replay checks for every inbound message. One
+    /// instance for the life of the process: it used to be built per MQTT
+    /// client generation, and a per-transport copy holds only half the nonce
+    /// history. There is one transport now, but the verifier stays here
+    /// because that is where a second one would find it. See `Inbound`.
     verifier: Arc<ParkingMutex<EnvelopeVerifier>>,
-    /// Shared for the same reason: a pairing prompt the user has just
-    /// dismissed should stay dismissed no matter which transport the next copy
-    /// of the request arrives on.
+    /// Held here for the same reason: a pairing prompt the user has just
+    /// dismissed should stay dismissed however the next copy of the request
+    /// arrives.
     pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
     /// Who is reachable on this network, once discovery is running. `None`
     /// before startup attaches it, and on a build that has no discovery.
     lan: Arc<ParkingMutex<Option<Arc<LanDiscovery>>>>,
-    /// When each peer's local route last failed, so a route that is not
-    /// working is not retried on every message.
-    lan_cooldowns: Arc<ParkingMutex<HashMap<String, i64>>>,
-    /// The user asked for local-network sync only, so the broker is not an
-    /// option even when it is connected.
-    local_only: AtomicBool,
-    /// Whether the broker connection is actually up.
-    ///
-    /// `publish_tx` only says a client generation exists: it is set the moment
-    /// `connect` is called, before a single packet has been exchanged, and it
-    /// stays set while the client retries a broker it has never reached. A
-    /// route chosen on that basis publishes into a void, which is worse than
-    /// having no fallback, because it is preferred over a local network that
-    /// works.
-    broker_online: Arc<AtomicBool>,
 }
 
 impl SignalingManager {
-    pub fn new(app_handle: Option<AppHandle>) -> Self {
+    /// The handle the frontend is spoken to through is not held here: the
+    /// only thing that emits is `Inbound`, which is handed one when the
+    /// listener starts. It was a field while the broker's event forwarder
+    /// needed one of its own.
+    pub fn new() -> Self {
         Self {
-            mqtt_client: Arc::new(ParkingMutex::new(None)),
             identity: Arc::new(ParkingMutex::new(None)),
-            app_handle,
-            publish_tx: Arc::new(ParkingMutex::new(None)),
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
             verifier: Arc::new(ParkingMutex::new(EnvelopeVerifier::new())),
             pair_prompts: Arc::new(ParkingMutex::new(Vec::new())),
             lan: Arc::new(ParkingMutex::new(None)),
-            lan_cooldowns: Arc::new(ParkingMutex::new(HashMap::new())),
-            local_only: AtomicBool::new(false),
-            broker_online: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -135,58 +108,19 @@ impl SignalingManager {
         *self.lan.lock() = Some(lan);
     }
 
-    /// Whether the broker is off the table, from the user's setting.
-    pub fn set_local_only(&self, local_only: bool) {
-        self.local_only.store(local_only, Ordering::Relaxed);
-        trace!("[Signaling] local-network-only is now {}", local_only);
-    }
-
-    /// Where this peer can be reached on the local network, if anywhere.
+    /// Where this peer can be reached on this network, if anywhere.
     ///
-    /// Says only whether it was found there. Whether its local route is in a
-    /// cooldown is a separate question, because a cooldown is a preference
-    /// rather than a prohibition: see `choose_route`.
+    /// `None` is the whole of "we cannot reach it": there is nowhere else to
+    /// look since ADR 0022.
     fn lan_peer(&self, peer_id: &str) -> Option<LanPeer> {
         let lan = self.lan.lock().clone();
         lan.and_then(|lan| lan.peer(peer_id))
     }
 
-    /// Whether this peer's local route failed recently enough to prefer
-    /// something else, if there is anything else.
-    fn lan_cooling(&self, peer_id: &str) -> bool {
-        let cooldowns = self.lan_cooldowns.lock();
-        cooldowns
-            .get(peer_id)
-            .is_some_and(|at| crypto::now_ms() - at < LAN_COOLDOWN_MS)
-    }
-
-    /// Forget a cooldown, so the local route is tried again at once.
+    /// The inbound half, for the listener to hand received messages to.
     ///
-    /// For when the user presses Reconnect: they asked for a connection now,
-    /// and sitting out the rest of a cooldown to answer that would look like
-    /// the button did nothing.
-    pub fn clear_lan_failure(&self, peer_id: &str) {
-        if self.lan_cooldowns.lock().remove(peer_id).is_some() {
-            trace!("[Signaling] local route to {} is available again", peer_id);
-        }
-    }
-
-    /// Record that this peer's local route did not work.
-    ///
-    /// Called when a send fails outright, and by the frontend when a
-    /// negotiation started over the local network never completes.
-    pub fn note_lan_failure(&self, peer_id: &str) {
-        trace!("[Signaling] local route to {} is in cooldown", peer_id);
-        self.lan_cooldowns
-            .lock()
-            .insert(peer_id.to_string(), crypto::now_ms());
-    }
-
-    /// The inbound half, for a route to hand received messages to.
-    ///
-    /// `node_id` and the user id are snapshots taken when a route starts, as
-    /// they were when the MQTT forwarder task captured them; neither changes
-    /// after startup.
+    /// `node_id` and the user id are snapshots taken when the listener starts;
+    /// neither changes after startup.
     pub fn inbound(&self, app: AppHandle, node_id: &str) -> Inbound {
         Inbound {
             app,
@@ -293,199 +227,29 @@ impl SignalingManager {
         }
     }
 
-    pub async fn connect(
-        &self,
-        broker_url: &str,
-        node_id: &str,
-        credentials: Option<(String, String)>,
-    ) -> Result<(), String> {
-        trace!(
-            "[Signaling] connect() broker_url={} node_id={}",
-            broker_url,
-            node_id
-        );
-
-        // Tear down any previous client generation so its reconnect loop and publish
-        // task stop instead of racing the new one.
-        if let Some(old) = self.mqtt_client.lock().take() {
-            trace!("[Signaling] Shutting down previous MQTT client generation");
-            old.shutdown();
-        }
-
-        let client = MqttSignalingClient::new(broker_url, node_id, credentials).await?;
-        // Topic subscription now happens inside the client's poll loop on every
-        // ConnAck, so it is replayed automatically after a reconnect.
-
-        if let Some(app_handle) = &self.app_handle {
-            let _ = app_handle.emit("broker-status", "connecting");
-        }
-
-        let (publish_tx, mut publish_rx) = mpsc::channel::<(String, Vec<u8>)>(100);
-        let mqtt_client_clone = self.mqtt_client.clone();
-
-        tokio::spawn(async move {
-            while let Some((topic, payload)) = publish_rx.recv().await {
-                let client_opt = mqtt_client_clone.lock().clone();
-                if let Some(c) = client_opt {
-                    if let Err(e) = c.publish(&topic, &payload).await {
-                        warn_log!("MQTT publish error: {}", e);
-                    }
-                }
-            }
-        });
-
-        *self.publish_tx.lock() = Some(publish_tx);
-
-        let mut event_rx = client.subscribe_to_events();
-        *self.mqtt_client.lock() = Some(client);
-
-        // A fresh client generation has not reached anything yet.
-        self.broker_online.store(false, Ordering::Relaxed);
-
-        if let Some(app_handle) = &self.app_handle {
-            let inbound = self.inbound(app_handle.clone(), node_id);
-            let app = app_handle.clone();
-            let broker_online = self.broker_online.clone();
-            tokio::spawn(async move {
-                loop {
-                    let event = match event_rx.recv().await {
-                        Ok(event) => event,
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            // Keep going. Breaking here stopped every signaling
-                            // message reaching the frontend for the rest of the
-                            // session, while MQTT went on reporting "connected"
-                            // and nothing recovered short of a manual
-                            // reconnect. Anyone able to publish to the broker
-                            // could cause it, since a message is parsed and
-                            // queued before its signature is checked.
-                            warn_log!(
-                                "[Signaling] event channel lagged, {} message(s) dropped",
-                                skipped
-                            );
-                            continue;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            trace!("[Signaling] event channel closed, forwarder exiting");
-                            break;
-                        }
-                    };
-                    match event {
-                        MqttEvent::Connected => {
-                            trace!("[Signaling] MQTT Connected");
-                            broker_online.store(true, Ordering::Relaxed);
-                            let _ = app.emit("broker-status", "connected");
-                        }
-                        MqttEvent::Disconnected => {
-                            broker_online.store(false, Ordering::Relaxed);
-                            let _ = app.emit("broker-status", "disconnected");
-                        }
-                        MqttEvent::Error(reason) => {
-                            warn_log!("[Signaling] MQTT could not connect: {}", reason);
-                            broker_online.store(false, Ordering::Relaxed);
-                            let _ = app.emit("broker-status", "error");
-                            let _ = app.emit("broker-error", reason);
-                        }
-                        MqttEvent::Message { topic, msg } => {
-                            trace!(
-                                "[Signaling] Received MQTT message on topic '{}': {:?}",
-                                topic,
-                                msg.msg_type
-                            );
-                            inbound.receive(msg, Route::Broker).await;
-                        }
-                    }
-                }
-            });
-        }
-
-        Ok(())
-    }
-
-    async fn send_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
-        let tx_opt = self.publish_tx.lock().clone();
-        match tx_opt {
-            Some(tx) => tx.send((topic, payload)).await.map_err(|e| e.to_string()),
-            None => Err("MQTT not connected".to_string()),
-        }
-    }
-
-    /// Drop the broker connection entirely.
-    ///
-    /// For the switch to local-network-only. Not publishing to the broker is
-    /// not the same as not being connected to it: the client stays subscribed,
-    /// keeps a socket open and keeps announcing itself, and the setting
-    /// promises none of that.
-    pub fn disconnect_broker(&self) {
-        self.broker_online.store(false, Ordering::Relaxed);
-        let had_client = self.mqtt_client.lock().take();
-        *self.publish_tx.lock() = None;
-        if let Some(client) = had_client {
-            trace!("[Signaling] disconnecting from the broker");
-            client.shutdown();
-        }
-    }
-
-    fn broker_connected(&self) -> bool {
-        self.broker_online.load(Ordering::Relaxed) && self.publish_tx.lock().is_some()
-    }
-
-    /// Sign one message and send it to a peer by whichever route can reach it.
+    /// Sign one message and send it to a peer on this network.
     ///
     /// Every outgoing message goes through here, so there is no path that
-    /// publishes an unsigned envelope.
+    /// sends an unsigned envelope.
     ///
-    /// A local send that fails is not retried locally: the peer goes into
-    /// cooldown and, unless the user asked for local-only, the same message
-    /// goes out over the broker immediately. A refused connection is knowledge
-    /// we have now, and waiting out a negotiation that can never complete to
-    /// act on it would cost half a minute per message.
-    async fn publish(
-        &self,
-        peer_id: &str,
-        msg_type: &str,
-        payload: String,
-    ) -> Result<Route, String> {
-        let lan_peer = self.lan_peer(peer_id);
-        let local_only = self.local_only.load(Ordering::Relaxed);
-        let inputs = RouteInputs {
-            local_only,
-            lan_discovered: lan_peer.is_some(),
-            lan_cooling: self.lan_cooling(peer_id),
-            broker_connected: self.broker_connected(),
-        };
-        let Some(route) = choose_route(inputs) else {
-            return Err(format!("no signaling route to {peer_id}"));
+    /// A failure is final for this message. There used to be a second route to
+    /// fall back to, and a cooldown to steer the next message onto it; with
+    /// one transport left, the honest answer to "the peer did not take it" is
+    /// to say so and let the caller's backoff try again.
+    async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
+        let Some(peer) = self.lan_peer(peer_id) else {
+            return Err(format!("{peer_id} is not on this network"));
         };
 
-        trace!(
-            "[Signaling] publish {} to peer_id={} over {}",
-            msg_type,
-            peer_id,
-            route.label()
-        );
+        trace!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
         let msg = self.seal(peer_id, msg_type, payload)?;
 
-        if route == Route::Lan {
-            let Some(peer) = lan_peer else {
-                return Err(format!("no local address for {peer_id}"));
-            };
-            match lan_signaling::send_to(&peer.addrs, peer.port, &msg).await {
-                Ok(()) => return Ok(Route::Lan),
-                Err(e) => {
-                    warn_log!("[Signaling] local send to {} failed: {}", peer_id, e);
-                    self.note_lan_failure(peer_id);
-                    if local_only || !self.broker_connected() {
-                        return Err(e);
-                    }
-                    trace!("[Signaling] falling back to the broker for {}", peer_id);
-                }
-            }
-        }
-
-        let topic = format!("signaling/{}/{}", peer_id, msg_type);
-        let bytes = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
-        self.send_publish(topic, bytes).await?;
-        Ok(Route::Broker)
+        lan_signaling::send_to(&peer.addrs, peer.port, &msg)
+            .await
+            .map_err(|e| {
+                warn_log!("[Signaling] send to {} failed: {}", peer_id, e);
+                e
+            })
     }
 
     fn pair_payload(&self, accepted: Option<bool>) -> Result<String, String> {
@@ -497,25 +261,21 @@ impl SignalingManager {
         serde_json::to_string(&payload).map_err(|e| e.to_string())
     }
 
-    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<Route, String> {
+    pub async fn publish_pair_request(&self, peer_id: &str) -> Result<(), String> {
         let payload = self.pair_payload(None)?;
         self.publish(peer_id, "pair-request", payload).await
     }
 
-    pub async fn publish_pair_response(
-        &self,
-        peer_id: &str,
-        accepted: bool,
-    ) -> Result<Route, String> {
+    pub async fn publish_pair_response(&self, peer_id: &str, accepted: bool) -> Result<(), String> {
         let payload = self.pair_payload(Some(accepted))?;
         self.publish(peer_id, "pair-response", payload).await
     }
 
-    pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<Route, String> {
+    pub async fn publish_offer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
         self.publish(peer_id, "offer", sdp.to_string()).await
     }
 
-    pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<Route, String> {
+    pub async fn publish_answer(&self, peer_id: &str, sdp: &str) -> Result<(), String> {
         self.publish(peer_id, "answer", sdp.to_string()).await
     }
 
@@ -523,7 +283,7 @@ impl SignalingManager {
         &self,
         peer_id: &str,
         candidate: &str,
-    ) -> Result<Route, String> {
+    ) -> Result<(), String> {
         self.publish(peer_id, "ice-candidate", candidate.to_string())
             .await
     }
@@ -532,11 +292,11 @@ impl SignalingManager {
 /// Whether a message is addressed to us and provably came from the device it
 /// claims to, recently, and only once.
 ///
-/// Runs before anything reads the payload: no transport we use is trusted, and
-/// on any of them `from` is whatever the sender chose to write.
+/// Runs before anything reads the payload: the transport is not trusted, and
+/// `from` is whatever the sender chose to write.
 ///
-/// Takes the verifier rather than owning one, because every route shares a
-/// single history. See `Inbound`.
+/// Takes the verifier rather than owning one, so the nonce history has a
+/// single home. See `Inbound`.
 fn admit(
     verifier: &ParkingMutex<EnvelopeVerifier>,
     our_node_id: &str,
@@ -573,14 +333,12 @@ fn admit(
     true
 }
 
-/// The inbound half of signaling: what to do with a message that has arrived,
-/// regardless of which transport carried it.
+/// The inbound half of signaling: what to do with a message that has arrived.
 ///
-/// Held by the manager and cloned into each route's receive loop, so both
-/// routes share one replay history and one pairing-prompt cooldown. Per-route
-/// copies would mean a message captured off the broker could be replayed into
-/// the LAN listener inside the clock-skew window, because the nonce that would
-/// catch it was recorded in the other copy. See ADR 0018.
+/// Held by the manager and cloned into the listener's accept loop, so the
+/// replay history and the pairing-prompt cooldown live in one place rather
+/// than one per transport. That mattered when there were two of them (ADR
+/// 0018) and is why it is still shaped this way with one.
 #[derive(Clone)]
 pub struct Inbound {
     app: AppHandle,
@@ -593,20 +351,19 @@ pub struct Inbound {
 }
 
 impl Inbound {
-    /// Verify, then dispatch. The single entry point for every route.
-    pub async fn receive(&self, msg: SignalingMessage, route: Route) {
+    /// Verify, then dispatch. The single entry point for an arriving message.
+    pub async fn receive(&self, msg: SignalingMessage) {
         if !admit(&self.verifier, &self.node_id, &msg) {
             return;
         }
-        self.dispatch(msg, route).await;
+        self.dispatch(msg).await;
     }
 
-    async fn dispatch(&self, msg: SignalingMessage, route: Route) {
+    async fn dispatch(&self, msg: SignalingMessage) {
         trace!(
-            "[Signaling] dispatch() type={} from={} route={} our_user_id={}",
+            "[Signaling] dispatch() type={} from={} our_user_id={}",
             msg.msg_type,
             msg.from,
-            route.label(),
             self.our_user_id
         );
         match msg.msg_type.as_str() {
@@ -629,7 +386,6 @@ impl Inbound {
                             "from": msg.from,
                             "user_id": req.user_id,
                             "display_name": req.display_name,
-                            "route": route.label(),
                         }),
                     );
                 }
@@ -644,14 +400,13 @@ impl Inbound {
                             "user_id": resp.user_id,
                             "display_name": resp.display_name,
                             "accepted": resp.accepted.unwrap_or(false),
-                            "route": route.label(),
                         }),
                     );
                 }
                 Err(e) => warn_log!("[Signaling] Failed to parse pair-response payload: {}", e),
             },
             "offer" => {
-                self.handle_offer(msg, route).await;
+                self.handle_offer(msg).await;
             }
             "answer" => {
                 trace!(
@@ -661,7 +416,6 @@ impl Inbound {
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "sdp": msg.payload,
-                    "route": route.label(),
                 });
                 let _ = self.app.emit("signaling-answer-received", payload);
             }
@@ -673,7 +427,6 @@ impl Inbound {
                 let payload = serde_json::json!({
                     "from": msg.from,
                     "candidate": msg.payload,
-                    "route": route.label(),
                 });
                 let _ = self.app.emit("signaling-ice-candidate-received", payload);
             }
@@ -694,7 +447,7 @@ impl Inbound {
     ///
     /// If neither matches, the offer is from a node we never agreed to pair with and is
     /// dropped rather than auto-accepted.
-    async fn handle_offer(&self, msg: SignalingMessage, route: Route) {
+    async fn handle_offer(&self, msg: SignalingMessage) {
         let persisted = {
             let state = self.app.state::<AppState>();
             let db = state.db.lock();
@@ -725,17 +478,15 @@ impl Inbound {
         };
 
         trace!(
-            "[Signaling] Emitting signaling-offer-received from={} room_id={} route={}",
+            "[Signaling] Emitting signaling-offer-received from={} room_id={}",
             msg.from,
-            room_id,
-            route.label()
+            room_id
         );
         let payload = serde_json::json!({
             "from": msg.from,
             "sdp": msg.payload,
             "room_id": room_id,
             "display_name": display_name,
-            "route": route.label(),
         });
         let _ = self.app.emit("signaling-offer-received", payload);
     }
@@ -750,7 +501,7 @@ mod tests {
     fn manager_with_identity() -> (SignalingManager, String) {
         let signing_key = crypto::generate_signing_key();
         let node_id = crypto::encode_node_id(&signing_key.verifying_key());
-        let mgr = SignalingManager::new(None);
+        let mgr = SignalingManager::new();
         mgr.set_identity(LocalIdentity {
             public: UserIdentity {
                 user_id: "u1".to_string(),
@@ -837,12 +588,11 @@ mod tests {
             .is_ok());
     }
 
-    // The whole reason the verifier moved onto the manager. Per-route copies
-    // would each hold half the nonce history, so an envelope captured off the
-    // broker could be replayed into the LAN listener inside the clock-skew
-    // window and arrive looking genuine.
+    // The whole reason the verifier lives on the manager rather than on the
+    // listener. An envelope that has been admitted once must not be admitted
+    // again inside the clock-skew window, however it arrives the second time.
     #[test]
-    fn an_envelope_admitted_on_one_route_is_refused_on_the_other() {
+    fn an_envelope_admitted_once_is_refused_when_it_comes_back() {
         let (mgr, _) = manager_with_identity();
         let msg = mgr.seal("peer-node", "offer", "sdp".to_string()).unwrap();
         let shared = ParkingMutex::new(EnvelopeVerifier::new());
@@ -853,7 +603,7 @@ mod tests {
         );
         assert!(
             !admit(&shared, "peer-node", &msg),
-            "the same envelope replayed over the other transport"
+            "the same envelope replayed"
         );
     }
 
@@ -901,7 +651,7 @@ mod tests {
     // reject it, and the failure would look like a network problem.
     #[test]
     fn sealing_without_an_identity_fails_rather_than_sending_unsigned() {
-        let mgr = SignalingManager::new(None);
+        let mgr = SignalingManager::new();
         let err = mgr.seal("peer", "offer", "sdp".to_string()).unwrap_err();
         assert!(err.contains("identity not loaded"), "got: {err}");
     }

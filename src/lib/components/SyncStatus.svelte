@@ -1,16 +1,15 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import { brokerStatus, canSignal, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
+    import { canSignal, connectedPeers, aggregateSyncPhase } from '$lib/stores/sync';
     import { syncBadge, type SyncTone } from '$lib/sync/syncBadge';
 
-    let broker = $derived($brokerStatus);
     let reachable = $derived($canSignal);
     let peers = $derived($connectedPeers);
     let phase = $derived($aggregateSyncPhase);
 
     // The rule, and the bug it was extracted for, are in sync/syncBadge.ts.
-    let badge = $derived(syncBadge({ peers: peers.length, phase, broker, reachable }));
+    let badge = $derived(syncBadge({ peers: peers.length, phase, reachable }));
     let tone = $derived(badge.tone);
     let label = $derived(badge.label);
 

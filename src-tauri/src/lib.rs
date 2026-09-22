@@ -437,13 +437,9 @@ pub fn run() {
                 state.signaling_manager.set_identity(identity);
             }
 
-            // The manager decides which transport carries each message, so it
-            // needs to see who is on this network and what the user asked for.
+            // Every signaling message goes to a peer found on this network
+            // (ADR 0022), so the manager has to be able to see who is on it.
             state.signaling_manager.attach_lan(state.lan.clone());
-            let mode = crate::commands::config::get_sync_mode(app.handle().clone());
-            state
-                .signaling_manager
-                .set_local_only(mode == crate::commands::config::SYNC_MODE_LOCAL_ONLY);
 
             app.manage(state);
             Ok(())
@@ -469,12 +465,6 @@ pub fn run() {
             get_or_create_today_journal,
             get_theme,
             save_theme,
-            get_mqtt_broker_url,
-            save_mqtt_broker_url,
-            get_mqtt_credentials,
-            save_mqtt_credentials,
-            get_sync_mode,
-            save_sync_mode,
             save_image,
             pick_and_import_image,
             cleanup_orphaned_images,
@@ -493,8 +483,6 @@ pub fn run() {
             remove_pair,
             save_pair,
             update_pair_sync_time,
-            broker_connect,
-            broker_disconnect,
             signaling_publish_pair_request,
             signaling_accept_pair_request,
             signaling_decline_pair_request,
@@ -504,8 +492,6 @@ pub fn run() {
             lan_start,
             lan_stop,
             lan_list_peers,
-            signaling_note_route_failure,
-            signaling_clear_route_failure,
             list_export_attachments,
             export_notes,
         ])
