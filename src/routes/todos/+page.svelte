@@ -24,7 +24,10 @@
         void todos.load();
     });
 
-    let hideCompleted = $state(false);
+    // On by default: the page is for what is still to do, and an unticked
+    // box would bury it under everything already finished. The checkbox is
+    // right there for anyone who wants the full history back.
+    let hideCompleted = $state(true);
 
     // Held in state rather than read at render time, so a page left open
     // overnight stops calling yesterday's journal "Today".
