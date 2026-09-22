@@ -940,8 +940,14 @@ async function finishInit(): Promise<void> {
 // nothing tries to reach a peer it cannot.
 async function startLocalNetwork(): Promise<void> {
     try {
-        const port = await invoke<number>('lan_start');
-        log.debug(`[sync] local network signaling listening on port ${port}`);
+        const { port, on_default_port } = await invoke<{
+            port: number;
+            on_default_port: boolean;
+        }>('lan_start');
+        syncStore.setListener(port, on_default_port);
+        log.debug(
+            `[sync] signaling listening on port ${port}${on_default_port ? '' : ' (not the default port, so a stored address cannot reach this device)'}`,
+        );
         // Seeds the list from whatever discovery already knows, which matters
         // when sync is restarted rather than started.
         syncStore.setPeers(await invoke<Peer[]>('list_reachable_peers'));

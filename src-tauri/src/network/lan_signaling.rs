@@ -6,6 +6,14 @@
 //! infrastructure, and an untrusted LAN is the same threat model, so nothing
 //! about the envelope changed when the broker went.
 //!
+//! The port is fixed where it can be. mDNS tells a peer on this network which
+//! port to use, but a peer reached at a stored address (ADR 0023) has only the
+//! address the user typed, so there has to be a port it can assume. It is a
+//! preference rather than a requirement: if something else holds it, the
+//! listener falls back to an ephemeral port and the local route carries on
+//! working, while the stored-address route cannot be reached inbound. That is
+//! a real state with a real cause, so the listener reports which it got.
+//!
 //! One connection per message, rather than a connection held open per peer.
 //! A signaling exchange is an offer, an answer and a handful of candidates, so
 //! the handshake costs about a millisecond on a LAN and buys statelessness:
@@ -22,6 +30,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+/// The port this device prefers to listen on.
+///
+/// Below every platform's ephemeral range (Linux starts at 32768, macOS and
+/// Windows at 49152), so an unrelated outbound socket on this machine cannot
+/// have been handed it, and not registered with IANA. Peers reached at a
+/// stored address assume it when the user does not write one.
+pub const SIGNALING_PORT: u16 = 19701;
 
 /// The largest frame we will read.
 ///
@@ -127,20 +143,51 @@ impl LanListener {
         self.port
     }
 
+    /// Whether this is the port a peer with only an address can assume.
+    ///
+    /// False means the local route is fine and the stored-address route cannot
+    /// reach this device inbound, which is worth saying out loud rather than
+    /// leaving to be discovered as a peer that never connects.
+    pub fn on_default_port(&self) -> bool {
+        self.port == SIGNALING_PORT
+    }
+
     pub fn stop(self) {
         self.task.abort();
     }
 }
 
-/// Start accepting signaling connections from this network.
+/// Bind the preferred port, or any free one.
 ///
-/// Binds an ephemeral port on every IPv4 interface; the port is what
-/// `lan_discovery` advertises. IPv4 only for now, which is what a home network
-/// hands out, and `send_to` prefers IPv4 addresses to match.
+/// Not `SO_REUSEPORT`: two copies of the app on one machine sharing the port
+/// would each get some of the other's connections, which is worse than the
+/// second one falling back.
+async fn bind() -> Result<TcpListener, String> {
+    match TcpListener::bind(("0.0.0.0", SIGNALING_PORT)).await {
+        Ok(listener) => Ok(listener),
+        Err(e) => {
+            warn_log!(
+                "[LAN] port {} is not available ({}), falling back to an ephemeral one; \
+                 peers that only have a stored address cannot reach this device",
+                SIGNALING_PORT,
+                e
+            );
+            TcpListener::bind("0.0.0.0:0")
+                .await
+                .map_err(|e| format!("could not bind a local signaling port: {e}"))
+        }
+    }
+}
+
+/// Start accepting signaling connections.
+///
+/// Binds on every IPv4 interface, which includes a VPN's: a tailnet address is
+/// an address on this machine like any other, so nothing here knows or cares
+/// that a connection arrived over one. IPv4 only for now, which is what a home
+/// network hands out and what every tailnet node has, and `send_to` prefers
+/// IPv4 addresses to match.
 pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
-    let listener = TcpListener::bind("0.0.0.0:0")
-        .await
-        .map_err(|e| format!("could not bind a local signaling port: {e}"))?;
+    let listener = bind().await?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let task = tauri::async_runtime::spawn(async move {

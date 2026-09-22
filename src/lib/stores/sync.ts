@@ -66,6 +66,10 @@ function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
         lanStatus: 'off' as LanStatus,
+        // The port the signaling listener came up on, and whether it is the
+        // one a peer holding only a stored address assumes (ADR 0023).
+        listenPort: null as number | null,
+        onDefaultPort: false,
         peers: [] as Peer[],
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
@@ -90,6 +94,8 @@ function createSyncStore() {
                 // is a different one and it is still up.
                 peers: status === 'active' ? s.peers : s.peers.filter((p) => p.source !== 'mdns'),
             })),
+        setListener: (listenPort: number, onDefaultPort: boolean) =>
+            update((s) => ({ ...s, listenPort, onDefaultPort })),
         setPeers: (peers: Peer[]) => update((s) => ({ ...s, peers })),
         addPeer: (peer: Peer) =>
             update((s) => ({
@@ -185,6 +191,10 @@ export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
 export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
 export const peers = derived(syncStore, ($s) => $s.peers);
+
+// False once the listener has started on a port nothing else can guess, which
+// is the whole of "a device that only has our address cannot reach us".
+export const onDefaultPort = derived(syncStore, ($s) => $s.onDefaultPort);
 
 // Only the ones on this network. The pairing copy and the "nearby" count mean
 // this literally, so they must not count a device reached over a VPN.

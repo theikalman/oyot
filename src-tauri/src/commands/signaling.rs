@@ -96,15 +96,26 @@ pub async fn signaling_publish_ice_candidate(
 
 // --- the local network ----------------------------------------------------
 
-/// Start listening for signaling on this network, and advertise that we are.
-///
-/// Returns the port peers are told to connect back to, which is useful in a
-/// log and is how a caller can tell a restart from a no-op.
+/// What the listener came up as.
+#[derive(Debug, serde::Serialize)]
+pub struct ListenerStarted {
+    /// The port peers on this network are told to connect back to.
+    pub port: u16,
+    /// Whether that is the port a peer holding only a stored address assumes.
+    /// When it is not, this device is reachable locally and not remotely, and
+    /// the settings screen says so rather than letting it look healthy.
+    pub on_default_port: bool,
+}
+
+/// Start listening for signaling, and advertise on this network that we are.
 ///
 /// The listener comes up before the advertisement, so there is no moment where
 /// a peer is invited to a port that is not accepting yet.
 #[tauri::command]
-pub async fn lan_start(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<u16, String> {
+pub async fn lan_start(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ListenerStarted, String> {
     let node_id = state.signaling_manager.get_node_id();
     if node_id.is_empty() {
         return Err("cannot start local-network sync before the identity is loaded".to_string());
@@ -114,6 +125,7 @@ pub async fn lan_start(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     let inbound = state.signaling_manager.inbound(app, &node_id);
     let listener = crate::network::lan_signaling::listen(inbound).await?;
     let port = listener.port();
+    let on_default_port = listener.on_default_port();
 
     if let Some(previous) = state.lan_listener.lock().replace(listener) {
         previous.stop();
@@ -127,7 +139,10 @@ pub async fn lan_start(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         return Err(e);
     }
 
-    Ok(port)
+    Ok(ListenerStarted {
+        port,
+        on_default_port,
+    })
 }
 
 /// Stop advertising and stop listening.
