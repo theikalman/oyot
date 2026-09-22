@@ -6,6 +6,7 @@
 // months are read in. The page is then only markup over the result.
 
 import { journalDateOf, monthLabel } from '$lib/calendar/calendar';
+import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
 
 /** One journal, as the index lists it. */
@@ -19,6 +20,8 @@ export interface JournalEntry {
     openTodoCount: number;
     /** Whether anything has been written on this day. */
     hasContent: boolean;
+    /** The tags this day's entry carries, empty when it carries none. */
+    tags: string[];
 }
 
 /** One month's journals, under the heading they are shown beneath. */
@@ -37,8 +40,14 @@ export interface JournalMonth {
  * heading invented for it: this page is an index of days, and a row it cannot
  * place on a calendar is not one. Only the code that creates journals names
  * them, so such a row is a bug elsewhere, not something a user made.
+ *
+ * `tags` is optional because a caller that only needs to count the days -- the
+ * sidebar badge -- should not have to ask SQL what is in them first.
  */
-export function journalEntries(documents: DocumentSummary[]): JournalEntry[] {
+export function journalEntries(
+    documents: DocumentSummary[],
+    tags: TagsByDocument = NO_TAGS,
+): JournalEntry[] {
     const entries: JournalEntry[] = [];
 
     for (const doc of documents) {
@@ -53,6 +62,7 @@ export function journalEntries(documents: DocumentSummary[]): JournalEntry[] {
             todoCount: doc.todo_count,
             openTodoCount: Math.max(doc.todo_count - doc.completed_todo_count, 0),
             hasContent: doc.has_content,
+            tags: tagsOf(tags, doc.id),
         });
     }
 

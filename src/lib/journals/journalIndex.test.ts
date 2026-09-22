@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { groupByMonth, journalEntries } from './journalIndex';
+import { tagsByDocument } from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
 
 function doc(
@@ -87,6 +88,31 @@ describe('journalEntries', () => {
         journalEntries(documents);
 
         expect(documents.map((d) => d.id)).toEqual(['j1', 'j2']);
+    });
+
+    it('carries the tags the day is marked with', () => {
+        const tags = tagsByDocument([
+            { document_id: 'j1', name: 'gym' },
+            { document_id: 'j1', name: 'work' },
+            { document_id: 'j2', name: 'holiday' },
+        ]);
+
+        const entries = journalEntries(
+            [doc('j1', '2026-09-14', 'journal'), doc('j3', '2026-09-13', 'journal')],
+            tags,
+        );
+
+        expect(entries[0].tags).toEqual(['gym', 'work']);
+        // A day carrying nothing gets an empty list, not the tags of a
+        // document that is not on this page.
+        expect(entries[1].tags).toEqual([]);
+    });
+
+    // The sidebar badge only counts the days, and asking SQL what is written
+    // in them to do that would be a query for nothing.
+    it('needs no tags to be handed over', () => {
+        const [entry] = journalEntries([doc('j1', '2026-09-14', 'journal')]);
+        expect(entry.tags).toEqual([]);
     });
 });
 
