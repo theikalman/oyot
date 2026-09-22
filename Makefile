@@ -1,6 +1,5 @@
 .PHONY: help install dev build run clean check fmt lint test verify clippy \
-        release release-android release-android-aab release-ios release-tag bump install-android \
-        mqtt-up mqtt-down mqtt-logs
+        release release-android release-android-aab release-ios release-tag bump install-android
 
 # Only apply the custom Rust path on macOS (Apple Silicon); not needed on CI
 # or Linux/Windows. `$(filter darwin,Darwin)` never matched, because filter is
@@ -38,11 +37,6 @@ help:
 	@echo "  make verify           - Everything CI runs: format, lint, typecheck, test"
 	@echo "  make clippy           - Run Rust linter"
 	@echo ""
-	@echo "MQTT broker commands:"
-	@echo "  make mqtt-up         - Start MQTT broker in Docker (port 1883)"
-	@echo "  make mqtt-down       - Stop MQTT broker"
-	@echo "  make mqtt-logs       - Follow MQTT broker logs"
-	@echo ""
 	@echo "Release commands:"
 	@echo "  make release                    - Build current platform → dist/"
 	@echo "  make release-android            - Build Android APK → dist/android/"
@@ -53,20 +47,6 @@ help:
 
 install:
 	npm install --force
-
-# ---------------------------------------------------------------------------
-# MQTT broker (Docker)
-# ---------------------------------------------------------------------------
-
-mqtt-up:
-	docker compose up -d mqtt
-	@echo "MQTT broker started on mqtt://localhost:1883"
-
-mqtt-down:
-	docker compose down mqtt
-
-mqtt-logs:
-	docker compose logs -f mqtt
 
 # ---------------------------------------------------------------------------
 # App targets

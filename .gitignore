@@ -10,9 +10,6 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /tmp
-/mosquitto/log/
-/mosquitto/data/
 *.jks
 .claude/
 # Broker credentials, generated locally per developer.
-mosquitto/config/passwd
