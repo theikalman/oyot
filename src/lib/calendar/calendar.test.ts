@@ -8,6 +8,7 @@ import {
     journalTitleForDay,
     monthGrid,
     monthLabel,
+    weekdayName,
 } from './calendar';
 
 describe('journalTitleFor', () => {
@@ -71,6 +72,13 @@ describe('addMonths', () => {
         const next = addMonths(new Date(2026, 0, 31), 1);
         expect(monthLabel(next)).toBe('February 2026');
         expect(next.getDate()).toBe(1);
+    });
+});
+
+describe('weekdayName', () => {
+    it('spells out the day a date falls on', () => {
+        expect(weekdayName(new Date(2026, 8, 14))).toBe('Monday');
+        expect(weekdayName(new Date(2026, 8, 13))).toBe('Sunday');
     });
 });
 
