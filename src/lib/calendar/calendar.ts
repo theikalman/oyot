@@ -58,6 +58,22 @@ export const MONTH_NAMES = [
 
 export const DAY_NAMES = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
+/** The same days spelled out, for lists that have room for a word. */
+export const WEEKDAY_NAMES = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+];
+
+/** The day of the week a date falls on, e.g. "Monday". */
+export function weekdayName(date: Date): string {
+    return WEEKDAY_NAMES[date.getDay()];
+}
+
 export function monthLabel(monthOf: Date): string {
     return `${MONTH_NAMES[monthOf.getMonth()]} ${monthOf.getFullYear()}`;
 }

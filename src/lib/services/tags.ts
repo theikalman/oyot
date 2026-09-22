@@ -1,5 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { normalizeTagName, type TagSummary } from '$lib/tiptap/tags';
+import {
+    NO_TAGS,
+    tagsByDocument,
+    type DocumentTagHit,
+    type TagsByDocument,
+} from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
 import { broadcastLocalUpdate, documentRepository } from '$lib/sync';
 import { bumpIndexRevision } from '$lib/stores/derivedIndex';
@@ -30,6 +36,27 @@ export async function loadAllTags(): Promise<TagSummary[]> {
     } catch (error) {
         console.error('[tags] failed to load the tag list:', error);
         return [];
+    }
+}
+
+/**
+ * What every live document is tagged with, gathered by document.
+ *
+ * One query for the whole page, rather than one per tag or one per row: see
+ * `get_document_tags`. Read from the derived rows for the same reason the tag
+ * list is, which is also what makes it cover documents this device has only
+ * ever received.
+ *
+ * Failure returns nothing rather than throwing, as `loadAllTags` does: the
+ * tags decorate a list that is worth reading without them, so a failed query
+ * should cost the chips and not the page.
+ */
+export async function loadTagsByDocument(): Promise<TagsByDocument> {
+    try {
+        return tagsByDocument(await invoke<DocumentTagHit[]>('get_document_tags'));
+    } catch (error) {
+        console.error('[tags] failed to load the tags of each document:', error);
+        return NO_TAGS;
     }
 }
 

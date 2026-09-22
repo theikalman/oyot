@@ -814,6 +814,55 @@ pub fn get_documents_by_tag(
     query_documents_with_tag(&db, &name)
 }
 
+/// One tag on one document: the pair a list of documents is decorated from.
+#[derive(Debug, Serialize)]
+pub struct DocumentTagHit {
+    pub document_id: String,
+    /// Normalized, as every stored tag is.
+    pub name: String,
+}
+
+/// Every tag on every live document.
+///
+/// A page that lists documents and wants to show what each one carries has one
+/// question, not one per row. The alternative is `get_documents_by_tag` per tag
+/// in the corpus, which is a query each and repeats a document in every answer
+/// it appears in.
+///
+/// Ordered by document and then by name, so a caller can gather a document's
+/// tags from one run of rows, and so the chips on a row keep the same order
+/// between two reads of the page.
+pub fn query_document_tags(db: &Connection) -> Result<Vec<DocumentTagHit>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT t.document_id, t.name
+               FROM document_tags t
+               JOIN documents d ON d.id = t.document_id
+              WHERE d.is_deleted = 0
+              ORDER BY t.document_id ASC, t.name ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let hits: Vec<DocumentTagHit> = stmt
+        .query_map([], |row| {
+            Ok(DocumentTagHit {
+                document_id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(hits)
+}
+
+#[tauri::command]
+pub fn get_document_tags(state: tauri::State<'_, AppState>) -> Result<Vec<DocumentTagHit>, String> {
+    let db = state.db.lock();
+    query_document_tags(&db)
+}
+
 /// Today's journal, and whether opening it was news.
 #[derive(Debug, Serialize)]
 pub struct TodayJournal {
@@ -1246,6 +1295,55 @@ mod tests {
         add_tag(&db, "d1", "work");
         tombstone_document(&db, "d1", 900).unwrap();
         assert!(tagged(&db, "work").is_empty());
+    }
+
+    /// Every document's tags, as the journal index reads them.
+    fn tag_pairs(db: &Connection) -> Vec<(String, String)> {
+        query_document_tags(db)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.document_id, t.name))
+            .collect()
+    }
+
+    #[test]
+    fn every_document_reports_the_tags_it_carries() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_tag(&db, "d1", "work");
+        add_tag(&db, "d1", "admin");
+        add_tag(&db, "d2", "home");
+
+        assert_eq!(
+            tag_pairs(&db),
+            vec![
+                ("d1".to_string(), "admin".to_string()),
+                ("d1".to_string(), "work".to_string()),
+                ("d2".to_string(), "home".to_string()),
+            ]
+        );
+    }
+
+    // The caller gathers a document's tags from one run of rows, which only
+    // works while the rows for a document are together.
+    #[test]
+    fn a_documents_tags_arrive_together() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_tag(&db, "d2", "home");
+        add_tag(&db, "d1", "work");
+        add_tag(&db, "d2", "admin");
+
+        let ids: Vec<String> = tag_pairs(&db).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["d1", "d2", "d2"]);
+    }
+
+    #[test]
+    fn a_deleted_documents_tags_are_not_reported() {
+        let db = db();
+        add_tag(&db, "d1", "work");
+        tombstone_document(&db, "d1", 900).unwrap();
+        assert!(tag_pairs(&db).is_empty());
     }
 
     // Tags are normalized to one spelling before they are written, so the
