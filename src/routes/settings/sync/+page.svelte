@@ -8,7 +8,6 @@
         connectedPeers,
         pendingPairRequest,
         pairingState,
-        canSignal,
         lanStatus,
         lanPeers,
         listeningOnAnotherPort,
@@ -48,7 +47,6 @@
     let copySuccess = $state(false);
     let lanState = $state<LanStatus>('off');
     let nearby = $state(0);
-    let canReachAnything = $state(false);
     let portTaken = $state(false);
     let endpoints = $state<DeviceEndpoint[]>([]);
     let onStoredAddress = $state<Set<string>>(new Set());
@@ -75,9 +73,6 @@
         const un12 = lanPeers.subscribe((v) => {
             nearby = v.length;
         });
-        const un13 = canSignal.subscribe((v) => {
-            canReachAnything = v;
-        });
         const un14 = listeningOnAnotherPort.subscribe((v) => {
             portTaken = v;
         });
@@ -96,7 +91,6 @@
             un8();
             un11();
             un12();
-            un13();
             un14();
             un15();
             un16();
@@ -173,23 +167,6 @@
             toasts.error('Could not remove that device');
         }
     }
-
-    // Pairing needs a way to reach the other device: this network, or an
-    // address that has answered (ADR 0023). Two devices on one wifi can still
-    // be introduced with no internet at all.
-    //
-    // The form is shown either way. It used to be replaced by this sentence,
-    // which was right when the only route was one the user could not do
-    // anything about from here; now the form is where an address is typed, and
-    // a device that is reaching nothing is exactly the one that needs to type
-    // one. So the sentence goes inside the form as a note.
-    let pairNote = $derived(
-        canReachAnything
-            ? null
-            : lanState === 'error'
-              ? 'This device could not advertise itself on the network, so it will not find anything here. A firewall prompt may be waiting to be answered. Pairing still works if you give the other device an address.'
-              : 'Nothing is reachable from this device yet. Put both devices on the same network with Oyot open on each, or give the other device an address below.',
-    );
 
     async function handleAddEndpoint(nodeId: string, address: string) {
         const saved = await saveEndpoint(nodeId, address);
@@ -272,7 +249,11 @@
         remoteCount={onStoredAddress.size}
     />
 
-    <PairDeviceForm pairingState={pairState} noRouteNote={pairNote} onPair={handlePair} />
+    <PairDeviceForm
+        pairingState={pairState}
+        discovering={lanState === 'active'}
+        onPair={handlePair}
+    />
 
     <ConnectedPeerList
         pairedDevices={paired}

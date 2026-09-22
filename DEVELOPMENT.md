@@ -355,11 +355,11 @@ Two machines, both on a tailnet, and not on the same wifi - or the same wifi
 with the local route confirmed off, since `best()` prefers it whenever it is
 available and you would be testing the wrong thing.
 
-1. On one device, Settings > Sync, "Pair a Device": paste the other device's
-   Node ID, put its MagicDNS name (`laptop.tailnet-name.ts.net`) in the address
-   field below it, and press Pair. The port is optional. The address is stored
-   and probed before the request goes out, so a wrong one is reported as a
-   wrong address rather than as a device that did not answer.
+1. On one device, Settings > Sync, "Pair a Device": choose **Somewhere else**,
+   paste the other device's Node ID and its MagicDNS name
+   (`laptop.tailnet-name.ts.net`), and press Pair. The port is optional. The
+   address is stored and probed before the request goes out, so a wrong one is
+   reported as a wrong address rather than as a device that did not answer.
 2. Accept the prompt on the other device.
 3. On that device, under "Devices Somewhere Else", pick the first device and
    add its address. **Both directions need one**: either device may be the one
@@ -370,10 +370,13 @@ device being asleep, or a tailnet ACL that does not allow port 19701 between
 your own devices. "Check now" re-probes without waiting out the 45 second
 interval.
 
-The Node ID is typed once, in the pairing form. The address section picks from
-paired devices rather than asking for an id again, and the pairing form is
-shown even when nothing is reachable, because a device that is reaching nothing
-is exactly the one that needs an address typed into it.
+The form asks which way first and then shows only that way's fields, so a
+blank address is never ambiguous between "it is on this network" and "I have
+not filled that in yet". `sync/pairMethod.ts` holds what follows from the
+choice: what the Pair button needs, that an address typed and then abandoned is
+not used, and the one warning worth raising before anything is sent. The Node
+ID is typed once, here; the address section picks from paired devices rather
+than asking for an id again.
 
 ## Project Structure
 
