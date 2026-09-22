@@ -12,6 +12,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
 
 - **Open and write.** A journal entry for today is always there, so there is
   nowhere to file anything before you start.
+- **Every day, in one list.** The sidebar calendar covers a month; the Journals
+  index lists every day you have an entry for, newest first. Opening one from
+  there moves the calendar to it.
 - **Rich text editing.** Headings, lists, tables, task lists, images, and slash
   commands, built on Tiptap.
 - **Document links and backlinks.** Link one note to another with `/document`.
