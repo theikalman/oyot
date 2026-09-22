@@ -4,6 +4,7 @@ mod logging;
 mod commands;
 mod crypto;
 mod db;
+mod endpoints;
 mod identity;
 mod indexer;
 mod network;
@@ -131,6 +132,20 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_device_pairs_room ON device_pairs(room_id);
         CREATE INDEX IF NOT EXISTS idx_device_pairs_user ON device_pairs(user_id);
+
+        -- Where a device can be reached when it is not on this network: a host
+        -- and a port the user typed (ADR 0023). Not a column on device_pairs,
+        -- because a device is worth trying at more than one address, and an
+        -- address has to exist before the pairing that reaching it creates.
+        CREATE TABLE IF NOT EXISTS device_endpoints (
+            user_id TEXT NOT NULL,
+            peer_node_id TEXT NOT NULL,
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            added_at INTEGER NOT NULL,
+            last_ok INTEGER,
+            PRIMARY KEY (user_id, peer_node_id, host, port)
+        );
         ",
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;
@@ -148,7 +163,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -407,6 +422,27 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v9: the addresses a device can be reached at when it is not on this
+    // network (ADR 0023). Nothing is backfilled, because there was nowhere for
+    // an address to have been written before this table existed.
+    if version < 9 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS device_endpoints (
+                 user_id TEXT NOT NULL,
+                 peer_node_id TEXT NOT NULL,
+                 host TEXT NOT NULL,
+                 port INTEGER NOT NULL,
+                 added_at INTEGER NOT NULL,
+                 last_ok INTEGER,
+                 PRIMARY KEY (user_id, peer_node_id, host, port)
+             );",
+        )
+        .map_err(|e| format!("Migration v9 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 9;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -476,6 +512,9 @@ pub fn run() {
             get_identity,
             set_display_name,
             list_paired_devices,
+            save_peer_endpoint,
+            forget_peer_endpoint,
+            list_peer_endpoints,
             remove_pair,
             save_pair,
             update_pair_sync_time,
