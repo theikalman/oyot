@@ -437,10 +437,6 @@ pub fn run() {
                 state.signaling_manager.set_identity(identity);
             }
 
-            // Every signaling message goes to a peer found on this network
-            // (ADR 0022), so the manager has to be able to see who is on it.
-            state.signaling_manager.attach_lan(state.lan.clone());
-
             app.manage(state);
             Ok(())
         })
@@ -491,7 +487,7 @@ pub fn run() {
             signaling_publish_ice_candidate,
             lan_start,
             lan_stop,
-            lan_list_peers,
+            list_reachable_peers,
             list_export_attachments,
             export_notes,
         ])

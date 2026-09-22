@@ -1,5 +1,6 @@
 use crate::network::lan_discovery::LanDiscovery;
 use crate::network::lan_signaling::LanListener;
+use crate::network::peers::Peers;
 use crate::network::signaling_manager::SignalingManager;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -22,6 +23,9 @@ pub fn configure_connection(conn: &Connection) -> Result<(), String> {
 pub struct AppState {
     pub db: Arc<parking_lot::Mutex<Connection>>,
     pub signaling_manager: Arc<SignalingManager>,
+    /// Who this device can reach, by whichever route found them (ADR 0023).
+    /// Every discovery source writes here and the signaling manager reads it.
+    pub peers: Arc<Peers>,
     /// Discovery of this user's other devices on the local network (ADR 0018).
     pub lan: Arc<LanDiscovery>,
     /// The local-network signaling listener, while one is running. Its port is
@@ -51,12 +55,14 @@ impl AppState {
         configure_connection(&conn)?;
         let db = Arc::new(parking_lot::Mutex::new(conn));
 
-        let signaling_manager = Arc::new(SignalingManager::new());
-        let lan = Arc::new(LanDiscovery::new(Some(app_handle.clone())));
+        let peers = Arc::new(Peers::new(Some(app_handle.clone())));
+        let signaling_manager = Arc::new(SignalingManager::new(peers.clone()));
+        let lan = Arc::new(LanDiscovery::new(Some(app_handle.clone()), peers.clone()));
 
         Ok(Self {
             db: db.clone(),
             signaling_manager,
+            peers,
             lan,
             lan_listener: Arc::new(parking_lot::Mutex::new(None)),
             boot_id: uuid::Uuid::new_v4().to_string(),

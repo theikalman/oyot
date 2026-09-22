@@ -8,9 +8,9 @@
 use crate::crypto::{self, EnvelopeVerifier};
 use crate::db::AppState;
 use crate::identity::LocalIdentity;
-use crate::network::lan_discovery::{LanDiscovery, LanPeer};
 use crate::network::lan_signaling;
 use crate::network::message::SignalingMessage;
+use crate::network::peers::{Peer, Peers};
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
@@ -83,9 +83,9 @@ pub struct SignalingManager {
     /// dismissed should stay dismissed however the next copy of the request
     /// arrives.
     pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
-    /// Who is reachable on this network, once discovery is running. `None`
-    /// before startup attaches it, and on a build that has no discovery.
-    lan: Arc<ParkingMutex<Option<Arc<LanDiscovery>>>>,
+    /// Who is reachable, by whichever route found them. Shared with every
+    /// discovery source rather than owned here (ADR 0023).
+    peers: Arc<Peers>,
 }
 
 impl SignalingManager {
@@ -93,28 +93,22 @@ impl SignalingManager {
     /// only thing that emits is `Inbound`, which is handed one when the
     /// listener starts. It was a field while the broker's event forwarder
     /// needed one of its own.
-    pub fn new() -> Self {
+    pub fn new(peers: Arc<Peers>) -> Self {
         Self {
             identity: Arc::new(ParkingMutex::new(None)),
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
             verifier: Arc::new(ParkingMutex::new(EnvelopeVerifier::new())),
             pair_prompts: Arc::new(ParkingMutex::new(Vec::new())),
-            lan: Arc::new(ParkingMutex::new(None)),
+            peers,
         }
     }
 
-    /// Let the manager see who is on this network. Called once at startup.
-    pub fn attach_lan(&self, lan: Arc<LanDiscovery>) {
-        *self.lan.lock() = Some(lan);
-    }
-
-    /// Where this peer can be reached on this network, if anywhere.
+    /// The best way to reach this peer, if there is one.
     ///
-    /// `None` is the whole of "we cannot reach it": there is nowhere else to
-    /// look since ADR 0022.
-    fn lan_peer(&self, peer_id: &str) -> Option<LanPeer> {
-        let lan = self.lan.lock().clone();
-        lan.and_then(|lan| lan.peer(peer_id))
+    /// `None` is the whole of "we cannot reach it": it is not on this network
+    /// and no address we hold for it answered.
+    fn route_to(&self, peer_id: &str) -> Option<Peer> {
+        self.peers.best(peer_id)
     }
 
     /// The inbound half, for the listener to hand received messages to.
@@ -227,21 +221,28 @@ impl SignalingManager {
         }
     }
 
-    /// Sign one message and send it to a peer on this network.
+    /// Sign one message and send it to a peer, wherever it was found.
     ///
     /// Every outgoing message goes through here, so there is no path that
     /// sends an unsigned envelope.
     ///
-    /// A failure is final for this message. There used to be a second route to
-    /// fall back to, and a cooldown to steer the next message onto it; with
-    /// one transport left, the honest answer to "the peer did not take it" is
-    /// to say so and let the caller's backoff try again.
+    /// A failure is final for this message. The peer table already picked the
+    /// best route, and trying the other one on a send failure would only move
+    /// the retry a few hundred milliseconds earlier than the caller's backoff
+    /// does anyway, at the cost of a route choice in two places.
     async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
-        let Some(peer) = self.lan_peer(peer_id) else {
-            return Err(format!("{peer_id} is not on this network"));
+        let Some(peer) = self.route_to(peer_id) else {
+            return Err(format!(
+                "{peer_id} is not on this network and no stored address for it answered"
+            ));
         };
 
-        trace!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
+        trace!(
+            "[Signaling] publish {} to peer_id={} via {:?}",
+            msg_type,
+            peer_id,
+            peer.source
+        );
         let msg = self.seal(peer_id, msg_type, payload)?;
 
         lan_signaling::send_to(&peer.addrs, peer.port, &msg)
@@ -501,7 +502,7 @@ mod tests {
     fn manager_with_identity() -> (SignalingManager, String) {
         let signing_key = crypto::generate_signing_key();
         let node_id = crypto::encode_node_id(&signing_key.verifying_key());
-        let mgr = SignalingManager::new();
+        let mgr = SignalingManager::new(Arc::new(Peers::new(None)));
         mgr.set_identity(LocalIdentity {
             public: UserIdentity {
                 user_id: "u1".to_string(),
@@ -651,7 +652,7 @@ mod tests {
     // reject it, and the failure would look like a network problem.
     #[test]
     fn sealing_without_an_identity_fails_rather_than_sending_unsigned() {
-        let mgr = SignalingManager::new();
+        let mgr = SignalingManager::new(Arc::new(Peers::new(None)));
         let err = mgr.seal("peer", "offer", "sdp".to_string()).unwrap_err();
         assert!(err.contains("identity not loaded"), "got: {err}");
     }

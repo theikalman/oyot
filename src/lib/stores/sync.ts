@@ -19,11 +19,19 @@ export interface ConnectedPeer {
     room_id: string;
 }
 
-// A device seen on this network, as `lan_discovery` reports it.
-export interface LanPeer {
+// How a peer was found. `mdns` announced itself on this network; `address`
+// answered a probe at an address the user stored for it (ADR 0023).
+export type PeerSource = 'mdns' | 'address';
+
+// A device this one can reach, as `network::peers` reports it. The same device
+// can appear twice, once per source, when both routes are up.
+export interface Peer {
     node_id: string;
+    source: PeerSource;
     boot_id: string | null;
     addrs: string[];
+    /** The host as the user wrote it, for an address peer. Null for mDNS. */
+    host: string | null;
     port: number;
     seen_at: number;
 }
@@ -58,7 +66,7 @@ function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
         lanStatus: 'off' as LanStatus,
-        lanPeers: [] as LanPeer[],
+        peers: [] as Peer[],
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
@@ -76,20 +84,27 @@ function createSyncStore() {
             update((s) => ({
                 ...s,
                 lanStatus: status,
-                // Nothing is reachable locally once discovery stops, and a
-                // list left behind would go on claiming otherwise.
-                lanPeers: status === 'active' ? s.lanPeers : [],
+                // Nothing found on this network is reachable once discovery
+                // stops, and a list left behind would go on claiming
+                // otherwise. Peers found at a stored address stay: that route
+                // is a different one and it is still up.
+                peers: status === 'active' ? s.peers : s.peers.filter((p) => p.source !== 'mdns'),
             })),
-        setLanPeers: (peers: LanPeer[]) => update((s) => ({ ...s, lanPeers: peers })),
-        addLanPeer: (peer: LanPeer) =>
+        setPeers: (peers: Peer[]) => update((s) => ({ ...s, peers })),
+        addPeer: (peer: Peer) =>
             update((s) => ({
                 ...s,
-                lanPeers: [...s.lanPeers.filter((p) => p.node_id !== peer.node_id), peer],
+                peers: [
+                    ...s.peers.filter(
+                        (p) => !(p.node_id === peer.node_id && p.source === peer.source),
+                    ),
+                    peer,
+                ],
             })),
-        removeLanPeer: (nodeId: string) =>
+        removePeer: (nodeId: string, source: PeerSource) =>
             update((s) => ({
                 ...s,
-                lanPeers: s.lanPeers.filter((p) => p.node_id !== nodeId),
+                peers: s.peers.filter((p) => !(p.node_id === nodeId && p.source === source)),
             })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
@@ -169,8 +184,15 @@ function createSyncStore() {
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
 export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
-export const lanPeers = derived(syncStore, ($s) => $s.lanPeers);
-export const lanPeerIds = derived(syncStore, ($s) => new Set($s.lanPeers.map((p) => p.node_id)));
+export const peers = derived(syncStore, ($s) => $s.peers);
+
+// Only the ones on this network. The pairing copy and the "nearby" count mean
+// this literally, so they must not count a device reached over a VPN.
+export const lanPeers = derived(syncStore, ($s) => $s.peers.filter((p) => p.source === 'mdns'));
+export const lanPeerIds = derived(lanPeers, ($p) => new Set($p.map((peer) => peer.node_id)));
+
+// Reachable by any route at all, which is what the reconnect paths ask about.
+export const reachablePeerIds = derived(syncStore, ($s) => new Set($s.peers.map((p) => p.node_id)));
 
 // Whether there is any way to reach a peer right now.
 //

@@ -143,8 +143,8 @@ pub fn lan_stop(state: State<'_, AppState>) {
     }
 }
 
-/// The devices visible on this network right now.
+/// Every device this one can reach right now, by whichever route found it.
 #[tauri::command]
-pub fn lan_list_peers(state: State<'_, AppState>) -> Vec<crate::network::lan_discovery::LanPeer> {
-    state.lan.peers()
+pub fn list_reachable_peers(state: State<'_, AppState>) -> Vec<crate::network::peers::Peer> {
+    state.peers.all()
 }

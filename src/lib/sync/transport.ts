@@ -14,7 +14,8 @@ import {
     type UserIdentity,
     type DevicePair,
     type LanStatus,
-    type LanPeer,
+    type Peer,
+    type PeerSource,
 } from '../stores/sync';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
@@ -943,7 +944,7 @@ async function startLocalNetwork(): Promise<void> {
         log.debug(`[sync] local network signaling listening on port ${port}`);
         // Seeds the list from whatever discovery already knows, which matters
         // when sync is restarted rather than started.
-        syncStore.setLanPeers(await invoke<LanPeer[]>('lan_list_peers'));
+        syncStore.setPeers(await invoke<Peer[]>('list_reachable_peers'));
     } catch (e) {
         console.warn('[sync] local network sync unavailable:', e);
         syncStore.setLanStatus('error');
@@ -1045,24 +1046,28 @@ async function setupEventListeners(): Promise<void> {
         }
     });
 
-    const unlistenLanFound = await listen<LanPeer>('lan-peer-found', (event) => {
+    const unlistenPeerFound = await listen<Peer>('peer-found', (event) => {
         const peer = event.payload;
         log.debug(
-            `[sync] event: lan-peer-found ${peer.node_id} at ${peer.addrs.join(', ')}:${peer.port}`,
+            `[sync] event: peer-found ${peer.node_id} via ${peer.source} at ${peer.addrs.join(', ')}:${peer.port}`,
         );
-        syncStore.addLanPeer(peer);
+        syncStore.addPeer(peer);
         // A device we are paired with just became reachable, so try it now
         // rather than at the next backoff tick. A peer that is already
         // connected is left alone; the sweep skips it.
         if (get(pairedDevices).some((p) => p.peer_node_id === peer.node_id)) {
-            void reconnectAllPairedDevices('lan-peer-found');
+            void reconnectAllPairedDevices('peer-found');
         }
     });
 
-    const unlistenLanLost = await listen<{ node_id: string }>('lan-peer-lost', (event) => {
-        log.debug(`[sync] event: lan-peer-lost ${event.payload.node_id}`);
-        syncStore.removeLanPeer(event.payload.node_id);
-    });
+    const unlistenPeerLost = await listen<{ node_id: string; source: PeerSource }>(
+        'peer-lost',
+        (event) => {
+            const { node_id, source } = event.payload;
+            log.debug(`[sync] event: peer-lost ${node_id} via ${source}`);
+            syncStore.removePeer(node_id, source);
+        },
+    );
 
     cleanupFns = [
         unlistenPairRequest,
@@ -1071,8 +1076,8 @@ async function setupEventListeners(): Promise<void> {
         unlistenAnswer,
         unlistenIce,
         unlistenLanStatus,
-        unlistenLanFound,
-        unlistenLanLost,
+        unlistenPeerFound,
+        unlistenPeerLost,
     ];
     log.debug('[sync] Event listeners registered');
 }
