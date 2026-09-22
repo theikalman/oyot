@@ -36,6 +36,38 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.17-alpha',
+        date: '2026-09-22',
+        summary:
+            'Oyot now syncs only between devices on the same network. The broker is gone, and with it the server you had to run, secure and keep running for your notes to reach your other devices.',
+        changes: [
+            {
+                kind: 'removed',
+                text: 'Devices that are not on the same network no longer sync. A phone on mobile data and a laptop at home reconcile again the moment they are both on one wifi, and until then the other device simply reads as offline rather than pretending to be reachable.',
+            },
+            {
+                kind: 'removed',
+                text: 'Settings > Sync no longer has a broker address, username or password, and no longer asks you to choose between Automatic and Local network only. There is one way devices connect now, so there is nothing to configure: open Oyot on two devices on the same wifi and pair them.',
+            },
+            {
+                kind: 'removed',
+                text: 'iPhone and iPad do not sync in this release. They could only ever reach other devices through the broker, because finding devices on a local network needs an Apple permission the app does not have yet. Your notes on those devices are untouched, and nothing is lost; they just stop receiving from your other devices until that lands.',
+            },
+            {
+                kind: 'security',
+                text: 'Nothing outside your own devices can see when they pair, or which devices they pair with. Keeping that true with a broker meant writing a rule and a password into the broker for every single device, by hand; anyone else on that broker could watch if you got it wrong. Note content was always encrypted between the two devices and still is.',
+            },
+            {
+                kind: 'improved',
+                text: 'When a device cannot be paired with, the message says which of the two problems it is: this device is not searching the network yet, usually a firewall prompt waiting to be answered, or the other device has not appeared on the network.',
+            },
+            {
+                kind: 'improved',
+                text: 'The sync indicator can no longer read "Sync error" for a reason that has nothing to do with your devices, because the broker it used to complain about does not exist.',
+            },
+        ],
+    },
+    {
         version: '0.0.16-alpha',
         date: '2026-09-22',
         summary:
