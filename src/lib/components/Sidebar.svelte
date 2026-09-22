@@ -9,7 +9,13 @@
         renameDocument,
         deleteDocument as deleteDocumentAction,
     } from '../services/documentActions';
-    import { openDocument, openHome, openTags, openTodos } from '../services/navigation';
+    import {
+        openDocument,
+        openHome,
+        openJournals,
+        openTags,
+        openTodos,
+    } from '../services/navigation';
     import { page } from '$app/state';
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
@@ -22,6 +28,7 @@
     import { APP_VERSION } from '../version';
     import { indexRevision } from '../stores/derivedIndex';
     import { refreshTagCount, tagCount } from '../tags/tagCount';
+    import { journalEntries } from '../journals/journalIndex';
 
     // Navigate; the document route loads it. Fetching and assigning the store
     // here meant the URL never changed, so there was nothing to go back to.
@@ -95,6 +102,7 @@
         ),
     );
     let onTodosPage = $derived(page.url.pathname === '/todos');
+    let onJournalsPage = $derived(page.url.pathname === '/journals');
     // Both the index and any one tag's page, so the item stays lit while the
     // user is reading a tag rather than only on the list itself.
     let onTagsPage = $derived(page.url.pathname.startsWith('/tags'));
@@ -108,6 +116,11 @@
         void $indexRevision;
         void refreshTagCount();
     });
+
+    function goToJournals() {
+        void openJournals();
+        dismissOnSmallScreen();
+    }
 
     function goToTodos() {
         void openTodos();
@@ -124,6 +137,10 @@
         $appStore.currentDocument?.doc_type === 'journal' ? $appStore.currentDocument.title : null,
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
+    // What the journal index will list, which is not quite every journal row:
+    // one whose title is not a date has no day to be listed under. Counted the
+    // same way here so the badge and the page cannot disagree.
+    let journalDayCount = $derived(journalEntries($documents).length);
     let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
@@ -416,6 +433,28 @@
 
                 <div class="sidebar-section">
                     <h3>Index</h3>
+                    <!-- The calendar above shows one month; this is the whole
+                         run of them, which is the only way to see how far back
+                         the journal goes. -->
+                    <button class="nav-item" class:active={onJournalsPage} onclick={goToJournals}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M8 2v4M16 2v4M3 10h18" />
+                            <rect x="3" y="4" width="18" height="18" rx="2" />
+                        </svg>
+                        <span class="nav-label">Journals</span>
+                        {#if journalDayCount > 0}
+                            <span class="nav-count">{journalDayCount}</span>
+                        {/if}
+                    </button>
                     <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
                         <svg
                             width="16"
