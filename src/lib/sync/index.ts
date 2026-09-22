@@ -1,7 +1,8 @@
 // Public surface of the peer-to-peer sync layer.
 //
-//   transport.ts            - MQTT signaling + WebRTC perfect negotiation +
-//                             per-peer reconnect (ADR 0002).
+//   transport.ts            - local-network signaling + WebRTC perfect
+//                             negotiation + per-peer reconnect (ADR 0002,
+//                             0018, 0022).
 //   channel/DocSyncProtocol - two-phase whole-document-set reconciliation +
 //                             steady-state live messages (ADR 0003).
 //   channel/Framing         - chunked, back-pressured message transport.
@@ -14,7 +15,6 @@ export {
     respondToPairRequest,
     disconnectPeer,
     reconnectPeer,
-    setSyncMode,
     documentRepository,
     broadcastLocalUpdate,
     broadcastDocCreated,

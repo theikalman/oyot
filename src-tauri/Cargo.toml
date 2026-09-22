@@ -1,6 +1,6 @@
 [package]
 name = "oyot"
-version = "0.0.16-alpha"
+version = "0.0.17-alpha"
 description = "Simple note taking app"
 authors = ["AjiYakin"]
 edition = "2021"
@@ -32,9 +32,6 @@ sha2 = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 hostname = "0.4"
-rumqttc = { version = "0.24", features = ["use-rustls"] }
-rustls = "0.22"
-rustls-native-certs = "0.7"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 tauri-plugin-os = "2"

@@ -1,6 +1,8 @@
 # 0016: Binary chunk frames, and a development broker that is anonymous on purpose
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md), which
+  removes the broker and with it the development broker described here. The
+  binary chunk framing is untouched
 - **Date:** 2026-09-14
 - **Amends:** [0005](0005-attachment-sync.md) (the framing and timeout
   assumptions) and [0009](0009-authenticated-signaling.md) (what the reference

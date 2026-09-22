@@ -17,9 +17,6 @@ export interface ConnectedPeer {
     peer_node_id: string;
     peer_display_name: string;
     room_id: string;
-    // Which transport carried the signaling that set this connection up. The
-    // documents themselves always travel directly, either way.
-    route: SignalingRoute | null;
 }
 
 // A device seen on this network, as `lan_discovery` reports it.
@@ -37,19 +34,11 @@ export interface PendingPairRequest {
     display_name: string;
 }
 
-export type BrokerStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
-
 // Whether this device is discoverable on, and discovering peers on, the local
-// network. Separate from the broker's status: either one alone is enough to
-// reach a peer, which is what `canSignal` below is for. See ADR 0018.
+// network. Since ADR 0022 this is the whole of "can this device sync": there
+// is no second transport left for `canSignal` to consider.
 export type LanStatus = 'off' | 'starting' | 'active' | 'error';
 
-// Which transport carried a signaling message, or connected a peer.
-export type SignalingRoute = 'lan' | 'broker';
-
-// How the user wants devices reached. 'auto' prefers the local network and
-// falls back to the broker; 'local-only' never touches the broker at all.
-export type SyncMode = 'auto' | 'local-only';
 export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
 
 // Per-room document-sync progress, driven by DocSyncProtocol.
@@ -68,14 +57,8 @@ const EMPTY_ROOM_SYNC: RoomSync = { phase: 'idle', pending: 0, total: 0, lastSyn
 function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
-        brokerUrl: null as string | null,
-        brokerStatus: 'disconnected' as BrokerStatus,
         lanStatus: 'off' as LanStatus,
         lanPeers: [] as LanPeer[],
-        syncMode: 'auto' as SyncMode,
-        // Why signaling could not connect, when the status is 'error'. Null
-        // otherwise. Without it the UI can say something is wrong but not what.
-        brokerError: null as string | null,
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
@@ -89,17 +72,6 @@ function createSyncStore() {
         subscribe,
         set,
         setIdentity: (identity: UserIdentity) => update((s) => ({ ...s, identity })),
-        setBrokerUrl: (url: string | null) => update((s) => ({ ...s, brokerUrl: url })),
-        setBrokerStatus: (status: BrokerStatus) =>
-            update((s) => ({
-                ...s,
-                brokerStatus: status,
-                // Any status that is not an error clears the reason, so a
-                // recovered connection does not keep explaining an old one.
-                brokerError: status === 'error' ? s.brokerError : null,
-            })),
-        setBrokerError: (reason: string) =>
-            update((s) => ({ ...s, brokerStatus: 'error', brokerError: reason })),
         setLanStatus: (status: LanStatus) =>
             update((s) => ({
                 ...s,
@@ -119,7 +91,6 @@ function createSyncStore() {
                 ...s,
                 lanPeers: s.lanPeers.filter((p) => p.node_id !== nodeId),
             })),
-        setSyncMode: (mode: SyncMode) => update((s) => ({ ...s, syncMode: mode })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
         setConnectedPeers: (peers: ConnectedPeer[]) =>
@@ -197,23 +168,18 @@ function createSyncStore() {
 
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
-export const brokerStatus = derived(syncStore, ($s) => $s.brokerStatus);
 export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
 export const lanPeers = derived(syncStore, ($s) => $s.lanPeers);
 export const lanPeerIds = derived(syncStore, ($s) => new Set($s.lanPeers.map((p) => p.node_id)));
-export const syncMode = derived(syncStore, ($s) => $s.syncMode);
 
 // Whether there is any way to reach a peer right now.
 //
-// The reconnect paths used to ask whether the broker was connected, which made
-// the broker the definition of "can we sync at all": on a network with no route
-// to it the app was not degraded but inert, and stayed inert until it came
-// back. Either transport being up is enough. See ADR 0018.
-export const canSignal = derived(
-    syncStore,
-    ($s) => $s.brokerStatus === 'connected' || $s.lanStatus === 'active',
-);
-export const brokerError = derived(syncStore, ($s) => $s.brokerError);
+// ADR 0018 introduced this so that no single transport could define whether
+// the app was able to sync at all. ADR 0022 left one transport, so it collapses
+// back onto discovery being up. Kept as a name of its own because the reconnect
+// paths ask this question rather than "is mDNS running", and because it is the
+// seam a second route would go back into.
+export const canSignal = derived(syncStore, ($s) => $s.lanStatus === 'active');
 export const pairedDevices = derived(syncStore, ($s) => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, ($s) => $s.connectedPeers);
 export const connectedPeerIds = derived(

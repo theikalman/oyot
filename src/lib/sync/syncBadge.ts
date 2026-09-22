@@ -1,4 +1,4 @@
-import type { BrokerStatus, RoomSyncPhase } from '$lib/stores/sync';
+import type { RoomSyncPhase } from '$lib/stores/sync';
 
 /** What the badge is saying, which decides its colour. */
 export type SyncTone = 'synced' | 'syncing' | 'offline' | 'error';
@@ -8,8 +8,7 @@ export interface BadgeInputs {
     peers: number;
     /** Worst-case document-sync phase across those peers. */
     phase: RoomSyncPhase;
-    broker: BrokerStatus;
-    /** Whether anything at all can carry signaling: the broker, or this network. */
+    /** Whether anything at all can carry signaling, i.e. discovery is up. */
     reachable: boolean;
 }
 
@@ -24,12 +23,13 @@ export interface BadgeInputs {
  * perfectly over wifi with no broker in reach was reported as an error, beside
  * the count of the devices it was happily syncing with.
  *
- * A connected device decides the badge. The broker only decides it when
- * nothing is connected and there is no other way to reach anything, where
- * "cannot reach the broker" really is the whole story.
+ * A connected device decides the badge. With nothing connected, the question is
+ * only whether this device can still reach anything: it can, and the network is
+ * simply empty, or it cannot, and it is offline. ADR 0022 removed the broker
+ * and with it the last input that could put this in an error state on its own.
  */
 export function syncBadge(inputs: BadgeInputs): { tone: SyncTone; label: string } {
-    const { peers, phase, broker, reachable } = inputs;
+    const { peers, phase, reachable } = inputs;
 
     if (peers > 0) {
         if (phase === 'error') return { tone: 'error', label: 'Sync error' };
@@ -41,7 +41,5 @@ export function syncBadge(inputs: BadgeInputs): { tone: SyncTone; label: string 
     // so this is an empty network rather than a fault.
     if (reachable) return { tone: 'offline', label: 'No devices' };
 
-    if (broker === 'connecting') return { tone: 'offline', label: 'Connecting…' };
-    if (broker === 'error') return { tone: 'error', label: 'Sync error' };
     return { tone: 'offline', label: 'Offline' };
 }

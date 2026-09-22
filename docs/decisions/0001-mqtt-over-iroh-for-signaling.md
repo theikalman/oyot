@@ -1,6 +1,6 @@
 # 0001: Use MQTT over Iroh's public relay for WebRTC signaling
 
-- **Status:** Accepted
+- **Status:** Superseded by [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md)
 - **Date:** 2026-08-18
 - **Amended by:** [0009](0009-authenticated-signaling.md) (how a sender is authenticated), [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md) (what the reference broker is for)
 

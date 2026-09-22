@@ -29,8 +29,8 @@ describe('isValidNodeId', () => {
         expect(isValidNodeId('3f8a1c2e-9b4d-4f1a-8e7c-2d6b5a4f3e1c')).toBe(false);
     });
 
-    // base64url has no +, / or =, and MQTT topics treat / + # specially.
-    it('rejects characters that are unsafe in an MQTT topic', () => {
+    // base64url has no +, / or =, and an id is typed, scanned and used as a key.
+    it('rejects characters outside the base64url alphabet', () => {
         for (const ch of ['/', '+', '#', '=', ' ']) {
             expect(isValidNodeId(VALID.slice(0, 42) + ch)).toBe(false);
         }

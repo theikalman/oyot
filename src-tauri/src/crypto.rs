@@ -1,9 +1,11 @@
 //! Device identity and signed signaling envelopes.
 //!
 //! A device's `node_id` IS its Ed25519 public key, base64url-unpadded. That is
-//! what makes the signaling broker untrusted infrastructure rather than a trust
-//! anchor: anyone can relay our messages, but only the holder of the matching
-//! secret key can produce one that verifies as coming from us.
+//! what makes the signaling transport untrusted infrastructure rather than a
+//! trust anchor: anyone can carry our messages, but only the holder of the
+//! matching secret key can produce one that verifies as coming from us. It was
+//! written for a broker and is what let the broker be deleted without
+//! renegotiating anything (ADR 0022).
 //!
 //! See docs/decisions/0009-authenticated-signaling.md.
 
@@ -46,9 +48,10 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// base64url-unpadded of the 32-byte public key: 43 characters, and every
-/// character is safe in an MQTT topic segment (the alphabet has no `/`, `+` or
-/// `#`).
+/// base64url-unpadded of the 32-byte public key: 43 characters, from an
+/// alphabet with no `/`, `+` or `#`. That was chosen so an id could be an MQTT
+/// topic segment; the broker is gone, and the property is still worth keeping,
+/// because a node_id is typed by hand, put in a QR code and used as a map key.
 pub fn encode_node_id(key: &VerifyingKey) -> String {
     URL_SAFE_NO_PAD.encode(key.as_bytes())
 }
@@ -238,7 +241,7 @@ mod tests {
         assert_eq!(node_id.len(), 43, "43 chars of base64url for 32 bytes");
         assert!(
             !node_id.contains('/') && !node_id.contains('+') && !node_id.contains('#'),
-            "must be safe in an MQTT topic segment: {node_id}"
+            "an id is typed, scanned and used as a key; keep it punctuation-free: {node_id}"
         );
         let decoded = decode_node_id(&node_id).expect("decodes");
         assert_eq!(decoded, key.verifying_key());
@@ -430,7 +433,7 @@ mod tests {
     }
 
     // A stale message must not consume nonce history: otherwise anyone who can
-    // reach the broker could evict our real entries by flooding old messages.
+    // reach the listener could evict our real entries by flooding old messages.
     #[test]
     fn a_rejected_message_does_not_consume_nonce_history() {
         let (key, node_id) = parts();

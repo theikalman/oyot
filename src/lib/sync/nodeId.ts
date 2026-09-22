@@ -2,11 +2,11 @@
 // 43 characters. See src-tauri/src/crypto.rs and
 // docs/decisions/0009-authenticated-signaling.md.
 //
-// Checking the shape before pairing is worth doing for two reasons. A typo in a
-// hand-entered id would otherwise produce nothing at all: the request would be
-// published to a topic nobody is subscribed to, and the user would watch it
-// time out with no clue why. And the id becomes an MQTT topic segment, so
-// anything outside this alphabet could alter the topic rather than just fail.
+// Checking the shape before pairing is worth doing because a typo in a
+// hand-entered id otherwise produces nothing at all: no device on the network
+// answers to it, and the user watches the request time out with no clue why.
+// The alphabet is deliberately free of punctuation; see `encode_node_id` in
+// src-tauri/src/crypto.rs for why that is still worth keeping.
 
 const NODE_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 

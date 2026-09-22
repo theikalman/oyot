@@ -139,15 +139,17 @@ extracts it. See [ADR 0021](docs/decisions/0021-export-notes-as-a-markdown-archi
 cannot reach anything else.
 
 **The CSP allows only self and the IPC origin.** No remote script, style, or
-connection. The MQTT connection is made from Rust and is not subject to it.
+connection. Signaling is done from Rust and is not subject to it.
 
 **Signaling is authenticated end to end.** A device's `node_id` is its Ed25519
 public key, and every signaling message carries a timestamp, a nonce and a
 signature over all of its fields. `src-tauri/src/crypto.rs` holds the format and
-the verifier; messages are checked in the MQTT event loop before anything reads
-the payload. The broker is therefore untrusted infrastructure: it relays
-messages it cannot forge, alter or replay. See
-[ADR 0009](docs/decisions/0009-authenticated-signaling.md).
+the verifier; every message is checked on arrival before anything reads the
+payload. The transport is therefore untrusted infrastructure: it carries
+messages it cannot forge, alter or replay. That is what let the broker be
+deleted without renegotiating anything about the envelope. See
+[ADR 0009](docs/decisions/0009-authenticated-signaling.md) and
+[ADR 0022](docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md).
 
 The signature answers "is this really that device". Whether we want to talk to
 that device is still the pairing check against `device_pairs`, and both must
@@ -160,21 +162,19 @@ inside the 120 second window. Filling the sender map still takes 32 distinct
 keypairs, and the prize is one replayed signaling message, which the pairing
 check and perfect negotiation both absorb.
 
-**The local network is untrusted in the same way, and shares one verifier.**
-Discovery and the local signaling channel carry the same signed envelope, so
-nothing about the trust story changes with the transport. The verifier and its
-replay history are shared between the two routes rather than one per
-transport: separate histories would let a message captured off the broker be
-replayed into the local listener inside the 120 second window, with the nonce
-that should have caught it recorded in the other copy.
+**The local network is the only transport, and it is untrusted too.** The
+verifier and its replay history live on the `SignalingManager` rather than on
+the listener. That mattered when there were two transports, because separate
+histories would have let a message captured off one be replayed into the other
+inside the 120 second window; with one transport it is simply where a second
+one would find it.
 
-What the local network exposes is not quite what the broker sees. The mDNS TXT
-record carries this device's `node_id`, an id for this run of the process and
-a version, and deliberately not the device name, so joining a café network
-does not announce "Aji's laptop" to everyone on it. The envelope is signed but
-not encrypted, so anyone on the network can read the SDP inside, which is the
-same exposure the broker already has. Note content travels inside WebRTC's
-DTLS either way.
+What the local network exposes: the mDNS TXT record carries this device's
+`node_id`, an id for this run of the process and a version, and deliberately
+not the device name, so joining a café network does not announce "Aji's
+laptop" to everyone on it. The envelope is signed but not encrypted, so anyone
+on the network can read the SDP inside. Note content travels inside WebRTC's
+DTLS and never appears there.
 
 The `node_id` is stable and is now broadcast on every network the device
 joins, which is a tracking vector that did not exist before: someone present
@@ -190,43 +190,18 @@ differently for a paired device than for a stranger, so it does not leak who
 this device is paired with.
 
 A pairing prompt from one sender is rate limited to one per 30 seconds.
-Anyone who learns a `node_id` can publish to its topic, and a valid request
-puts a modal in front of the user, so without this an unpaired device could
-make the app unusable by asking repeatedly.
+Anyone on the network can reach the listener, and a valid request puts a modal
+in front of the user, so without this an unpaired device could make the app
+unusable by asking repeatedly.
 
 **Pairing is decided in the webview, not in Rust.** `save_pair` persists any
-`peer_node_id` the frontend gives it, and `mqtt_accept_pair_request` takes the
-peer's `user_id` from the frontend too. Rust checks that a message really came
+`peer_node_id` the frontend gives it, and `signaling_accept_pair_request` takes
+the peer's `user_id` from the frontend too. Rust checks that a message really came
 from the key it claims; it does not own the state machine that decides a
 pairing was agreed. That is a real gap between this section's framing and the
 code: everything above treats the webview as untrusted, and this one decision
 trusts it. Closing it means moving the pair-request exchange into Rust, which
 has not been done.
-
-### Running a broker
-
-`docker compose up -d` starts `mosquitto/config/mosquitto.conf`, which is the
-development configuration: anonymous, listening on every interface. Both are
-deliberate. The point of running it is to pair two of your own devices, so
-localhost binding will not do, and requiring a password file before the app
-can connect at all is friction for no security gain: the signatures are what
-make a message trustworthy, and pairing still means confirming the other
-device's id by hand.
-
-What the broker can still do is read. It sees who is pairing with whom and the
-SDP inside, so do not expose the development configuration beyond a network
-you trust.
-
-For anything more than that, start from `mosquitto.prod.conf.example` and
-`acl.example`. Together they add authentication, a per-device rule so no
-account can subscribe outside its own topic subtree, and a place to put TLS
-certificates. Enter the username and password in Settings > Sync on each
-device, and point it at `mqtts://host:8883`. Credentials are stored in the
-same plaintext `config.json` as the rest of the configuration, alongside the
-signing key.
-
-You do not need a broker at all to develop against two devices on one
-network. See [Local network sync](#local-network-sync).
 
 The secret key lives in the app database rather than the OS keychain. Anything
 that can read it can already read the notes, so this is coherent rather than
@@ -234,19 +209,22 @@ ideal; moving it is tracked as follow-up work in the ADR.
 
 ## Local network sync
 
-Two devices on the same network reach each other directly, with no internet
-and no broker. This is a second signaling transport rather than a second sync
-mechanism: discovery answers "where is that device", and everything after that
-is the same WebRTC data channel and the same document protocol. Note data
-already travelled directly between devices on one network; what needed the
-internet was the introduction. See
-[ADR 0018](docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md).
+This is how sync works, and since
+[ADR 0022](docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md)
+it is the only way it works. Two devices on the same network reach each other
+directly, with no internet and nothing in the middle. Discovery answers "where
+is that device", and everything after that is the same WebRTC data channel and
+the same document protocol, which is what
+[ADR 0018](docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md)
+was careful to arrange when the local network was one transport of two.
+
+A device that is not found on this network cannot be reached at all. There is
+no queue and no deferred delivery: the peer reads as offline, and pairing with
+it refuses with a sentence saying why.
 
 `src-tauri/src/network/lan_discovery.rs` advertises `_oyot._tcp.local` and
 browses for the same. `lan_signaling.rs` listens on an ephemeral port and
-carries the same signed envelope, one message per connection.
-`route.rs` holds the choice between the two transports, which is made per peer
-and never races them.
+carries the signed envelope from `message.rs`, one message per connection.
 
 ### Trying it
 
@@ -254,21 +232,19 @@ You need two devices. Two instances on one machine will not do: they share an
 app data directory, so they share an identity, and a device ignores its own
 advertisement.
 
-1. Stop the broker, so nothing can fall back to it: `docker compose down`.
-2. On both devices, open Settings > Sync and choose **Local network only**.
-   The setting is stored as `sync_mode` in `config.json`.
-3. Pair as usual, by ID or by QR code. Discovery supplies the address; the
+1. Put both on the same wifi and open Oyot on each. There is nothing to
+   configure; discovery starts with the app.
+2. Pair as usual, by ID or by QR code. Discovery supplies the address; the
    confirmation is unchanged, and still the thing that decides a pairing.
 
-`Local network: On, N devices nearby` in that section is the quickest check
-that discovery works on the network you are actually on. The count includes
-devices you have not paired with, because "is anything being found at all" is
-the question when it does not work.
+`Local network: Searching, N devices nearby` in Settings > Sync is the
+quickest check that discovery works on the network you are actually on. The
+count includes devices you have not paired with, because "is anything being
+found at all" is the question when it does not work.
 
 In a dev build the Rust side traces to stderr, so `[LAN]` lines appear in the
 terminal running `make dev`, and the frontend's `[sync]` lines in the webview
-console. Between them they say which route each message took and why a route
-was written off.
+console.
 
 ### The firewall prompt
 
@@ -283,12 +259,11 @@ there first, since a new binary can be treated as a new application.
 ### When it does not work
 
 Access point client isolation, which is common on guest and café networks,
-passes mDNS and blocks device-to-device traffic. Discovery finds the peer, the
-connection never forms, and after eight seconds that peer's local route is
-written off for a minute and the broker takes over. Under Automatic that is a
-delay; under Local network only it is a peer that does not sync. If that turns
-out to be the common case rather than the rare one, lengthen the cooldown
-rather than shortening the eight seconds.
+passes mDNS and blocks device-to-device traffic. The symptom is specific and
+worth recognising: the peer appears in the nearby count, so discovery is
+plainly working, and the connection never forms. The 30 second negotiation
+watchdog rebuilds the session, which fails the same way. There is nothing to
+fall back to, so the honest advice is a different network.
 
 Platform support is not even, and this ships in stages:
 
@@ -296,17 +271,13 @@ Platform support is not even, and this ships in stages:
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                                                                                               |
 | Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. Backgrounded it still advertises and still accepts connections, but hears nothing, and discovery finds the network again on its own when it comes back. Not yet run on a real device. |
-| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead and falls back to the broker until it has one.                                                                     |
-
-A device on a build without any of this is simply not discovered, has no
-listener, and syncs through the broker exactly as it did before. Mixed pairs
-are the normal case for a while.
+| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead and does not sync at all until it has one.                                                                         |
 
 ### Still to do: the iOS backend
 
-Deliberately not built yet, and the largest known gap in this feature. iOS
-falls back to the broker, which is what it did before local sync existed, so
-nothing is broken there; it just does not get the feature.
+The largest known gap. It used to be a missing optimisation, because iOS could
+fall back to the broker; ADR 0022 removed that fallback, so an iOS device now
+finds nobody and syncs with nothing. This is what makes iOS work at all.
 
 Everything above the `backend` module in `lan_discovery.rs` is platform
 independent and already shared: the peer table, the TXT parsing, the pruning
@@ -349,7 +320,7 @@ oyot/
 ├── src-tauri/               # Rust backend
 │   ├── src/
 │   │   ├── commands/        # Tauri commands, the only frontend surface
-│   │   ├── network/         # Signaling: MQTT, local network, route choice
+│   │   ├── network/         # Signaling: discovery, listener, envelope
 │   │   ├── db.rs            # Connection setup and AppState
 │   │   └── lib.rs           # Schema, migrations, command registration
 │   ├── capabilities/        # Plugin ACLs for the webview
@@ -363,17 +334,16 @@ oyot/
 ```
 
 WebRTC lives entirely in the frontend (`src/lib/sync/transport.ts`). Rust owns
-the database, the attachment store, identity, and both signaling transports:
-the MQTT client and the local network path, plus the decision about which of
-them carries a given message. It does not participate in the peer connection
-itself.
+the database, the attachment store, identity, and signaling: discovering peers
+on the network and delivering signed envelopes to them. It does not participate
+in the peer connection itself.
 
 ## Tech Stack
 
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap (rich text editing)
 - **Backend**: Rust, Tauri 2.0
 - **Database**: SQLite (rusqlite)
-- **Rust Crates**: rusqlite, rumqttc, ed25519-dalek, serde, chrono, sha2
+- **Rust Crates**: rusqlite, mdns-sd, ed25519-dalek, serde, chrono, sha2
 
 ---
 
