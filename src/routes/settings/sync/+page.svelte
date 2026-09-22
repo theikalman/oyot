@@ -11,7 +11,11 @@
         canSignal,
         lanStatus,
         lanPeers,
+        listeningOnAnotherPort,
+        deviceEndpoints,
+        addressPeerIds,
         type UserIdentity,
+        type DeviceEndpoint,
         type DevicePair,
         type ConnectedPeer,
         type PendingPairRequest,
@@ -23,12 +27,15 @@
         respondToPairRequest,
         disconnectPeer,
         reconnectPeer,
+        saveEndpoint,
+        forgetEndpoint,
     } from '$lib/sync';
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
     import { LocalNetworkStatus } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
+    import { RemoteAddressList } from '$lib/settings';
     import { PairingDialog } from '$lib/settings';
     import Modal from '$lib/components/Modal.svelte';
 
@@ -41,6 +48,9 @@
     let lanState = $state<LanStatus>('off');
     let nearby = $state(0);
     let canReachAnything = $state(false);
+    let portTaken = $state(false);
+    let endpoints = $state<DeviceEndpoint[]>([]);
+    let onStoredAddress = $state<Set<string>>(new Set());
 
     onMount(() => {
         const un1 = identity.subscribe((v) => {
@@ -67,6 +77,15 @@
         const un13 = canSignal.subscribe((v) => {
             canReachAnything = v;
         });
+        const un14 = listeningOnAnotherPort.subscribe((v) => {
+            portTaken = v;
+        });
+        const un15 = deviceEndpoints.subscribe((v) => {
+            endpoints = v;
+        });
+        const un16 = addressPeerIds.subscribe((v) => {
+            onStoredAddress = v;
+        });
 
         return () => {
             un1();
@@ -77,6 +96,9 @@
             un11();
             un12();
             un13();
+            un14();
+            un15();
+            un16();
         };
     });
 
@@ -151,10 +173,24 @@
         }
     }
 
-    // Pairing needs a way to reach the other device, and since ADR 0022 the
-    // local network is the only one there is. Two devices on one wifi can
-    // still be introduced with no internet at all.
+    // Pairing needs a way to reach the other device: this network, or an
+    // address that has answered (ADR 0023). Two devices on one wifi can still
+    // be introduced with no internet at all.
     let canPair = $derived(canReachAnything);
+
+    async function handleAddEndpoint(nodeId: string, address: string) {
+        const saved = await saveEndpoint(nodeId, address);
+        toasts.success(`Added ${saved.host}:${saved.port}. Checking whether it answers…`);
+    }
+
+    async function handleForgetEndpoint(nodeId: string, host: string, port: number) {
+        try {
+            await forgetEndpoint(nodeId, host, port);
+        } catch (e) {
+            console.error('Failed to remove address:', e);
+            toasts.error('Could not remove that address');
+        }
+    }
 
     // Schema v3 replaced UUID device identity with an Ed25519 keypair and
     // cleared every stored pairing, because a pairing records a peer's node_id
@@ -207,7 +243,12 @@
         onRename={handleRename}
     />
 
-    <LocalNetworkStatus lanStatus={lanState} {nearby} />
+    <LocalNetworkStatus
+        lanStatus={lanState}
+        {nearby}
+        {portTaken}
+        remoteCount={onStoredAddress.size}
+    />
 
     {#if canPair}
         <PairDeviceForm pairingState={pairState} onPair={handlePair} />
@@ -219,12 +260,13 @@
             <h2>Pair a Device</h2>
             <p class="section-note">
                 {#if lanState === 'error'}
-                    This device could not advertise itself on the network, so it cannot arrange a
-                    pairing. A firewall prompt may be waiting to be answered.
+                    This device could not advertise itself on the network, so it cannot find
+                    anything here. A firewall prompt may be waiting to be answered. You can still
+                    pair with a device you add an address for below.
                 {:else}
-                    Put both devices on the same network, with Oyot open on each. Pairing is
-                    arranged over that network, so there is nothing this device can do until it is
-                    searching.
+                    Put both devices on the same network, with Oyot open on each, or add an address
+                    for the other device below. Pairing is arranged over one of those, so there is
+                    nothing this device can do until it has one.
                 {/if}
             </p>
         </section>
@@ -233,9 +275,18 @@
     <ConnectedPeerList
         pairedDevices={paired}
         connectedPeers={connected}
+        {onStoredAddress}
         onDisconnect={handleDisconnect}
         onReconnect={handleReconnect}
         onRemove={handleRemovePeer}
+    />
+
+    <RemoteAddressList
+        {endpoints}
+        pairedDevices={paired}
+        reachable={onStoredAddress}
+        onAdd={handleAddEndpoint}
+        onForget={handleForgetEndpoint}
     />
 
     {#if pending}

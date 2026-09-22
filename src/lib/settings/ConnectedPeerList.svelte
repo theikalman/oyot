@@ -11,12 +11,21 @@
             last_synchronized: number | null;
         }>;
         connectedPeers: ConnectedPeer[];
+        /** Devices answering at an address stored for them (ADR 0023). */
+        onStoredAddress: Set<string>;
         onDisconnect: (roomId: string) => void;
         onReconnect: (peerNodeId: string) => void;
         onRemove: (peerNodeId: string) => void;
     }
 
-    let { pairedDevices, connectedPeers, onDisconnect, onReconnect, onRemove }: Props = $props();
+    let {
+        pairedDevices,
+        connectedPeers,
+        onStoredAddress,
+        onDisconnect,
+        onReconnect,
+        onRemove,
+    }: Props = $props();
 
     function isConnected(roomId: string): boolean {
         return connectedPeers.some((p) => p.room_id === roomId);
@@ -73,10 +82,16 @@
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>
                         {#if pstatus === 'connected'}
-                            <!-- No route badge: every connection is over this
-                                 network since ADR 0022, so saying so on each
-                                 row says nothing. -->
-                            <span class="peer-sync">{syncLabel(pair)}</span>
+                            <!-- Worth a badge again since ADR 0023: there are
+                                 two routes, and which one a device is on is
+                                 the difference between "it is here" and "the
+                                 address is working". -->
+                            <span class="peer-sync">
+                                {syncLabel(pair)}
+                                {#if onStoredAddress.has(pair.peer_node_id)}
+                                    · at a stored address
+                                {/if}
+                            </span>
                         {:else if pair.last_synchronized}
                             <span class="peer-sync"
                                 >Last sync: {formatLastSync(pair.last_synchronized)}</span

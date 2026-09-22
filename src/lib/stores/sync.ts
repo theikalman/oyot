@@ -205,9 +205,14 @@ export const identity = derived(syncStore, ($s) => $s.identity);
 export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
 export const peers = derived(syncStore, ($s) => $s.peers);
 
-// False once the listener has started on a port nothing else can guess, which
-// is the whole of "a device that only has our address cannot reach us".
-export const onDefaultPort = derived(syncStore, ($s) => $s.onDefaultPort);
+// True only once the listener has actually started and did not get the port a
+// device holding only our address assumes. Before it starts there is nothing
+// to report, and reporting it then would put a warning on a healthy app every
+// time it launched.
+export const listeningOnAnotherPort = derived(
+    syncStore,
+    ($s) => $s.listenPort !== null && !$s.onDefaultPort,
+);
 
 // Only the ones on this network. The pairing copy and the "nearby" count mean
 // this literally, so they must not count a device reached over a VPN.
