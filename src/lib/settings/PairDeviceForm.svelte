@@ -6,12 +6,23 @@
 
     interface Props {
         pairingState: PairingState;
-        onPair: (nodeId: string) => void;
+        /**
+         * Why nothing is reachable from here yet, when nothing is. The form
+         * stays usable anyway: a device with no local discovery at all is
+         * precisely the one that needs an address typed into it, and hiding
+         * the only field that takes one would be a trap.
+         */
+        noRouteNote?: string | null;
+        onPair: (nodeId: string, address: string) => void;
     }
 
-    let { pairingState, onPair }: Props = $props();
+    let { pairingState, noRouteNote = null, onPair }: Props = $props();
 
     let nodeIdInput = $state('');
+    // Where to find the other device, when it is not on this network. Typed
+    // here rather than in its own section so that the device's id is typed
+    // once, which is the whole flow: one id, one address, one button.
+    let addressInput = $state('');
     let isMobile = $state(false);
     let scanError = $state<string | null>(null);
 
@@ -37,7 +48,7 @@
     function handlePair() {
         const trimmed = nodeIdInput.trim();
         if (nodeIdError(trimmed)) return;
-        onPair(trimmed);
+        onPair(trimmed, addressInput.trim());
     }
 
     // Clear the field when a pairing has actually gone through. The rule, and
@@ -49,7 +60,10 @@
     // Nothing reads `nodeIdInput` here either, so typing does not re-run it.
     let previousState: PairingState = null;
     $effect(() => {
-        if (clearsPairField(previousState, pairingState)) nodeIdInput = '';
+        if (clearsPairField(previousState, pairingState)) {
+            nodeIdInput = '';
+            addressInput = '';
+        }
         previousState = pairingState;
     });
 
@@ -96,6 +110,13 @@
             onkeydown={handleKeydown}
             class:invalid={validationError}
         />
+        <input
+            type="text"
+            class="address-input"
+            placeholder="Its address, if it is not on this network (optional)"
+            bind:value={addressInput}
+            onkeydown={handleKeydown}
+        />
         <div class="pair-actions">
             {#if isMobile}
                 <button class="btn-scan" onclick={handleScan}>Scan QR</button>
@@ -112,16 +133,21 @@
         {/if}
         {#if pairingState === 'timed-out'}
             <p class="pair-status error">
-                No answer from that device. Check it is running, on the same network as this one,
-                and that the ID is right, then try again.
+                No answer from that device. Check it is running, and either on the same network as
+                this one or reachable at the address you gave, then try again.
             </p>
         {/if}
         {#if scanError}
             <p class="pair-status error">{scanError}</p>
         {/if}
+        {#if noRouteNote}
+            <p class="pair-status note">{noRouteNote}</p>
+        {/if}
         <p class="hint">
             Get the Node ID from the other device's "My Device" card above (copy/paste, or scan its
-            QR code).
+            QR code). Devices on the same network find each other, so leave the address empty unless
+            the other device is somewhere else; then give it a host name or address that does not
+            change, such as a Tailscale one.
         </p>
     </div>
 </section>
@@ -153,9 +179,18 @@
         border: 1px solid var(--border-color);
         border-radius: 6px;
     }
-    .node-id-input:focus {
+    .node-id-input:focus,
+    .address-input:focus {
         outline: none;
         border-color: var(--accent-color);
+    }
+    .address-input {
+        padding: 10px 12px;
+        font-size: 13px;
+        color: var(--text-primary);
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
     }
     .pair-actions {
         display: flex;
@@ -196,6 +231,10 @@
     }
     .pair-status.error {
         color: #ef4444;
+    }
+    .pair-status.note {
+        color: var(--text-secondary);
+        line-height: 1.5;
     }
     .hint {
         margin: 4px 0 0 0;

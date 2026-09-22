@@ -19,7 +19,7 @@ import {
     type Peer,
     type PeerSource,
 } from '../stores/sync';
-import { refreshEndpoints } from './endpoints';
+import { refreshEndpoints, saveEndpoint } from './endpoints';
 import { isObfuscated, rewriteCandidate } from './iceRewrite';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
@@ -820,6 +820,15 @@ const PAIR_REQUEST_TIMEOUT_MS = 90_000;
 // is no route, when waiting a moment is all that was needed. Short enough that
 // a genuinely absent device is reported quickly.
 const PAIR_DISCOVERY_WAIT_MS = 10_000;
+
+// How long to wait when an address was typed along with the id.
+//
+// Longer, because the answer comes from a probe rather than from a packet that
+// was already on its way: a connection attempt, a round trip, and possibly a
+// dead address ahead of this one in the same pass, each costing its connect
+// timeout. Still short enough that a wrong address is reported while the
+// person who typed it is still looking at the screen.
+const PAIR_ADDRESS_WAIT_MS = 20_000;
 let pairRequestTimer: ReturnType<typeof setTimeout> | null = null;
 
 function reachInputs(peerNodeId: string): ReachInputs {
@@ -834,7 +843,7 @@ function reachInputs(peerNodeId: string): ReachInputs {
 // Resolves as soon as this peer can be reached, or false if it cannot inside
 // the wait. Driven by the store rather than by polling, so a device that
 // appears after half a second is paired with after half a second.
-function waitForPairRoute(peerNodeId: string): Promise<boolean> {
+function waitForPairRoute(peerNodeId: string, waitMs: number): Promise<boolean> {
     if (canReachForPairing(reachInputs(peerNodeId))) return Promise.resolve(true);
 
     return new Promise((resolve) => {
@@ -847,7 +856,7 @@ function waitForPairRoute(peerNodeId: string): Promise<boolean> {
             unsubscribe?.();
             resolve(reachable);
         };
-        const timer = setTimeout(() => finish(false), PAIR_DISCOVERY_WAIT_MS);
+        const timer = setTimeout(() => finish(false), waitMs);
         unsubscribe = syncStore.subscribe(() => {
             if (canReachForPairing(reachInputs(peerNodeId))) finish(true);
         });
@@ -864,7 +873,17 @@ function clearPairRequestTimer(): void {
     }
 }
 
-export async function sendPairRequest(peerNodeId: string): Promise<void> {
+/**
+ * Ask a device to pair, optionally telling this one where to find it.
+ *
+ * `address` is for a device that is not on this network (ADR 0023). It is
+ * stored first and probed at once, so that pairing with a device over a VPN is
+ * one action with one id in it rather than two of each.
+ */
+export async function sendPairRequest(
+    peerNodeId: string,
+    opts: { address?: string } = {},
+): Promise<void> {
     if (!identity) {
         console.warn('[sync] sendPairRequest() called before identity was loaded, aborting');
         return;
@@ -872,10 +891,25 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     clearPairRequestTimer();
     syncStore.setPairingState('requesting');
 
+    const address = opts.address?.trim();
+    if (address) {
+        try {
+            const saved = await saveEndpoint(peerNodeId, address);
+            log.debug(`[sync] pairing with ${peerNodeId} at ${saved.host}:${saved.port}`);
+        } catch (e) {
+            // A malformed address is the user's typo, and Rust's message says
+            // which part it could not read. Nothing was stored, so there is
+            // nothing to undo.
+            syncStore.setPairingState(null);
+            throw e;
+        }
+    }
+
     // Wait for the other device to be found before deciding it cannot be
-    // reached. Being found is the only way to it, and discovery is not
-    // instant.
-    if (!(await waitForPairRoute(peerNodeId))) {
+    // reached. Being found is the only way to it, and neither discovery nor a
+    // probe is instant.
+    const waitMs = address ? PAIR_ADDRESS_WAIT_MS : PAIR_DISCOVERY_WAIT_MS;
+    if (!(await waitForPairRoute(peerNodeId, waitMs))) {
         const reason = unreachableForPairing(reachInputs(peerNodeId));
         log.debug(`[sync] sendPairRequest(${peerNodeId}) has no route: ${reason}`);
         syncStore.setPairingState(null);

@@ -51,11 +51,12 @@ tell one device where the other is, and it checks.
 
 ### Devices that are not on one network
 
-Settings > Sync takes an address for a device: a host name or an IP that does
-not change. The reliable way to have one is a VPN you already run between your
-own machines, such as Tailscale, where every device has a stable name and
-address. Add the other device's address on this one, and this device's address
-over there, and they reach each other from anywhere.
+Pairing takes an address as well as an ID: a host name or an IP that does not
+change. The reliable way to have one is a VPN you already run between your own
+machines, such as Tailscale, where every device has a stable name and address.
+Pair with the other device's address on this one, then add this device's
+address over there, and they reach each other from anywhere. Settings > Sync
+lists the addresses each device is known at, and takes more of them.
 
 Oyot does not install, configure or manage the VPN, and does not know whether
 you have one. It only uses the address. Nothing else changes: the same signed

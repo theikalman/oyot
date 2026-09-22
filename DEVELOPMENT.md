@@ -355,18 +355,25 @@ Two machines, both on a tailnet, and not on the same wifi - or the same wifi
 with the local route confirmed off, since `best()` prefers it whenever it is
 available and you would be testing the wrong thing.
 
-1. On each device, Settings > Sync, "Devices Somewhere Else": paste the other
-   device's Node ID and its MagicDNS name (`laptop.tailnet-name.ts.net`). The
-   port is optional.
-2. The row says `Answering` within a few seconds if the address is right.
-   `No answer` with "has never answered" means the address, the other device
-   being asleep, or a tailnet ACL that does not allow port 19701 between your
-   own devices.
-3. Pair as usual once it answers. The pairing flow is unchanged; only the way
-   the request reaches the other device is different.
+1. On one device, Settings > Sync, "Pair a Device": paste the other device's
+   Node ID, put its MagicDNS name (`laptop.tailnet-name.ts.net`) in the address
+   field below it, and press Pair. The port is optional. The address is stored
+   and probed before the request goes out, so a wrong one is reported as a
+   wrong address rather than as a device that did not answer.
+2. Accept the prompt on the other device.
+3. On that device, under "Devices Somewhere Else", pick the first device and
+   add its address. **Both directions need one**: either device may be the one
+   that starts a reconnect, and the one without an address cannot.
 
-Both directions need an address, because either device may be the one that
-starts a reconnect.
+A row saying `No answer` with "has never answered" means the address, the other
+device being asleep, or a tailnet ACL that does not allow port 19701 between
+your own devices. "Check now" re-probes without waiting out the 45 second
+interval.
+
+The Node ID is typed once, in the pairing form. The address section picks from
+paired devices rather than asking for an id again, and the pairing form is
+shown even when nothing is reachable, because a device that is reaching nothing
+is exactly the one that needs an address typed into it.
 
 ## Project Structure
 

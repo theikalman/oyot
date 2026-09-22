@@ -122,9 +122,9 @@
         syncStore.setIdentity(updated);
     }
 
-    async function handlePair(nodeId: string) {
+    async function handlePair(nodeId: string, address: string) {
         try {
-            await sendPairRequest(nodeId);
+            await sendPairRequest(nodeId, { address });
         } catch (e) {
             // Sending the request can fail outright: the device may have left
             // the network between rendering the form and pressing the button.
@@ -177,7 +177,19 @@
     // Pairing needs a way to reach the other device: this network, or an
     // address that has answered (ADR 0023). Two devices on one wifi can still
     // be introduced with no internet at all.
-    let canPair = $derived(canReachAnything);
+    //
+    // The form is shown either way. It used to be replaced by this sentence,
+    // which was right when the only route was one the user could not do
+    // anything about from here; now the form is where an address is typed, and
+    // a device that is reaching nothing is exactly the one that needs to type
+    // one. So the sentence goes inside the form as a note.
+    let pairNote = $derived(
+        canReachAnything
+            ? null
+            : lanState === 'error'
+              ? 'This device could not advertise itself on the network, so it will not find anything here. A firewall prompt may be waiting to be answered. Pairing still works if you give the other device an address.'
+              : 'Nothing is reachable from this device yet. Put both devices on the same network with Oyot open on each, or give the other device an address below.',
+    );
 
     async function handleAddEndpoint(nodeId: string, address: string) {
         const saved = await saveEndpoint(nodeId, address);
@@ -260,27 +272,7 @@
         remoteCount={onStoredAddress.size}
     />
 
-    {#if canPair}
-        <PairDeviceForm pairingState={pairState} onPair={handlePair} />
-    {:else}
-        <!-- Pairing needs a route to the other device, so the form cannot work
-             here. It used to vanish with no explanation, which reads as a
-             missing feature rather than a prerequisite. -->
-        <section class="section">
-            <h2>Pair a Device</h2>
-            <p class="section-note">
-                {#if lanState === 'error'}
-                    This device could not advertise itself on the network, so it cannot find
-                    anything here. A firewall prompt may be waiting to be answered. You can still
-                    pair with a device you add an address for below.
-                {:else}
-                    Put both devices on the same network, with Oyot open on each, or add an address
-                    for the other device below. Pairing is arranged over one of those, so there is
-                    nothing this device can do until it has one.
-                {/if}
-            </p>
-        </section>
-    {/if}
+    <PairDeviceForm pairingState={pairState} noRouteNote={pairNote} onPair={handlePair} />
 
     <ConnectedPeerList
         pairedDevices={paired}
@@ -329,25 +321,6 @@
 </div>
 
 <style>
-    /* The stand-in for PairDeviceForm when there is no way to reach anything.
-       Its heading has to match the ones the section components draw, or it
-       renders at the browser's default h2 size and the page reads as though
-       this section belongs to something else. */
-    .section {
-        margin-bottom: 32px;
-    }
-    .section h2 {
-        margin: 0 0 16px 0;
-        font-size: 16px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-    .section-note {
-        margin: 0;
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--text-muted);
-    }
     .modal-note {
         margin: 0 0 20px 0;
         font-size: 13px;

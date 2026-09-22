@@ -1,6 +1,5 @@
 <script lang="ts">
     import { formatLastSync, type DeviceEndpoint, type DevicePair } from '$lib/stores/sync';
-    import { nodeIdError } from '$lib/sync/nodeId';
 
     interface Props {
         endpoints: DeviceEndpoint[];
@@ -14,15 +13,28 @@
 
     let { endpoints, pairedDevices, reachable, onAdd, onForget, onCheckNow }: Props = $props();
 
-    let nodeIdInput = $state('');
+    // Which paired device this address is for. A picker rather than another
+    // node id field: pairing is where an id is typed, once, and by the time a
+    // device is in this list it has a name worth choosing by. A device that is
+    // not paired yet gets its address in the pairing form instead.
+    let selectedNodeId = $state('');
     let addressInput = $state('');
     let adding = $state(false);
     let error = $state<string | null>(null);
 
-    // Only complain once there is something to complain about, so neither
-    // field is red before it has been touched.
-    let idError = $derived(nodeIdInput.trim() ? nodeIdError(nodeIdInput) : null);
-    let canAdd = $derived(!idError && !!nodeIdInput.trim() && !!addressInput.trim() && !adding);
+    let canAdd = $derived(!!selectedNodeId && !!addressInput.trim() && !adding);
+
+    // Default to the only device there is, because choosing from one is not a
+    // choice. With several, leaving it empty is what stops an address being
+    // attached to whichever device happened to be first.
+    //
+    // Deliberately does not read `selectedNodeId`: an effect that writes state
+    // it also reads re-runs itself, which is the hazard PairDeviceForm's
+    // `previousState` comment is about. There is nothing to preserve anyway,
+    // since a list of one offers no other choice to have made.
+    $effect(() => {
+        if (pairedDevices.length === 1) selectedNodeId = pairedDevices[0].peer_node_id;
+    });
 
     // An address is stored against a node id, which is all there is for a
     // device that has not been paired yet. Once it has, its name is the useful
@@ -39,8 +51,7 @@
         adding = true;
         error = null;
         try {
-            await onAdd(nodeIdInput.trim(), addressInput.trim());
-            nodeIdInput = '';
+            await onAdd(selectedNodeId, addressInput.trim());
             addressInput = '';
         } catch (e) {
             error = e instanceof Error && e.message ? e.message : String(e);
@@ -75,9 +86,9 @@
 
     <p class="intro">
         A device that is not on this network can still be reached if it has an address that does not
-        change, which is what a VPN like Tailscale gives you. Add the other device's address here,
-        and add this device's address over there. Oyot does not set up or manage the VPN; it only
-        uses the address.
+        change, which is what a VPN like Tailscale gives you. Both devices need the other's address,
+        since either one may be the one that reconnects. Oyot does not set up or manage the VPN; it
+        only uses the address.
     </p>
 
     {#if endpoints.length > 0}
@@ -122,37 +133,39 @@
         </ul>
     {/if}
 
-    <div class="add-form">
-        <input
-            type="text"
-            class="text-input mono"
-            placeholder="The other device's Node ID"
-            bind:value={nodeIdInput}
-            onkeydown={handleKeydown}
-            class:invalid={idError}
-        />
-        <input
-            type="text"
-            class="text-input"
-            placeholder="Its address, e.g. laptop.tailnet-name.ts.net"
-            bind:value={addressInput}
-            onkeydown={handleKeydown}
-        />
-        <div class="add-actions">
-            <button class="btn-add" onclick={handleAdd} disabled={!canAdd}>
-                {adding ? 'Checking…' : 'Add address'}
-            </button>
-        </div>
-        {#if idError}
-            <p class="form-status error">{idError}</p>
-        {/if}
-        {#if error}
-            <p class="form-status error">{error}</p>
-        {/if}
+    {#if pairedDevices.length === 0}
         <p class="hint">
-            The port is optional. Without one, Oyot uses the port it listens on by default.
+            Nothing to add an address to yet. Pairing with a device that is somewhere else is done
+            in "Pair a Device" above, where the address goes in beside its ID.
         </p>
-    </div>
+    {:else}
+        <div class="add-form">
+            <select class="text-input" bind:value={selectedNodeId} aria-label="Device">
+                <option value="" disabled>Which device?</option>
+                {#each pairedDevices as pair (pair.peer_node_id)}
+                    <option value={pair.peer_node_id}>{pair.peer_display_name}</option>
+                {/each}
+            </select>
+            <input
+                type="text"
+                class="text-input"
+                placeholder="Its address, e.g. laptop.tailnet-name.ts.net"
+                bind:value={addressInput}
+                onkeydown={handleKeydown}
+            />
+            <div class="add-actions">
+                <button class="btn-add" onclick={handleAdd} disabled={!canAdd}>
+                    {adding ? 'Checking…' : 'Add address'}
+                </button>
+            </div>
+            {#if error}
+                <p class="form-status error">{error}</p>
+            {/if}
+            <p class="hint">
+                The port is optional. Without one, Oyot uses the port it listens on by default.
+            </p>
+        </div>
+    {/if}
 </section>
 
 <style>
@@ -262,15 +275,9 @@
         border: 1px solid var(--border-color);
         border-radius: 6px;
     }
-    .text-input.mono {
-        font-family: monospace;
-    }
     .text-input:focus {
         outline: none;
         border-color: var(--accent-color);
-    }
-    .text-input.invalid {
-        border-color: var(--status-error, #ef4444);
     }
     .add-actions {
         display: flex;
