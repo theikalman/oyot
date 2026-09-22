@@ -162,12 +162,13 @@ inside the 120 second window. Filling the sender map still takes 32 distinct
 keypairs, and the prize is one replayed signaling message, which the pairing
 check and perfect negotiation both absorb.
 
-**The local network is the only transport, and it is untrusted too.** The
-verifier and its replay history live on the `SignalingManager` rather than on
-the listener. That mattered when there were two transports, because separate
-histories would have let a message captured off one be replayed into the other
-inside the 120 second window; with one transport it is simply where a second
-one would find it.
+**Every route is untrusted, including the VPN.** The verifier and its replay
+history live on the `SignalingManager` rather than on any one route, so a
+message captured off the local network cannot be replayed in over a stored
+address inside the 120 second window. An envelope arriving over Tailscale is
+admitted on exactly the evidence one arriving over wifi is: right recipient,
+valid signature, recent, unseen nonce. Being on the tailnet is not a
+credential, and the app never treats it as one.
 
 What the local network exposes: the mDNS TXT record carries this device's
 `node_id`, an id for this run of the process and a version, and deliberately
@@ -194,6 +195,14 @@ Anyone on the network can reach the listener, and a valid request puts a modal
 in front of the user, so without this an unpaired device could make the app
 unusable by asking repeatedly.
 
+A `ping` is answered for any correctly signed and correctly addressed sender,
+paired or not, because an address is how an unpaired device is reached in the
+first place (ADR 0023). The reply discloses that this node is at this address,
+to someone who already knew its `node_id` and could already reach the port.
+Rewriting an obfuscated ICE candidate also discloses one of this device's own
+addresses to the peer it is negotiating with, which is strictly less than the
+mDNS advertisement gives away to everyone on a café network.
+
 **Pairing is decided in the webview, not in Rust.** `save_pair` persists any
 `peer_node_id` the frontend gives it, and `signaling_accept_pair_request` takes
 the peer's `user_id` from the frontend too. Rust checks that a message really came
@@ -207,24 +216,25 @@ The secret key lives in the app database rather than the OS keychain. Anything
 that can read it can already read the notes, so this is coherent rather than
 ideal; moving it is tracked as follow-up work in the ADR.
 
-## Local network sync
+## How a device is found
 
-This is how sync works, and since
-[ADR 0022](docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md)
-it is the only way it works. Two devices on the same network reach each other
-directly, with no internet and nothing in the middle. Discovery answers "where
-is that device", and everything after that is the same WebRTC data channel and
-the same document protocol, which is what
+There are two ways, and only two. Everything after being found is the same
+WebRTC data channel and the same document protocol either way, which is what
 [ADR 0018](docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md)
 was careful to arrange when the local network was one transport of two.
 
-A device that is not found on this network cannot be reached at all. There is
-no queue and no deferred delivery: the peer reads as offline, and pairing with
-it refuses with a sentence saying why.
+`network/peers.rs` is where both answers land: one table, each entry tagged
+with the source that found it, and `best()` preferring the local one when a
+device is reachable both ways. `lan_discovery.rs` fills it from mDNS.
+`remote_peers.rs` fills it by probing stored addresses.
+`lan_signaling.rs` listens on 19701 where it can, and carries the signed
+envelope from `message.rs`, one message per connection - except a `ping`,
+which is answered on the same connection because there is nowhere else to send
+the answer.
 
-`src-tauri/src/network/lan_discovery.rs` advertises `_oyot._tcp.local` and
-browses for the same. `lan_signaling.rs` listens on an ephemeral port and
-carries the signed envelope from `message.rs`, one message per connection.
+A device that neither finds nor has an address is not reachable at all. There
+is no queue and no deferred delivery: the peer reads as offline, and pairing
+with it refuses with a sentence saying why.
 
 ### Trying it
 
@@ -242,9 +252,9 @@ quickest check that discovery works on the network you are actually on. The
 count includes devices you have not paired with, because "is anything being
 found at all" is the question when it does not work.
 
-In a dev build the Rust side traces to stderr, so `[LAN]` lines appear in the
-terminal running `make dev`, and the frontend's `[sync]` lines in the webview
-console.
+In a dev build the Rust side traces to stderr, so `[LAN]`, `[peers]` and
+`[remote]` lines appear in the terminal running `make dev`, and the frontend's
+`[sync]` lines in the webview console.
 
 ### The firewall prompt
 
@@ -267,17 +277,17 @@ fall back to, so the honest advice is a different network.
 
 Platform support is not even, and this ships in stages:
 
-| Platform              | Discovery                                                                                                                                                                                                                                                                     |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                                                                                               |
-| Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. Backgrounded it still advertises and still accepts connections, but hears nothing, and discovery finds the network again on its own when it comes back. Not yet run on a real device. |
-| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead and does not sync at all until it has one.                                                                         |
+| Platform              | Discovery                                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                                                                                                                                           |
+| Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. Backgrounded it still advertises and still accepts connections, but hears nothing, and discovery finds the network again on its own when it comes back. Not yet run on a real device.                                             |
+| iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead. Since ADR 0023 that is no longer the whole story: an iOS device syncs with any device it has been given an address for, and finds nothing on its own network. |
 
 ### Still to do: the iOS backend
 
-The largest known gap. It used to be a missing optimisation, because iOS could
-fall back to the broker; ADR 0022 removed that fallback, so an iOS device now
-finds nobody and syncs with nothing. This is what makes iOS work at all.
+Still the largest known gap, though ADR 0023 has reduced it: an iOS device
+finds nobody on its own network, and syncs with whatever it has a stored
+address for. This is what makes it work without one.
 
 Everything above the `backend` module in `lan_discovery.rs` is platform
 independent and already shared: the peer table, the TXT parsing, the pruning
@@ -291,14 +301,72 @@ and it needs to:
   `_oyot._tcp`) in `Info.plist`. The first is the wording of the permission
   prompt the user sees. Without the second, iOS will not resolve the service
   at all.
-- Feed what it finds into the same `PeerTable` and start the existing
-  `lan_signaling` listener, which is plain TCP and needs nothing special from
-  the platform.
+- Feed what it finds into the same `Peers` table, as source `Mdns`, and start
+  the existing `lan_signaling` listener, which is plain TCP and needs nothing
+  special from the platform.
 
 What it must not need is `com.apple.developer.networking.multicast`. That is
 the entitlement `mdns-sd` would require, granted only by a request Apple
 reviews by hand, and avoiding it is why iOS gets its own backend rather than
 the one every other platform uses.
+
+## Reaching a device that is not on this network
+
+[ADR 0023](docs/decisions/0023-reach-a-peer-at-an-address-you-already-know.md).
+The user stores a host and a port for a device; a prober turns that into a peer
+by getting a signed answer out of it. Tailscale is the recommended way to have
+an address that does not move, and nothing in the code knows about it: no
+library, no CLI, no LocalAPI, no check that it is installed.
+
+Three pieces make it work.
+
+**A port a peer can assume.** mDNS tells a peer which port to connect back to;
+a typed address carries no such channel. `lan_signaling::SIGNALING_PORT` is
+19701, below every platform's ephemeral range so no unrelated outbound socket
+can have been handed it. A second copy of the app falls back to an ephemeral
+port, keeps working locally, and says in Settings > Sync that it is not
+reachable at a stored address.
+
+**A probe, not an assumption.** `remote_peers.rs` sends a signed `ping` to each
+stored address every 45 seconds and expects a signed `pong` on the same
+connection. The answer is verified like any other message and then checked for
+coming from the node we addressed; otherwise anything occupying an address
+could answer for any device the user has an address for. A peer already found
+on this network is skipped, because there is nothing an address could add.
+
+**Rewritten ICE candidates.** This is the part that would otherwise silently
+not work. Chromium-family WebViews replace the address in a host candidate with
+an `<uuid>.local` mDNS name; on one network the peer resolves it, and over a
+VPN it resolves to nothing, so the connection never forms with no error saying
+why. `local_address_toward` answers "which of our addresses would that peer
+reach us at" with a connected UDP socket, which sends no packet and reports the
+source address the kernel would use. `sync/iceRewrite.ts` publishes a copy of
+each obfuscated candidate naming it, alongside the original, and only for a
+peer that is not on this network.
+
+If candidate rewriting ever turns out not to work on some platform, the
+documented fallback is carrying the data channel over the Rust TCP connection
+for that route and dropping WebRTC there, which ADR 0023 records as the
+alternative it was weighed against.
+
+### Trying it over a tailnet
+
+Two machines, both on a tailnet, and not on the same wifi - or the same wifi
+with the local route confirmed off, since `best()` prefers it whenever it is
+available and you would be testing the wrong thing.
+
+1. On each device, Settings > Sync, "Devices Somewhere Else": paste the other
+   device's Node ID and its MagicDNS name (`laptop.tailnet-name.ts.net`). The
+   port is optional.
+2. The row says `Answering` within a few seconds if the address is right.
+   `No answer` with "has never answered" means the address, the other device
+   being asleep, or a tailnet ACL that does not allow port 19701 between your
+   own devices.
+3. Pair as usual once it answers. The pairing flow is unchanged; only the way
+   the request reaches the other device is different.
+
+Both directions need an address, because either device may be the one that
+starts a reconnect.
 
 ## Project Structure
 
@@ -311,7 +379,7 @@ oyot/
 │   │   ├── settings/        # Pairing and sync settings UI
 │   │   ├── services/        # Document actions, theme, toasts
 │   │   ├── stores/          # Svelte stores (app state, sync state)
-│   │   ├── sync/            # Peer sync: transport, protocol, framing
+│   │   ├── sync/            # Peer sync: transport, protocol, framing, ICE
 │   │   ├── tiptap/          # Editor extensions, slash commands, nodes
 │   │   ├── changelog.ts     # Release notes shown in the About dialog
 │   │   ├── version.ts       # Running version, injected at build time
@@ -320,7 +388,7 @@ oyot/
 ├── src-tauri/               # Rust backend
 │   ├── src/
 │   │   ├── commands/        # Tauri commands, the only frontend surface
-│   │   ├── network/         # Signaling: discovery, listener, envelope
+│   │   ├── network/         # Signaling: peer table, discovery, probe, listener
 │   │   ├── db.rs            # Connection setup and AppState
 │   │   └── lib.rs           # Schema, migrations, command registration
 │   ├── capabilities/        # Plugin ACLs for the webview
@@ -334,9 +402,12 @@ oyot/
 ```
 
 WebRTC lives entirely in the frontend (`src/lib/sync/transport.ts`). Rust owns
-the database, the attachment store, identity, and signaling: discovering peers
-on the network and delivering signed envelopes to them. It does not participate
-in the peer connection itself.
+the database, the attachment store, identity, and signaling: finding peers,
+whether by announcement or by probe, and delivering signed envelopes to them.
+It does not participate in the peer connection itself, with one exception it is
+worth knowing about: it answers which of this device's addresses a given peer
+would reach it at, because only the operating system knows, and the frontend
+needs it to make a host ICE candidate usable off this network (ADR 0023).
 
 ## Tech Stack
 
