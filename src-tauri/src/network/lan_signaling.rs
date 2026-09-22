@@ -6,6 +6,14 @@
 //! infrastructure, and an untrusted LAN is the same threat model, so nothing
 //! about the envelope changed when the broker went.
 //!
+//! The port is fixed where it can be. mDNS tells a peer on this network which
+//! port to use, but a peer reached at a stored address (ADR 0023) has only the
+//! address the user typed, so there has to be a port it can assume. It is a
+//! preference rather than a requirement: if something else holds it, the
+//! listener falls back to an ephemeral port and the local route carries on
+//! working, while the stored-address route cannot be reached inbound. That is
+//! a real state with a real cause, so the listener reports which it got.
+//!
 //! One connection per message, rather than a connection held open per peer.
 //! A signaling exchange is an offer, an answer and a handful of candidates, so
 //! the handshake costs about a millisecond on a LAN and buys statelessness:
@@ -23,6 +31,14 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+/// The port this device prefers to listen on.
+///
+/// Below every platform's ephemeral range (Linux starts at 32768, macOS and
+/// Windows at 49152), so an unrelated outbound socket on this machine cannot
+/// have been handed it, and not registered with IANA. Peers reached at a
+/// stored address assume it when the user does not write one.
+pub const SIGNALING_PORT: u16 = 19701;
+
 /// The largest frame we will read.
 ///
 /// An SDP offer is a few KB. This is generous enough for one with many
@@ -38,6 +54,13 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long a whole send may take once connected.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long to wait for an answer on a connection that expects one.
+///
+/// Only `request` waits at all. A peer answers a probe from memory, so this is
+/// a round trip plus nothing, and waiting longer would only make a device that
+/// is not there take longer to report as not there.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Frames allowed from one address per window, and how long that window is.
 ///
@@ -127,20 +150,51 @@ impl LanListener {
         self.port
     }
 
+    /// Whether this is the port a peer with only an address can assume.
+    ///
+    /// False means the local route is fine and the stored-address route cannot
+    /// reach this device inbound, which is worth saying out loud rather than
+    /// leaving to be discovered as a peer that never connects.
+    pub fn on_default_port(&self) -> bool {
+        self.port == SIGNALING_PORT
+    }
+
     pub fn stop(self) {
         self.task.abort();
     }
 }
 
-/// Start accepting signaling connections from this network.
+/// Bind the preferred port, or any free one.
 ///
-/// Binds an ephemeral port on every IPv4 interface; the port is what
-/// `lan_discovery` advertises. IPv4 only for now, which is what a home network
-/// hands out, and `send_to` prefers IPv4 addresses to match.
+/// Not `SO_REUSEPORT`: two copies of the app on one machine sharing the port
+/// would each get some of the other's connections, which is worse than the
+/// second one falling back.
+async fn bind() -> Result<TcpListener, String> {
+    match TcpListener::bind(("0.0.0.0", SIGNALING_PORT)).await {
+        Ok(listener) => Ok(listener),
+        Err(e) => {
+            warn_log!(
+                "[LAN] port {} is not available ({}), falling back to an ephemeral one; \
+                 peers that only have a stored address cannot reach this device",
+                SIGNALING_PORT,
+                e
+            );
+            TcpListener::bind("0.0.0.0:0")
+                .await
+                .map_err(|e| format!("could not bind a local signaling port: {e}"))
+        }
+    }
+}
+
+/// Start accepting signaling connections.
+///
+/// Binds on every IPv4 interface, which includes a VPN's: a tailnet address is
+/// an address on this machine like any other, so nothing here knows or cares
+/// that a connection arrived over one. IPv4 only for now, which is what a home
+/// network hands out and what every tailnet node has, and `send_to` prefers
+/// IPv4 addresses to match.
 pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
-    let listener = TcpListener::bind("0.0.0.0:0")
-        .await
-        .map_err(|e| format!("could not bind a local signaling port: {e}"))?;
+    let listener = bind().await?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let task = tauri::async_runtime::spawn(async move {
@@ -171,6 +225,10 @@ pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
 }
 
 /// Read one message from a connection and hand it to the shared inbound path.
+///
+/// Writes an answer back on the same connection when there is one, which since
+/// ADR 0023 means a probe and nothing else. Everything else is still one
+/// message per connection: a peer that wants to reply opens its own.
 async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Result<(), String> {
     let body = tokio::time::timeout(READ_TIMEOUT, read_frame(&mut stream))
         .await
@@ -180,8 +238,39 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Res
         serde_json::from_slice(&body).map_err(|e| format!("unreadable envelope: {e}"))?;
 
     trace!("[LAN] {} from {}", msg.msg_type, from);
-    inbound.receive(msg).await;
+    let reply = inbound.receive(msg).await;
+
+    if let Some(reply) = reply {
+        let body = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
+        tokio::time::timeout(WRITE_TIMEOUT, write_frame(&mut stream, &body))
+            .await
+            .map_err(|_| "reply timed out".to_string())??;
+    }
     Ok(())
+}
+
+/// Send one message to one address and wait for the answer.
+///
+/// The one exchange that expects a reply on its own connection. `send_to`
+/// stays fire-and-forget, because everything else is answered by the peer
+/// opening a connection back.
+pub async fn request(addr: SocketAddr, msg: &SignalingMessage) -> Result<SignalingMessage, String> {
+    let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
+
+    let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| "connection timed out".to_string())?
+        .map_err(|e| e.to_string())?;
+
+    tokio::time::timeout(WRITE_TIMEOUT, write_frame(&mut stream, &body))
+        .await
+        .map_err(|_| "send timed out".to_string())??;
+
+    let reply = tokio::time::timeout(REPLY_TIMEOUT, read_frame(&mut stream))
+        .await
+        .map_err(|_| "no answer".to_string())??;
+
+    serde_json::from_slice(&reply).map_err(|e| format!("unreadable answer: {e}"))
 }
 
 /// Send one message to a peer on this network.

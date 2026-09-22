@@ -1,6 +1,7 @@
 # 0022: Drop the broker entirely; the local network is the only way devices find each other
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0023](0023-reach-a-peer-at-an-address-you-already-know.md),
+  which adds the stored-address route this ADR deferred
 - **Date:** 2026-09-22
 - **Supersedes:** [0001](0001-mqtt-over-iroh-for-signaling.md), which chose MQTT
   as the signaling transport

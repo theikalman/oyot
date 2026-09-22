@@ -8,9 +8,9 @@
 use crate::crypto::{self, EnvelopeVerifier};
 use crate::db::AppState;
 use crate::identity::LocalIdentity;
-use crate::network::lan_discovery::{LanDiscovery, LanPeer};
 use crate::network::lan_signaling;
 use crate::network::message::SignalingMessage;
+use crate::network::peers::{Peer, Peers};
 use crate::pairing;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
@@ -83,9 +83,9 @@ pub struct SignalingManager {
     /// dismissed should stay dismissed however the next copy of the request
     /// arrives.
     pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
-    /// Who is reachable on this network, once discovery is running. `None`
-    /// before startup attaches it, and on a build that has no discovery.
-    lan: Arc<ParkingMutex<Option<Arc<LanDiscovery>>>>,
+    /// Who is reachable, by whichever route found them. Shared with every
+    /// discovery source rather than owned here (ADR 0023).
+    peers: Arc<Peers>,
 }
 
 impl SignalingManager {
@@ -93,39 +93,35 @@ impl SignalingManager {
     /// only thing that emits is `Inbound`, which is handed one when the
     /// listener starts. It was a field while the broker's event forwarder
     /// needed one of its own.
-    pub fn new() -> Self {
+    pub fn new(peers: Arc<Peers>) -> Self {
         Self {
             identity: Arc::new(ParkingMutex::new(None)),
             authorized_peers: Arc::new(ParkingMutex::new(HashMap::new())),
             verifier: Arc::new(ParkingMutex::new(EnvelopeVerifier::new())),
             pair_prompts: Arc::new(ParkingMutex::new(Vec::new())),
-            lan: Arc::new(ParkingMutex::new(None)),
+            peers,
         }
     }
 
-    /// Let the manager see who is on this network. Called once at startup.
-    pub fn attach_lan(&self, lan: Arc<LanDiscovery>) {
-        *self.lan.lock() = Some(lan);
-    }
-
-    /// Where this peer can be reached on this network, if anywhere.
+    /// The best way to reach this peer, if there is one.
     ///
-    /// `None` is the whole of "we cannot reach it": there is nowhere else to
-    /// look since ADR 0022.
-    fn lan_peer(&self, peer_id: &str) -> Option<LanPeer> {
-        let lan = self.lan.lock().clone();
-        lan.and_then(|lan| lan.peer(peer_id))
+    /// `None` is the whole of "we cannot reach it": it is not on this network
+    /// and no address we hold for it answered.
+    fn route_to(&self, peer_id: &str) -> Option<Peer> {
+        self.peers.best(peer_id)
     }
 
     /// The inbound half, for the listener to hand received messages to.
     ///
     /// `node_id` and the user id are snapshots taken when the listener starts;
     /// neither changes after startup.
-    pub fn inbound(&self, app: AppHandle, node_id: &str) -> Inbound {
+    pub fn inbound(&self, app: AppHandle, node_id: &str, boot_id: &str) -> Inbound {
         Inbound {
             app,
             node_id: node_id.to_string(),
             our_user_id: self.get_user_id(),
+            boot_id: boot_id.to_string(),
+            identity: self.identity.clone(),
             verifier: self.verifier.clone(),
             pair_prompts: self.pair_prompts.clone(),
             authorized_peers: self.authorized_peers.clone(),
@@ -179,25 +175,28 @@ impl SignalingManager {
     /// Wraps a message in a signed envelope. Fails when no identity is loaded,
     /// which would otherwise mean publishing something no peer can verify.
     fn seal(&self, to: &str, msg_type: &str, payload: String) -> Result<SignalingMessage, String> {
-        let guard = self.identity.lock();
-        let me = guard
-            .as_ref()
-            .ok_or_else(|| "cannot sign: identity not loaded".to_string())?;
+        seal_with(&self.identity, to, msg_type, payload)
+    }
 
-        let from = me.public.node_id.clone();
-        let ts = crypto::now_ms();
-        let nonce = crypto::random_nonce();
-        let sig = crypto::sign(&me.signing_key, &from, to, msg_type, &payload, ts, &nonce);
+    /// Seal a message for a peer, ready to send (ADR 0023's prober needs one
+    /// without going through `publish`, which would look the peer up in the
+    /// very table the probe is about to fill).
+    pub fn seal_for(
+        &self,
+        to: &str,
+        msg_type: &str,
+        payload: String,
+    ) -> Result<SignalingMessage, String> {
+        self.seal(to, msg_type, payload)
+    }
 
-        Ok(SignalingMessage {
-            from,
-            to: Some(to.to_string()),
-            msg_type: msg_type.to_string(),
-            payload,
-            ts,
-            nonce,
-            sig,
-        })
+    /// Whether a message we received out-of-band is one we can trust: addressed
+    /// to us, signed by the node it claims, recent, and not seen before.
+    ///
+    /// Shares the verifier with `Inbound`, so a nonce spent on a probe reply
+    /// cannot be spent again anywhere else.
+    pub fn admit_reply(&self, msg: &SignalingMessage) -> bool {
+        admit(&self.verifier, &self.get_node_id(), msg)
     }
 
     /// Records that we've agreed to pair with `node_id` this session, so a subsequent
@@ -227,21 +226,28 @@ impl SignalingManager {
         }
     }
 
-    /// Sign one message and send it to a peer on this network.
+    /// Sign one message and send it to a peer, wherever it was found.
     ///
     /// Every outgoing message goes through here, so there is no path that
     /// sends an unsigned envelope.
     ///
-    /// A failure is final for this message. There used to be a second route to
-    /// fall back to, and a cooldown to steer the next message onto it; with
-    /// one transport left, the honest answer to "the peer did not take it" is
-    /// to say so and let the caller's backoff try again.
+    /// A failure is final for this message. The peer table already picked the
+    /// best route, and trying the other one on a send failure would only move
+    /// the retry a few hundred milliseconds earlier than the caller's backoff
+    /// does anyway, at the cost of a route choice in two places.
     async fn publish(&self, peer_id: &str, msg_type: &str, payload: String) -> Result<(), String> {
-        let Some(peer) = self.lan_peer(peer_id) else {
-            return Err(format!("{peer_id} is not on this network"));
+        let Some(peer) = self.route_to(peer_id) else {
+            return Err(format!(
+                "{peer_id} is not on this network and no stored address for it answered"
+            ));
         };
 
-        trace!("[Signaling] publish {} to peer_id={}", msg_type, peer_id);
+        trace!(
+            "[Signaling] publish {} to peer_id={} via {:?}",
+            msg_type,
+            peer_id,
+            peer.source
+        );
         let msg = self.seal(peer_id, msg_type, payload)?;
 
         lan_signaling::send_to(&peer.addrs, peer.port, &msg)
@@ -287,6 +293,38 @@ impl SignalingManager {
         self.publish(peer_id, "ice-candidate", candidate.to_string())
             .await
     }
+}
+
+/// Wrap a payload in a signed envelope for one recipient.
+///
+/// A free function rather than a method because both halves of signaling need
+/// it now: the manager to publish, and `Inbound` to answer a probe on the
+/// connection it arrived on.
+fn seal_with(
+    identity: &ParkingMutex<Option<LocalIdentity>>,
+    to: &str,
+    msg_type: &str,
+    payload: String,
+) -> Result<SignalingMessage, String> {
+    let guard = identity.lock();
+    let me = guard
+        .as_ref()
+        .ok_or_else(|| "cannot sign: identity not loaded".to_string())?;
+
+    let from = me.public.node_id.clone();
+    let ts = crypto::now_ms();
+    let nonce = crypto::random_nonce();
+    let sig = crypto::sign(&me.signing_key, &from, to, msg_type, &payload, ts, &nonce);
+
+    Ok(SignalingMessage {
+        from,
+        to: Some(to.to_string()),
+        msg_type: msg_type.to_string(),
+        payload,
+        ts,
+        nonce,
+        sig,
+    })
 }
 
 /// Whether a message is addressed to us and provably came from the device it
@@ -345,6 +383,12 @@ pub struct Inbound {
     /// Our own node_id, as the `to` every message must be addressed to.
     node_id: String,
     our_user_id: String,
+    /// This run of the process, which a `pong` carries so the asker can tell a
+    /// device that restarted from one that never went away.
+    boot_id: String,
+    /// The signing key, for the one message type that is answered here rather
+    /// than by the frontend.
+    identity: Arc<ParkingMutex<Option<LocalIdentity>>>,
     verifier: Arc<ParkingMutex<EnvelopeVerifier>>,
     pair_prompts: Arc<ParkingMutex<Vec<(String, i64)>>>,
     authorized_peers: Arc<ParkingMutex<HashMap<String, PeerContext>>>,
@@ -352,14 +396,37 @@ pub struct Inbound {
 
 impl Inbound {
     /// Verify, then dispatch. The single entry point for an arriving message.
-    pub async fn receive(&self, msg: SignalingMessage) {
+    ///
+    /// Returns a message to write back on the same connection, which only a
+    /// `ping` produces. Every other type is answered, if at all, by the
+    /// frontend opening a connection of its own, and returns `None` here.
+    pub async fn receive(&self, msg: SignalingMessage) -> Option<SignalingMessage> {
         if !admit(&self.verifier, &self.node_id, &msg) {
-            return;
+            return None;
         }
-        self.dispatch(msg).await;
+        self.dispatch(msg).await
     }
 
-    async fn dispatch(&self, msg: SignalingMessage) {
+    /// Answer a probe (ADR 0023).
+    ///
+    /// Answered for any correctly signed and correctly addressed sender, paired
+    /// or not: an address is how an unpaired device is reached in the first
+    /// place, so refusing strangers here would make pairing over a stored
+    /// address impossible. What the reply discloses is that this node is at
+    /// this address, to someone who already knew its node_id and could already
+    /// reach the port.
+    fn pong(&self, to: &str) -> Option<SignalingMessage> {
+        let payload = serde_json::json!({ "boot_id": self.boot_id }).to_string();
+        match seal_with(&self.identity, to, "pong", payload) {
+            Ok(msg) => Some(msg),
+            Err(e) => {
+                warn_log!("[Signaling] cannot answer a ping: {}", e);
+                None
+            }
+        }
+    }
+
+    async fn dispatch(&self, msg: SignalingMessage) -> Option<SignalingMessage> {
         trace!(
             "[Signaling] dispatch() type={} from={} our_user_id={}",
             msg.msg_type,
@@ -367,6 +434,10 @@ impl Inbound {
             self.our_user_id
         );
         match msg.msg_type.as_str() {
+            "ping" => return self.pong(&msg.from),
+            // The prober reads a pong off the connection it sent the ping on,
+            // so one arriving here is a stray. Saying so beats "unknown type".
+            "pong" => trace!("[Signaling] unsolicited pong from {}, ignoring", msg.from),
             "pair-request" => match serde_json::from_str::<PairPayload>(&msg.payload) {
                 Ok(req) => {
                     let allowed = {
@@ -378,7 +449,7 @@ impl Inbound {
                             "[Signaling] Ignoring a repeat pair-request from {} inside the cooldown",
                             msg.from
                         );
-                        return;
+                        return None;
                     }
                     let _ = self.app.emit(
                         "signaling-pair-request-received",
@@ -437,6 +508,7 @@ impl Inbound {
                 );
             }
         }
+        None
     }
 
     /// Resolves an incoming offer's sender against two trust sources, in order:
@@ -501,7 +573,7 @@ mod tests {
     fn manager_with_identity() -> (SignalingManager, String) {
         let signing_key = crypto::generate_signing_key();
         let node_id = crypto::encode_node_id(&signing_key.verifying_key());
-        let mgr = SignalingManager::new();
+        let mgr = SignalingManager::new(Arc::new(Peers::new(None)));
         mgr.set_identity(LocalIdentity {
             public: UserIdentity {
                 user_id: "u1".to_string(),
@@ -651,7 +723,7 @@ mod tests {
     // reject it, and the failure would look like a network problem.
     #[test]
     fn sealing_without_an_identity_fails_rather_than_sending_unsigned() {
-        let mgr = SignalingManager::new();
+        let mgr = SignalingManager::new(Arc::new(Peers::new(None)));
         let err = mgr.seal("peer", "offer", "sdp".to_string()).unwrap_err();
         assert!(err.contains("identity not loaded"), "got: {err}");
     }

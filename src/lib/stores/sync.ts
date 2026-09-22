@@ -19,13 +19,32 @@ export interface ConnectedPeer {
     room_id: string;
 }
 
-// A device seen on this network, as `lan_discovery` reports it.
-export interface LanPeer {
+// How a peer was found. `mdns` announced itself on this network; `address`
+// answered a probe at an address the user stored for it (ADR 0023).
+export type PeerSource = 'mdns' | 'address';
+
+// A device this one can reach, as `network::peers` reports it. The same device
+// can appear twice, once per source, when both routes are up.
+export interface Peer {
     node_id: string;
+    source: PeerSource;
     boot_id: string | null;
     addrs: string[];
+    /** The host as the user wrote it, for an address peer. Null for mDNS. */
+    host: string | null;
     port: number;
     seen_at: number;
+}
+
+// An address the user stored for a device, as `endpoints.rs` holds it. A row
+// is a guess until a probe answers it; `last_ok` is the difference between
+// "not connected right now" and "this has never worked" (ADR 0023).
+export interface DeviceEndpoint {
+    peer_node_id: string;
+    host: string;
+    port: number;
+    added_at: number;
+    last_ok: number | null;
 }
 
 export interface PendingPairRequest {
@@ -58,7 +77,12 @@ function createSyncStore() {
     const { subscribe, set, update } = writable({
         identity: null as UserIdentity | null,
         lanStatus: 'off' as LanStatus,
-        lanPeers: [] as LanPeer[],
+        // The port the signaling listener came up on, and whether it is the
+        // one a peer holding only a stored address assumes (ADR 0023).
+        listenPort: null as number | null,
+        onDefaultPort: false,
+        peers: [] as Peer[],
+        endpoints: [] as DeviceEndpoint[],
         pairedDevices: [] as DevicePair[],
         connectedPeers: [] as ConnectedPeer[],
         reconnectingPeers: [] as string[],
@@ -76,20 +100,30 @@ function createSyncStore() {
             update((s) => ({
                 ...s,
                 lanStatus: status,
-                // Nothing is reachable locally once discovery stops, and a
-                // list left behind would go on claiming otherwise.
-                lanPeers: status === 'active' ? s.lanPeers : [],
+                // Nothing found on this network is reachable once discovery
+                // stops, and a list left behind would go on claiming
+                // otherwise. Peers found at a stored address stay: that route
+                // is a different one and it is still up.
+                peers: status === 'active' ? s.peers : s.peers.filter((p) => p.source !== 'mdns'),
             })),
-        setLanPeers: (peers: LanPeer[]) => update((s) => ({ ...s, lanPeers: peers })),
-        addLanPeer: (peer: LanPeer) =>
+        setListener: (listenPort: number, onDefaultPort: boolean) =>
+            update((s) => ({ ...s, listenPort, onDefaultPort })),
+        setPeers: (peers: Peer[]) => update((s) => ({ ...s, peers })),
+        setEndpoints: (endpoints: DeviceEndpoint[]) => update((s) => ({ ...s, endpoints })),
+        addPeer: (peer: Peer) =>
             update((s) => ({
                 ...s,
-                lanPeers: [...s.lanPeers.filter((p) => p.node_id !== peer.node_id), peer],
+                peers: [
+                    ...s.peers.filter(
+                        (p) => !(p.node_id === peer.node_id && p.source === peer.source),
+                    ),
+                    peer,
+                ],
             })),
-        removeLanPeer: (nodeId: string) =>
+        removePeer: (nodeId: string, source: PeerSource) =>
             update((s) => ({
                 ...s,
-                lanPeers: s.lanPeers.filter((p) => p.node_id !== nodeId),
+                peers: s.peers.filter((p) => !(p.node_id === nodeId && p.source === source)),
             })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
@@ -169,17 +203,49 @@ function createSyncStore() {
 export const syncStore = createSyncStore();
 export const identity = derived(syncStore, ($s) => $s.identity);
 export const lanStatus = derived(syncStore, ($s) => $s.lanStatus);
-export const lanPeers = derived(syncStore, ($s) => $s.lanPeers);
-export const lanPeerIds = derived(syncStore, ($s) => new Set($s.lanPeers.map((p) => p.node_id)));
+export const peers = derived(syncStore, ($s) => $s.peers);
+
+// True only once the listener has actually started and did not get the port a
+// device holding only our address assumes. Before it starts there is nothing
+// to report, and reporting it then would put a warning on a healthy app every
+// time it launched.
+export const listeningOnAnotherPort = derived(
+    syncStore,
+    ($s) => $s.listenPort !== null && !$s.onDefaultPort,
+);
+
+// Only the ones on this network. The pairing copy and the "nearby" count mean
+// this literally, so they must not count a device reached over a VPN.
+export const lanPeers = derived(syncStore, ($s) => $s.peers.filter((p) => p.source === 'mdns'));
+export const lanPeerIds = derived(lanPeers, ($p) => new Set($p.map((peer) => peer.node_id)));
+
+// Reachable by any route at all, which is what the reconnect paths ask about.
+export const reachablePeerIds = derived(syncStore, ($s) => new Set($s.peers.map((p) => p.node_id)));
+
+// Reachable at a stored address: an address that has answered a probe, which
+// is the only evidence there is that one works.
+export const addressPeerIds = derived(
+    syncStore,
+    ($s) => new Set($s.peers.filter((p) => p.source === 'address').map((p) => p.node_id)),
+);
+
+export const deviceEndpoints = derived(syncStore, ($s) => $s.endpoints);
+export const endpointPeerIds = derived(
+    syncStore,
+    ($s) => new Set($s.endpoints.map((e) => e.peer_node_id)),
+);
 
 // Whether there is any way to reach a peer right now.
 //
 // ADR 0018 introduced this so that no single transport could define whether
-// the app was able to sync at all. ADR 0022 left one transport, so it collapses
-// back onto discovery being up. Kept as a name of its own because the reconnect
-// paths ask this question rather than "is mDNS running", and because it is the
-// seam a second route would go back into.
-export const canSignal = derived(syncStore, ($s) => $s.lanStatus === 'active');
+// the app was able to sync at all. ADR 0022 left one transport and it collapsed
+// onto discovery being up. ADR 0023 puts the second route back, and this is the
+// seam it was kept for: a device with no mDNS at all still syncs with whatever
+// has answered at a stored address.
+export const canSignal = derived(
+    syncStore,
+    ($s) => $s.lanStatus === 'active' || $s.peers.some((p) => p.source === 'address'),
+);
 export const pairedDevices = derived(syncStore, ($s) => $s.pairedDevices);
 export const connectedPeers = derived(syncStore, ($s) => $s.connectedPeers);
 export const connectedPeerIds = derived(

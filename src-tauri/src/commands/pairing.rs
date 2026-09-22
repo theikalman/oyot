@@ -1,4 +1,5 @@
 use crate::db::AppState;
+use crate::endpoints::{self, DeviceEndpoint};
 use crate::identity::UserIdentity;
 use crate::pairing::{self, DevicePair};
 
@@ -49,10 +50,17 @@ pub fn remove_pair(state: tauri::State<'_, AppState>, peer_node_id: String) -> R
     {
         let db = state.db.lock();
         pairing::remove_pair(&db, &user_id, &peer_node_id)?;
+        // An address is only ever a way to reach a device we are paired with,
+        // so it goes with the pairing. Left behind, it would keep the removed
+        // device answering probes and showing up as reachable.
+        endpoints::remove_endpoints_for_peer(&db, &user_id, &peer_node_id)?;
     }
     // The persisted row is only half of what trusts this peer; the session
     // authorization has to go too, or its next offer is accepted anyway.
     state.signaling_manager.revoke_peer(&peer_node_id);
+    state
+        .peers
+        .forget(&peer_node_id, crate::network::peers::PeerSource::Address);
     Ok(())
 }
 
@@ -75,4 +83,79 @@ pub fn update_pair_sync_time(
 ) -> Result<(), String> {
     let db = state.db.lock();
     pairing::update_last_sync(&db, &room_id)
+}
+
+// --- addresses for devices that are not on this network -------------------
+
+/// Store an address for a device, as typed (ADR 0023).
+///
+/// Returns the parsed row so the caller shows what was understood rather than
+/// what was typed: "laptop.ts.net" being read as port 19701 is worth seeing.
+///
+/// The node_id is not checked against the pair table on purpose. An address is
+/// how an unpaired device is reached in the first place, so requiring a pairing
+/// first would make pairing over a stored address impossible.
+#[tauri::command]
+pub fn save_peer_endpoint(
+    state: tauri::State<'_, AppState>,
+    peer_node_id: String,
+    address: String,
+) -> Result<DeviceEndpoint, String> {
+    let user_id = local_identity(&state)?.user_id;
+    let node_id = peer_node_id.trim().to_string();
+    if node_id.is_empty() {
+        return Err("Which device is this address for?".to_string());
+    }
+    if node_id == local_identity(&state)?.node_id {
+        return Err("That is this device's own id.".to_string());
+    }
+    let (host, port) = endpoints::parse_endpoint(&address)?;
+    let now = crate::crypto::now_ms();
+
+    {
+        let db = state.db.lock();
+        endpoints::save_endpoint(&db, &user_id, &node_id, &host, port, now)?;
+    }
+    trace!("[cmd] save_peer_endpoint {} -> {}:{}", node_id, host, port);
+
+    // Probe it now rather than at the next tick: someone who has just typed an
+    // address is waiting to find out whether it was the right one.
+    state.remote.probe_now();
+
+    Ok(DeviceEndpoint {
+        peer_node_id: node_id,
+        host,
+        port,
+        added_at: now,
+        last_ok: None,
+    })
+}
+
+#[tauri::command]
+pub fn forget_peer_endpoint(
+    state: tauri::State<'_, AppState>,
+    peer_node_id: String,
+    host: String,
+    port: u16,
+) -> Result<(), String> {
+    let user_id = local_identity(&state)?.user_id;
+    {
+        let db = state.db.lock();
+        endpoints::remove_endpoint(&db, &user_id, &peer_node_id, &host, port)?;
+    }
+    // The peer table still holds whatever this address last proved. Leaving it
+    // there would keep offering a route the user has just deleted.
+    state
+        .peers
+        .forget(&peer_node_id, crate::network::peers::PeerSource::Address);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_peer_endpoints(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DeviceEndpoint>, String> {
+    let user_id = local_identity(&state)?.user_id;
+    let db = state.db.lock();
+    endpoints::load_endpoints(&db, &user_id)
 }

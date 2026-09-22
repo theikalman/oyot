@@ -1,7 +1,8 @@
 <script lang="ts">
-    import type { ConnectedPeer } from '$lib/stores/sync';
+    import type { ConnectedPeer, DeviceEndpoint } from '$lib/stores/sync';
     import { peerConnection, peerStatusLabel, type PeerConnection } from '$lib/sync/peerStatus';
     import { formatLastSync, reconnectingPeerIds, roomSync } from '$lib/stores/sync';
+    import PeerAddresses from './PeerAddresses.svelte';
 
     interface Props {
         pairedDevices: Array<{
@@ -11,12 +12,36 @@
             last_synchronized: number | null;
         }>;
         connectedPeers: ConnectedPeer[];
+        /** Every stored address, for every device (ADR 0023). */
+        endpoints: DeviceEndpoint[];
+        /** Devices answering at an address stored for them. */
+        onStoredAddress: Set<string>;
         onDisconnect: (roomId: string) => void;
         onReconnect: (peerNodeId: string) => void;
         onRemove: (peerNodeId: string) => void;
+        onAddAddress: (peerNodeId: string, address: string) => Promise<void>;
+        onForgetAddress: (peerNodeId: string, host: string, port: number) => Promise<void>;
     }
 
-    let { pairedDevices, connectedPeers, onDisconnect, onReconnect, onRemove }: Props = $props();
+    let {
+        pairedDevices,
+        connectedPeers,
+        endpoints,
+        onStoredAddress,
+        onDisconnect,
+        onReconnect,
+        onRemove,
+        onAddAddress,
+        onForgetAddress,
+    }: Props = $props();
+
+    // A device's addresses belong on its own row rather than in a section of
+    // their own: the row already says which device this is, so nothing has to
+    // ask again, and "where can this be reached" is read where the device is
+    // looked up.
+    function addressesFor(peerNodeId: string): DeviceEndpoint[] {
+        return endpoints.filter((e) => e.peer_node_id === peerNodeId);
+    }
 
     function isConnected(roomId: string): boolean {
         return connectedPeers.some((p) => p.room_id === roomId);
@@ -73,15 +98,22 @@
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>
                         {#if pstatus === 'connected'}
-                            <!-- No route badge: every connection is over this
-                                 network since ADR 0022, so saying so on each
-                                 row says nothing. -->
+                            <!-- No route badge here: the addresses below say
+                                 which are answering, and a row that said both
+                                 said it twice in different words. -->
                             <span class="peer-sync">{syncLabel(pair)}</span>
                         {:else if pair.last_synchronized}
                             <span class="peer-sync"
                                 >Last sync: {formatLastSync(pair.last_synchronized)}</span
                             >
                         {/if}
+                        <PeerAddresses
+                            nodeId={pair.peer_node_id}
+                            addresses={addressesFor(pair.peer_node_id)}
+                            answering={onStoredAddress.has(pair.peer_node_id)}
+                            onAdd={onAddAddress}
+                            onForget={onForgetAddress}
+                        />
                     </div>
                     <div class="peer-actions">
                         {#if pstatus === 'connected'}

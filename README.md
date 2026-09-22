@@ -24,16 +24,19 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Task lists.** Task items are counted per note and shown in the sidebar.
 - **Peer-to-peer sync.** Pair two devices on one network and they reconcile
   their whole document set, including images, with no internet and no server
-  anywhere in the middle.
+  anywhere in the middle. A device somewhere else is reached at an address you
+  give it, over a VPN you already run.
 - **Export.** Settings > Data writes every note out as a Markdown file, with
   the images they embed, in one zip. Nothing here is a format you can only
   read from inside Oyot.
 
 ## Sync
 
-Devices sync directly over WebRTC, and only with devices on the same local
-network. They find each other over mDNS and need nothing else: no account, no
-server, no internet connection.
+Devices sync directly over WebRTC. They find each other in one of two ways, and
+neither needs an account, a server, or anything run by us.
+
+On one network, they find each other by themselves over mDNS. Elsewhere, you
+tell one device where the other is, and it checks.
 
 - Each device's ID is an Ed25519 public key, and every signaling message is
   signed, so nothing on the network can forge, alter or replay one.
@@ -46,15 +49,32 @@ server, no internet connection.
 - Note content never leaves the two devices, and is encrypted in transit by
   WebRTC's DTLS.
 
-**The cost of this is real:** two devices that are never on the same network
-never sync. A phone on cellular and a laptop at home do not converge until they
-are on one wifi again. An earlier version reached them through an MQTT broker;
+### Devices that are not on one network
+
+Pairing asks where the other device is. Answer "somewhere else" and it takes an
+address alongside the ID: a host name or an IP that does not change. The
+reliable way to have one is a VPN you already run between your own machines,
+such as Tailscale, where every device has a stable name and address. Pair with
+the other device's address on this one, then add this device's address over
+there, on its row under Paired Devices, and they reach each other from
+anywhere.
+
+Oyot does not install, configure or manage the VPN, and does not know whether
+you have one. It only uses the address. Nothing else changes: the same signed
+handshake, the same encrypted data channel, the same documents.
+
+**What this does not do:** it is not a fallback that happens by itself. Two
+devices with no shared network and no address for each other do not sync, and
+the app says so rather than queueing. An earlier version reached them through
+an MQTT broker;
 [ADR 0022](./docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md)
-records why that was removed and what it would take to bring a remote route
-back.
+records why that was removed, and
+[ADR 0023](./docs/decisions/0023-reach-a-peer-at-an-address-you-already-know.md)
+why the replacement is an address rather than a server.
 
 Local discovery works on desktop and Android. iOS needs a Bonjour backend that
-does not exist yet, so iOS does not sync at all for now.
+does not exist yet, so an iOS device finds nothing on its own network; it can
+still sync with devices you have given it an address for.
 
 The design decisions behind all of this, including what each one gives up, are
 in [docs/decisions](./docs/decisions).

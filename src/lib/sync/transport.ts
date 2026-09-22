@@ -9,13 +9,18 @@ import {
     canSignal,
     lanStatus,
     lanPeerIds,
+    addressPeerIds,
+    endpointPeerIds,
     pairedDevices,
     connectedPeers,
     type UserIdentity,
     type DevicePair,
     type LanStatus,
-    type LanPeer,
+    type Peer,
+    type PeerSource,
 } from '../stores/sync';
+import { refreshEndpoints, saveEndpoint } from './endpoints';
+import { isObfuscated, rewriteCandidate } from './iceRewrite';
 import { DocumentRepository } from './DocumentRepository';
 import { attachFraming, type FramedChannel } from './channel/Framing';
 import { DocSyncProtocol, type SyncProgressSink } from './channel/DocSyncProtocol';
@@ -61,6 +66,10 @@ interface PeerSession {
     ignoreOffer: boolean;
     isSettingRemoteAnswerPending: boolean;
     dataChannel: RTCDataChannel | null;
+    // Our own address as this peer would see it, for rewriting obfuscated ICE
+    // candidates (ADR 0023). Null when the peer is on this network, where the
+    // mDNS candidate name resolves and nothing needs rewriting.
+    localAddress: string | null;
     framed: FramedChannel | null;
     proto: DocSyncProtocol | null;
     reconnectAttempts: number;
@@ -227,10 +236,45 @@ async function sendIceCandidate(
     session: PeerSession,
     candidate: RTCIceCandidate,
 ): Promise<void> {
-    const payload = serializeIce(session.epoch, candidate.toJSON());
+    const init = candidate.toJSON();
+    await publishIce(peerId, session, init);
+
+    // A peer that is not on this network cannot resolve an mDNS candidate
+    // name, so the candidate as the WebView produced it is dead on arrival
+    // there. Publish a copy naming the address that peer would reach us at
+    // (ADR 0023). The original goes out either way: it is the working one for
+    // anyone who can resolve it, and ICE discards what does not check out.
+    if (!session.localAddress || !isObfuscated(init.candidate ?? '')) return;
+    const rewritten = rewriteCandidate(init, session.localAddress);
+    if (!rewritten) return;
+    log.debug(`[sync] [${peerId}] also publishing that candidate as ${session.localAddress}`);
+    await publishIce(peerId, session, rewritten);
+}
+
+async function publishIce(
+    peerId: string,
+    session: PeerSession,
+    init: RTCIceCandidateInit,
+): Promise<void> {
+    const payload = serializeIce(session.epoch, init);
     await invoke('signaling_publish_ice_candidate', { peerId, candidate: payload }).catch((e) =>
         console.error(`[sync] [${peerId}] Failed to publish ICE candidate:`, e),
     );
+}
+
+// The address this peer would reach us at, when it is not on this network.
+//
+// Read once per session rather than per candidate: candidates arrive in a
+// burst, and the answer is a property of the route, which does not change
+// under a session without the session being rebuilt.
+async function localAddressToward(peerNodeId: string): Promise<string | null> {
+    if (get(lanPeerIds).has(peerNodeId)) return null;
+    try {
+        return await invoke<string | null>('local_address_toward', { peerNodeId });
+    } catch (e) {
+        console.warn(`[sync] [${peerNodeId}] could not work out our address toward it:`, e);
+        return null;
+    }
 }
 
 async function calculateRoomId(userA: string, userB: string): Promise<string> {
@@ -348,6 +392,7 @@ async function ensurePeerConnection(
         ignoreOffer: false,
         isSettingRemoteAnswerPending: false,
         dataChannel: null,
+        localAddress: null,
         framed: null,
         proto: null,
         reconnectAttempts: existing?.reconnectAttempts ?? 0,
@@ -373,6 +418,13 @@ async function ensurePeerConnection(
             session.makingOffer = false;
         }
     };
+
+    // Started before the offer and not awaited: candidates cannot be gathered
+    // until a description is set, so this has resolved long before the first
+    // one arrives, and a session must not wait on a command to exist.
+    void localAddressToward(peerNodeId).then((addr) => {
+        session.localAddress = addr;
+    });
 
     pc.onicecandidate = ({ candidate }) => {
         if (candidate) void sendIceCandidate(peerNodeId, session, candidate);
@@ -768,19 +820,30 @@ const PAIR_REQUEST_TIMEOUT_MS = 90_000;
 // is no route, when waiting a moment is all that was needed. Short enough that
 // a genuinely absent device is reported quickly.
 const PAIR_DISCOVERY_WAIT_MS = 10_000;
+
+// How long to wait when an address was typed along with the id.
+//
+// Longer, because the answer comes from a probe rather than from a packet that
+// was already on its way: a connection attempt, a round trip, and possibly a
+// dead address ahead of this one in the same pass, each costing its connect
+// timeout. Still short enough that a wrong address is reported while the
+// person who typed it is still looking at the screen.
+const PAIR_ADDRESS_WAIT_MS = 20_000;
 let pairRequestTimer: ReturnType<typeof setTimeout> | null = null;
 
 function reachInputs(peerNodeId: string): ReachInputs {
     return {
         onLocalNetwork: get(lanPeerIds).has(peerNodeId),
         discovering: get(lanStatus) === 'active',
+        onStoredAddress: get(addressPeerIds).has(peerNodeId),
+        hasStoredAddress: get(endpointPeerIds).has(peerNodeId),
     };
 }
 
 // Resolves as soon as this peer can be reached, or false if it cannot inside
 // the wait. Driven by the store rather than by polling, so a device that
 // appears after half a second is paired with after half a second.
-function waitForPairRoute(peerNodeId: string): Promise<boolean> {
+function waitForPairRoute(peerNodeId: string, waitMs: number): Promise<boolean> {
     if (canReachForPairing(reachInputs(peerNodeId))) return Promise.resolve(true);
 
     return new Promise((resolve) => {
@@ -793,7 +856,7 @@ function waitForPairRoute(peerNodeId: string): Promise<boolean> {
             unsubscribe?.();
             resolve(reachable);
         };
-        const timer = setTimeout(() => finish(false), PAIR_DISCOVERY_WAIT_MS);
+        const timer = setTimeout(() => finish(false), waitMs);
         unsubscribe = syncStore.subscribe(() => {
             if (canReachForPairing(reachInputs(peerNodeId))) finish(true);
         });
@@ -810,7 +873,17 @@ function clearPairRequestTimer(): void {
     }
 }
 
-export async function sendPairRequest(peerNodeId: string): Promise<void> {
+/**
+ * Ask a device to pair, optionally telling this one where to find it.
+ *
+ * `address` is for a device that is not on this network (ADR 0023). It is
+ * stored first and probed at once, so that pairing with a device over a VPN is
+ * one action with one id in it rather than two of each.
+ */
+export async function sendPairRequest(
+    peerNodeId: string,
+    opts: { address?: string } = {},
+): Promise<void> {
     if (!identity) {
         console.warn('[sync] sendPairRequest() called before identity was loaded, aborting');
         return;
@@ -818,10 +891,25 @@ export async function sendPairRequest(peerNodeId: string): Promise<void> {
     clearPairRequestTimer();
     syncStore.setPairingState('requesting');
 
+    const address = opts.address?.trim();
+    if (address) {
+        try {
+            const saved = await saveEndpoint(peerNodeId, address);
+            log.debug(`[sync] pairing with ${peerNodeId} at ${saved.host}:${saved.port}`);
+        } catch (e) {
+            // A malformed address is the user's typo, and Rust's message says
+            // which part it could not read. Nothing was stored, so there is
+            // nothing to undo.
+            syncStore.setPairingState(null);
+            throw e;
+        }
+    }
+
     // Wait for the other device to be found before deciding it cannot be
-    // reached. Being found is the only way to it, and discovery is not
-    // instant.
-    if (!(await waitForPairRoute(peerNodeId))) {
+    // reached. Being found is the only way to it, and neither discovery nor a
+    // probe is instant.
+    const waitMs = address ? PAIR_ADDRESS_WAIT_MS : PAIR_DISCOVERY_WAIT_MS;
+    if (!(await waitForPairRoute(peerNodeId, waitMs))) {
         const reason = unreachableForPairing(reachInputs(peerNodeId));
         log.debug(`[sync] sendPairRequest(${peerNodeId}) has no route: ${reason}`);
         syncStore.setPairingState(null);
@@ -909,8 +997,7 @@ export async function initSync(): Promise<void> {
         // One-time hash backfill for rows written before the hashing code existed.
         void repo.backfillHashes().catch((e) => console.warn('[sync] hash backfill failed:', e));
 
-        // The only way a peer is ever found, so nothing else to start.
-        await startLocalNetwork();
+        await startSignaling();
 
         await finishInit();
     } catch (error) {
@@ -929,23 +1016,33 @@ async function finishInit(): Promise<void> {
     log.debug('[sync] initSync() complete, event listeners active');
 }
 
-// Start advertising on this network and listening for peers on it.
+// Start listening, and start both ways of finding a peer: this network, and
+// the addresses the user has stored (ADR 0023).
 //
-// A failure here means no sync at all, which it did not before ADR 0022: there
-// is nothing behind this. It is still not fatal to the app, because a note app
-// that cannot reach another device is a note app, and the causes are often
-// temporary and outside it - a firewall prompt the user has not answered, or a
-// platform with no discovery backend yet. `canSignal` is false throughout, so
-// nothing tries to reach a peer it cannot.
-async function startLocalNetwork(): Promise<void> {
+// Discovery failing is no longer the end of it. A device with no mDNS at all -
+// iOS, or a firewall prompt nobody answered - still syncs with whatever it has
+// an address for, so the failure is reported and the listener stays up. Only
+// the listener itself failing means no sync at all.
+async function startSignaling(): Promise<void> {
     try {
-        const port = await invoke<number>('lan_start');
-        log.debug(`[sync] local network signaling listening on port ${port}`);
-        // Seeds the list from whatever discovery already knows, which matters
-        // when sync is restarted rather than started.
-        syncStore.setLanPeers(await invoke<LanPeer[]>('lan_list_peers'));
+        const { port, on_default_port, discovery_error } = await invoke<{
+            port: number;
+            on_default_port: boolean;
+            discovery_error: string | null;
+        }>('signaling_start');
+        syncStore.setListener(port, on_default_port);
+        log.debug(
+            `[sync] signaling listening on port ${port}${on_default_port ? '' : ' (not the default port, so a stored address cannot reach this device)'}`,
+        );
+        if (discovery_error) {
+            console.warn('[sync] local network discovery unavailable:', discovery_error);
+        }
+        // Seeds the list from whatever is already known, which matters when
+        // sync is restarted rather than started.
+        syncStore.setPeers(await invoke<Peer[]>('list_reachable_peers'));
+        await refreshEndpoints();
     } catch (e) {
-        console.warn('[sync] local network sync unavailable:', e);
+        console.warn('[sync] sync transport unavailable:', e);
         syncStore.setLanStatus('error');
     }
 }
@@ -1038,31 +1135,36 @@ async function setupEventListeners(): Promise<void> {
         syncStore.setLanStatus(next);
         if (next === 'active' && prev !== 'active') {
             void reconnectAllPairedDevices('lan-active');
-        } else if (next !== 'active') {
-            // Discovery going down is now the whole of "nothing can be
-            // reached", so there is nothing left for a backoff tick to try.
+        } else if (next !== 'active' && !get(canSignal)) {
+            // Discovery going down is only the end of it when nothing is
+            // reachable at a stored address either. Otherwise there is still
+            // somewhere for a backoff tick to go (ADR 0023).
             pauseAllReconnects();
         }
     });
 
-    const unlistenLanFound = await listen<LanPeer>('lan-peer-found', (event) => {
+    const unlistenPeerFound = await listen<Peer>('peer-found', (event) => {
         const peer = event.payload;
         log.debug(
-            `[sync] event: lan-peer-found ${peer.node_id} at ${peer.addrs.join(', ')}:${peer.port}`,
+            `[sync] event: peer-found ${peer.node_id} via ${peer.source} at ${peer.addrs.join(', ')}:${peer.port}`,
         );
-        syncStore.addLanPeer(peer);
+        syncStore.addPeer(peer);
         // A device we are paired with just became reachable, so try it now
         // rather than at the next backoff tick. A peer that is already
         // connected is left alone; the sweep skips it.
         if (get(pairedDevices).some((p) => p.peer_node_id === peer.node_id)) {
-            void reconnectAllPairedDevices('lan-peer-found');
+            void reconnectAllPairedDevices('peer-found');
         }
     });
 
-    const unlistenLanLost = await listen<{ node_id: string }>('lan-peer-lost', (event) => {
-        log.debug(`[sync] event: lan-peer-lost ${event.payload.node_id}`);
-        syncStore.removeLanPeer(event.payload.node_id);
-    });
+    const unlistenPeerLost = await listen<{ node_id: string; source: PeerSource }>(
+        'peer-lost',
+        (event) => {
+            const { node_id, source } = event.payload;
+            log.debug(`[sync] event: peer-lost ${node_id} via ${source}`);
+            syncStore.removePeer(node_id, source);
+        },
+    );
 
     cleanupFns = [
         unlistenPairRequest,
@@ -1071,8 +1173,8 @@ async function setupEventListeners(): Promise<void> {
         unlistenAnswer,
         unlistenIce,
         unlistenLanStatus,
-        unlistenLanFound,
-        unlistenLanLost,
+        unlistenPeerFound,
+        unlistenPeerLost,
     ];
     log.debug('[sync] Event listeners registered');
 }
@@ -1088,6 +1190,6 @@ export function shutdownSync(): void {
     suppressReconnect.clear();
     // Stop advertising before the window goes: a peer acting on an
     // advertisement we left behind would find a closed port.
-    void invoke('lan_stop').catch((e) => console.warn('[sync] lan_stop failed:', e));
+    void invoke('signaling_stop').catch((e) => console.warn('[sync] signaling_stop failed:', e));
     syncStore.setLanStatus('off');
 }

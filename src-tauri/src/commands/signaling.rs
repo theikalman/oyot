@@ -94,57 +94,99 @@ pub async fn signaling_publish_ice_candidate(
         .await
 }
 
-// --- the local network ----------------------------------------------------
+// --- starting and stopping the ways a peer is found -----------------------
 
-/// Start listening for signaling on this network, and advertise that we are.
-///
-/// Returns the port peers are told to connect back to, which is useful in a
-/// log and is how a caller can tell a restart from a no-op.
+/// What starting signaling came up as.
+#[derive(Debug, serde::Serialize)]
+pub struct SignalingStarted {
+    /// The port peers on this network are told to connect back to.
+    pub port: u16,
+    /// Whether that is the port a peer holding only a stored address assumes.
+    /// When it is not, this device is reachable locally and not remotely, and
+    /// the settings screen says so rather than letting it look healthy.
+    pub on_default_port: bool,
+    /// Why local discovery is not running, when it is not. Not an error for
+    /// the whole call: since ADR 0023 a device with no mDNS at all - iOS, or a
+    /// firewall that ate the prompt - still syncs with whatever it has an
+    /// address for.
+    pub discovery_error: Option<String>,
+}
+
+/// Start listening for signaling, and start both ways of finding a peer.
 ///
 /// The listener comes up before the advertisement, so there is no moment where
 /// a peer is invited to a port that is not accepting yet.
 #[tauri::command]
-pub async fn lan_start(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<u16, String> {
+pub async fn signaling_start(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<SignalingStarted, String> {
     let node_id = state.signaling_manager.get_node_id();
     if node_id.is_empty() {
-        return Err("cannot start local-network sync before the identity is loaded".to_string());
+        return Err("cannot start sync before the identity is loaded".to_string());
     }
-    trace!("[cmd] lan_start node_id={}", node_id);
+    trace!("[cmd] signaling_start node_id={}", node_id);
 
-    let inbound = state.signaling_manager.inbound(app, &node_id);
+    let inbound = state
+        .signaling_manager
+        .inbound(app, &node_id, &state.boot_id);
     let listener = crate::network::lan_signaling::listen(inbound).await?;
     let port = listener.port();
+    let on_default_port = listener.on_default_port();
 
     if let Some(previous) = state.lan_listener.lock().replace(listener) {
         previous.stop();
     }
 
-    if let Err(e) = state.lan.start(&node_id, &state.boot_id, port) {
-        // Nothing can reach the port we just bound, so do not leave it open.
-        if let Some(listener) = state.lan_listener.lock().take() {
-            listener.stop();
-        }
-        return Err(e);
-    }
+    // Discovery failing used to close the listener again, because a port
+    // nothing could be told about was of no use to anyone. A stored address
+    // names the port without being told, so the listener stays open and the
+    // failure is reported rather than raised.
+    let discovery_error = state.lan.start(&node_id, &state.boot_id, port).err();
+    state.remote.start();
 
-    Ok(port)
+    Ok(SignalingStarted {
+        port,
+        on_default_port,
+        discovery_error,
+    })
 }
 
-/// Stop advertising and stop listening.
+/// Stop advertising, stop probing, and stop listening.
 ///
 /// Advertising stops first: a peer that acts on a stale advertisement should
 /// find a closed port rather than an open one that no longer means anything.
 #[tauri::command]
-pub fn lan_stop(state: State<'_, AppState>) {
-    trace!("[cmd] lan_stop");
+pub fn signaling_stop(state: State<'_, AppState>) {
+    trace!("[cmd] signaling_stop");
     state.lan.stop();
+    state.remote.stop();
     if let Some(listener) = state.lan_listener.lock().take() {
         listener.stop();
     }
 }
 
-/// The devices visible on this network right now.
+/// Try every stored address now rather than at the next interval.
 #[tauri::command]
-pub fn lan_list_peers(state: State<'_, AppState>) -> Vec<crate::network::lan_discovery::LanPeer> {
-    state.lan.peers()
+pub fn probe_stored_addresses(state: State<'_, AppState>) {
+    trace!("[cmd] probe_stored_addresses");
+    state.remote.probe_now();
+}
+
+/// Every device this one can reach right now, by whichever route found it.
+#[tauri::command]
+pub fn list_reachable_peers(state: State<'_, AppState>) -> Vec<crate::network::peers::Peer> {
+    state.peers.all()
+}
+
+/// Which of this device's addresses a given peer would reach it at.
+///
+/// For rewriting an obfuscated ICE candidate (ADR 0023). `None` when the peer
+/// is not reachable, or when the route to it cannot be worked out, and the
+/// caller then publishes only what the WebView gave it.
+#[tauri::command]
+pub fn local_address_toward(state: State<'_, AppState>, peer_node_id: String) -> Option<String> {
+    let peer = state.peers.best(&peer_node_id)?;
+    let target = peer.addrs.first().copied()?;
+    crate::network::peers::local_source_address(target).map(|addr| addr.to_string())
 }
