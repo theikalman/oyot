@@ -1,6 +1,6 @@
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
-import type { Schema } from '@tiptap/pm/model';
+import type { Node as ProseMirrorNode, Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
 import { createContentExtensions } from './extensions';
 import { extractDocumentIndex, type DocumentIndex } from './documentIndex';
@@ -26,6 +26,16 @@ function schema(): Schema {
  * editor uses closes that gap at the point the content arrives.
  */
 export function indexFromYDoc(ydoc: Y.Doc): DocumentIndex {
-    const root = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(CONTENT_FIELD), schema());
-    return extractDocumentIndex(root);
+    return extractDocumentIndex(rootFromYDoc(ydoc));
+}
+
+/**
+ * The document itself, rendered against the editor's schema without an editor.
+ *
+ * Split out of `indexFromYDoc` for the exporter, which walks the same tree to
+ * write Markdown. Both had to render a document nobody has opened, and there
+ * is one schema and one cache of it to do that with.
+ */
+export function rootFromYDoc(ydoc: Y.Doc): ProseMirrorNode {
+    return yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(CONTENT_FIELD), schema());
 }
