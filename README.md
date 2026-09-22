@@ -22,6 +22,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Peer-to-peer sync.** Pair two devices and they reconcile their whole
   document set, including images, whenever they can reach each other. On the
   same network that needs no internet at all.
+- **Export.** Settings > Data writes every note out as a Markdown file, with
+  the images they embed, in one zip. Nothing here is a format you can only
+  read from inside Oyot.
 
 ## Sync
 

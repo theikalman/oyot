@@ -5,6 +5,8 @@
     import { canSignal, connectedPeers } from '$lib/stores/sync';
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
+    import { exportAllNotes } from '$lib/export';
+    import { toasts } from '$lib/services/toast';
 
     let currentTheme = $derived($theme);
     let syncSummary = $derived(
@@ -29,6 +31,60 @@
 
     function goToSyncSettings() {
         goto(resolve('/settings/sync'));
+    }
+
+    let exporting = $state(false);
+
+    // The whole corpus is rendered before the save dialog opens, which on a
+    // large library is a visible wait, so the button says what it is doing and
+    // cannot be pressed twice.
+    async function handleExport() {
+        if (exporting) return;
+        exporting = true;
+        try {
+            const summary = await exportAllNotes();
+            // Null means the user closed the save dialog; nothing to report.
+            if (!summary) return;
+
+            const parts = [`Exported ${plural(summary.noteCount, 'note')}`];
+            if (summary.attachmentCount > 0) {
+                parts.push(`and ${plural(summary.attachmentCount, 'image')}`);
+            }
+            toasts.success(`${parts.join(' ')} to ${filename(summary.path)}`);
+
+            // Both of these are partial exports, and the user is the only one
+            // who can tell whether that matters.
+            if (summary.missingAttachmentCount > 0) {
+                toasts.warning(
+                    `${plural(summary.missingAttachmentCount, 'image')} could not be included: ` +
+                        'their files have not reached this device yet.',
+                );
+            }
+            if (summary.failedTitles.length > 0) {
+                toasts.warning(
+                    `Could not read the contents of ${summary.failedTitles.join(', ')}.`,
+                );
+            }
+        } catch (error) {
+            console.error('Failed to export notes:', error);
+            toasts.error(`Export failed: ${message(error)}`);
+        } finally {
+            exporting = false;
+        }
+    }
+
+    function plural(count: number, noun: string): string {
+        return `${count} ${noun}${count === 1 ? '' : 's'}`;
+    }
+
+    function filename(path: string): string {
+        return path.split(/[\\/]/).pop() || path;
+    }
+
+    // A Tauri command rejects with a string, not an Error.
+    function message(error: unknown): string {
+        if (typeof error === 'string') return error;
+        return error instanceof Error ? error.message : 'unknown error';
     }
 </script>
 
@@ -79,6 +135,23 @@
                 </svg>
             </div>
         </button>
+    </section>
+
+    <section class="settings-section">
+        <h2 class="section-title">Data</h2>
+        <div class="section-card">
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-label">Export notes</span>
+                    <span class="setting-desc">
+                        Save every note as a Markdown file, with its images, in a zip
+                    </span>
+                </div>
+                <button class="action-btn" onclick={handleExport} disabled={exporting}>
+                    {exporting ? 'Exporting…' : 'Export'}
+                </button>
+            </div>
+        </div>
     </section>
 </div>
 
@@ -150,6 +223,28 @@
 
     .theme-toggle-btn:hover {
         background: var(--bg-hover);
+    }
+
+    .action-btn {
+        padding: 10px 18px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        color: var(--text-primary);
+        transition: background-color 0.15s;
+        white-space: nowrap;
+    }
+
+    .action-btn:hover:not(:disabled) {
+        background: var(--bg-hover);
+    }
+
+    .action-btn:disabled {
+        cursor: default;
+        color: var(--text-muted);
     }
 
     .settings-link {

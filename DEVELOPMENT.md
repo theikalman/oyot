@@ -126,6 +126,14 @@ the 10MB cap. A declared type that disagrees with the content is an error. SVG
 is excluded on purpose: it can carry script, and an attachment from a peer is
 rendered in the webview.
 
+**Writing out is the same shape as reading in.** Exporting notes
+(`export_notes`) takes rendered Markdown from the webview and does every
+filesystem operation in Rust, against a path the user picked in a native save
+dialog. The entry names inside the archive come from the webview, so they are
+validated rather than repaired: anything that is not recognisably one `.md`
+filename is refused, because a zip entry name is a path on whatever machine
+extracts it. See [ADR 0021](docs/decisions/0021-export-notes-as-a-markdown-archive.md).
+
 **The asset protocol is scoped to the attachment directory**
 (`$APPDATA/attachments/**` in `tauri.conf.json`), so a resolved `asset:` URL
 cannot reach anything else.

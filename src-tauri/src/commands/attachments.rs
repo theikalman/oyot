@@ -25,6 +25,16 @@ fn ext_for_mime(mime_type: &str) -> Option<&'static str> {
     }
 }
 
+/// The file an attachment is written as outside the app.
+///
+/// The same `<hash>.<ext>` it has in the attachment store, and `None` for a
+/// stored mime type this build has no extension for. Exposed so the export
+/// command and the Markdown links inside the archive are named by one
+/// function rather than two that have to agree.
+pub fn export_filename(hash: &str, mime_type: &str) -> Option<String> {
+    Some(format!("{hash}.{}", ext_for_mime(mime_type)?))
+}
+
 fn filename_for(hash: &str, mime_type: &str) -> Result<String, String> {
     let ext =
         ext_for_mime(mime_type).ok_or_else(|| format!("unsupported image type: {mime_type}"))?;
@@ -373,16 +383,19 @@ pub struct AttachmentManifestEntry {
 
 // Every attachment this device holds in full - advertised to a peer on connect
 // so it can pull the ones it is missing. Mirrors the document `sync-manifest`.
-#[tauri::command]
-pub fn list_attachment_manifest(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<AttachmentManifestEntry>, String> {
-    let db = state.db.lock();
-    // Only what a live document still embeds. Advertising everything we hold
-    // means a peer that has collected an orphan pulls it straight back from
-    // us on the next connect, and collects it again: the two devices trade
-    // the same dead blob forever. ADR 0005 deferred this scan; collecting
-    // unreferenced blobs is what makes it necessary.
+/// Every attachment a live document still embeds, and that we hold in full:
+/// `(hash, mime_type, local_path)`.
+///
+/// Only what a live document still embeds. Advertising everything we hold
+/// means a peer that has collected an orphan pulls it straight back from us on
+/// the next connect, and collects it again: the two devices trade the same
+/// dead blob forever. ADR 0005 deferred this scan; collecting unreferenced
+/// blobs is what makes it necessary.
+///
+/// Shared with the exporter, which wants exactly the same set for the same
+/// reason - a blob no note refers to is not part of the notes - and a second
+/// copy of this query would be one to keep in step by hand.
+pub fn referenced_attachments(db: &Connection) -> Result<Vec<(String, String, String)>, String> {
     let mut stmt = db
         .prepare(
             "SELECT a.hash, a.mime_type, a.local_path FROM attachments a \
@@ -401,11 +414,23 @@ pub fn list_attachment_manifest(
                 row.get::<_, String>(2)?,
             ))
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn list_attachment_manifest(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<AttachmentManifestEntry>, String> {
+    let rows = {
+        let db = state.db.lock();
+        referenced_attachments(&db)?
+    };
 
     let mut out = Vec::new();
-    for row in rows.flatten() {
-        let (hash, mime_type, local_path) = row;
+    for (hash, mime_type, local_path) in rows {
         let size = state
             .data_dir
             .join(&local_path)

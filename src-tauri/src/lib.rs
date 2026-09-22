@@ -505,6 +505,8 @@ pub fn run() {
             lan_list_peers,
             signaling_note_route_failure,
             signaling_clear_route_failure,
+            list_export_attachments,
+            export_notes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -38,6 +38,12 @@ rustls-native-certs = "0.7"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 tauri-plugin-os = "2"
+# Writing the export archive. `deflate` only: no encryption, no bzip2/zstd/lzma,
+# and no `time`/`chrono` feature, so nothing is pulled in to stamp entries we
+# do not stamp. Hand-rolling the container was the alternative and was rejected
+# - a central directory an extractor half-accepts is a bug the user only finds
+# after they have deleted the original.
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.5"

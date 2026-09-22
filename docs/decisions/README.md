@@ -9,28 +9,29 @@ picked what we picked. Each record is numbered and immutable once accepted
 
 ## Index
 
-| #                                                                  | Title                                                                               | Status   |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | -------- |
-| [0001](0001-mqtt-over-iroh-for-signaling.md)                       | Use MQTT over Iroh's public relay for WebRTC signaling                              | Accepted |
-| [0002](0002-signaling-retry-and-perfect-negotiation.md)            | MQTT reconnect and perfect negotiation for peer connections                         | Accepted |
-| [0003](0003-full-document-set-sync.md)                             | Reconcile the whole document set with a manifest + delta protocol                   | Accepted |
-| [0004](0004-manual-reconnect-and-per-direction-epoch.md)           | Bring back a manual "Reconnect", track the epoch per direction                      | Accepted |
-| [0005](0005-attachment-sync.md)                                    | Sync image attachments as content-addressed blobs alongside the CRDT                | Accepted |
-| [0006](0006-answer-every-sync-need.md)                             | Every `sync-need` gets an answer (`sync-none` when there is no delta)               | Accepted |
-| [0007](0007-drop-protocol-version.md)                              | Drop the sync protocol version and the `hello` handshake                            | Accepted |
-| [0008](0008-deletion-as-last-writer-wins.md)                       | Make deletion a last-writer-wins register                                           | Accepted |
-| [0009](0009-authenticated-signaling.md)                            | Sign signaling messages, make node_id a public key                                  | Accepted |
-| [0010](0010-apply-remote-updates-into-the-open-document.md)        | Apply remote updates into the open document, serialise writes per document          | Accepted |
-| [0011](0011-boot-id-for-signaling-sessions.md)                     | Identify a signaling session by boot id, not epoch alone                            | Accepted |
-| [0012](0012-deletion-propagates-transitively.md)                   | A deletion is complete, and propagates through devices that never held the document | Accepted |
-| [0013](0013-derived-rows-are-built-wherever-content-arrives.md)    | Build derived rows wherever content arrives, not only where it is typed             | Accepted |
-| [0014](0014-the-merged-blob-is-the-only-content-store.md)          | The merged blob is the only content store                                           | Accepted |
-| [0015](0015-the-url-is-the-open-document.md)                       | The URL says which document is open, and the shell owns startup                     | Accepted |
-| [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md)          | Binary chunk frames, and a development broker that is anonymous on purpose          | Accepted |
-| [0017](0017-a-cross-document-todo-index.md)                        | A cross-document todo index, addressed by ordinal                                   | Accepted |
-| [0018](0018-local-network-sync-as-a-second-signaling-transport.md) | Sync on the local network by adding a second signaling transport                    | Accepted |
-| [0019](0019-tags-as-inline-nodes-with-one-spelling.md)             | Tags are inline nodes, and a tag has exactly one spelling                           | Accepted |
-| [0020](0020-renaming-a-tag-edits-every-note-that-carries-it.md)    | Renaming a tag edits every note that carries it, one attribute at a time            | Accepted |
+| #                                                                  | Title                                                                                | Status   |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | -------- |
+| [0001](0001-mqtt-over-iroh-for-signaling.md)                       | Use MQTT over Iroh's public relay for WebRTC signaling                               | Accepted |
+| [0002](0002-signaling-retry-and-perfect-negotiation.md)            | MQTT reconnect and perfect negotiation for peer connections                          | Accepted |
+| [0003](0003-full-document-set-sync.md)                             | Reconcile the whole document set with a manifest + delta protocol                    | Accepted |
+| [0004](0004-manual-reconnect-and-per-direction-epoch.md)           | Bring back a manual "Reconnect", track the epoch per direction                       | Accepted |
+| [0005](0005-attachment-sync.md)                                    | Sync image attachments as content-addressed blobs alongside the CRDT                 | Accepted |
+| [0006](0006-answer-every-sync-need.md)                             | Every `sync-need` gets an answer (`sync-none` when there is no delta)                | Accepted |
+| [0007](0007-drop-protocol-version.md)                              | Drop the sync protocol version and the `hello` handshake                             | Accepted |
+| [0008](0008-deletion-as-last-writer-wins.md)                       | Make deletion a last-writer-wins register                                            | Accepted |
+| [0009](0009-authenticated-signaling.md)                            | Sign signaling messages, make node_id a public key                                   | Accepted |
+| [0010](0010-apply-remote-updates-into-the-open-document.md)        | Apply remote updates into the open document, serialise writes per document           | Accepted |
+| [0011](0011-boot-id-for-signaling-sessions.md)                     | Identify a signaling session by boot id, not epoch alone                             | Accepted |
+| [0012](0012-deletion-propagates-transitively.md)                   | A deletion is complete, and propagates through devices that never held the document  | Accepted |
+| [0013](0013-derived-rows-are-built-wherever-content-arrives.md)    | Build derived rows wherever content arrives, not only where it is typed              | Accepted |
+| [0014](0014-the-merged-blob-is-the-only-content-store.md)          | The merged blob is the only content store                                            | Accepted |
+| [0015](0015-the-url-is-the-open-document.md)                       | The URL says which document is open, and the shell owns startup                      | Accepted |
+| [0016](0016-binary-chunks-and-an-anonymous-dev-broker.md)          | Binary chunk frames, and a development broker that is anonymous on purpose           | Accepted |
+| [0017](0017-a-cross-document-todo-index.md)                        | A cross-document todo index, addressed by ordinal                                    | Accepted |
+| [0018](0018-local-network-sync-as-a-second-signaling-transport.md) | Sync on the local network by adding a second signaling transport                     | Accepted |
+| [0019](0019-tags-as-inline-nodes-with-one-spelling.md)             | Tags are inline nodes, and a tag has exactly one spelling                            | Accepted |
+| [0020](0020-renaming-a-tag-edits-every-note-that-carries-it.md)    | Renaming a tag edits every note that carries it, one attribute at a time             | Accepted |
+| [0021](0021-export-notes-as-a-markdown-archive.md)                 | Export every note as a Markdown archive, rendered in the webview and written in Rust | Accepted |
 
 ## Format
 
