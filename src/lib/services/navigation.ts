@@ -39,6 +39,11 @@ export function openTodos(): Promise<void> {
     return goto(resolve('/todos'));
 }
 
+// The journal index: every day the user has a journal for.
+export function openJournals(): Promise<void> {
+    return goto(resolve('/journals'));
+}
+
 // The tag index: every tag any note or journal carries.
 export function openTags(): Promise<void> {
     return goto(resolve('/tags'));
