@@ -1,6 +1,11 @@
 #[macro_use]
 mod logging;
 
+// Nothing outside its tests calls into this yet: the commands and the
+// settings page that use it are the next step (ADR 0024). The allow goes
+// when they land.
+#[allow(dead_code)]
+mod backup;
 mod commands;
 mod crypto;
 mod db;
