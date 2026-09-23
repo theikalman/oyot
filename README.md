@@ -29,6 +29,10 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Export.** Settings > Data writes every note out as a Markdown file, with
   the images they embed, in one zip. Nothing here is a format you can only
   read from inside Oyot.
+- **Backup and restore.** Settings > Backup saves the whole library, images
+  included, to one file wherever you choose, and imports one back. An import
+  merges into what is already there and never removes a note, so it is safe
+  to run on a device you are still using.
 
 ## Sync
 

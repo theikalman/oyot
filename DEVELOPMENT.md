@@ -134,6 +134,21 @@ validated rather than repaired: anything that is not recognisably one `.md`
 filename is refused, because a zip entry name is a path on whatever machine
 extracts it. See [ADR 0021](docs/decisions/0021-export-notes-as-a-markdown-archive.md).
 
+**Backups are written and read in Rust, and a backup being imported is
+hostile until checked.** `create_local_backup` and `open_local_backup` open
+their dialogs in Rust, like the export. On Android and iOS the dialog returns a
+content URI or a security-scoped URL rather than a path, which is why
+`tauri-plugin-fs` is registered: for its Rust API only, with no capability
+granting its commands, so the webview gains nothing by it. A picked backup is
+copied into the app's cache and checked in full before anything is imported:
+its format and version, size limits on every entry and on the total (the
+zip-bomb defence), and a SHA-256 for every entry. Entries are read by name into
+memory and never extracted. The webview then pulls one checked document at a
+time and merges it through the sync path, and Rust stores the images itself
+through `store_attachment`. A backup never contains the signing key, the
+pairings or the stored addresses. See
+[ADR 0024](docs/decisions/0024-back-up-the-crdt-and-import-by-merging.md).
+
 **The asset protocol is scoped to the attachment directory**
 (`$APPDATA/attachments/**` in `tauri.conf.json`), so a resolved `asset:` URL
 cannot reach anything else.

@@ -6,7 +6,10 @@
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
     import { exportAllNotes } from '$lib/export';
+    import { getBackupStatus, type BackupStatus } from '$lib/backup';
+    import { formatLastSync } from '$lib/stores/sync';
     import { toasts } from '$lib/services/toast';
+    import { onMount } from 'svelte';
 
     let currentTheme = $derived($theme);
     let syncSummary = $derived(
@@ -32,6 +35,27 @@
     function goToSyncSettings() {
         goto(resolve('/settings/sync'));
     }
+
+    function goToBackupSettings() {
+        goto(resolve('/settings/backup'));
+    }
+
+    let backupStatus = $state<BackupStatus | null>(null);
+    let backupSummary = $derived.by(() => {
+        if (!backupStatus) return 'Back up to a file, or import a backup';
+        const last = backupStatus.lastSuccess;
+        // A failure since the last good backup is the thing worth seeing
+        // from here; the page it opens says the rest.
+        if (backupStatus.latestAttempt?.status === 'failed') return 'The last backup failed';
+        if (!last) return 'No backup yet';
+        return `Last backup ${formatLastSync(last.finishedAt ?? last.startedAt).toLowerCase()}`;
+    });
+
+    onMount(() => {
+        getBackupStatus()
+            .then((status) => (backupStatus = status))
+            .catch((error) => console.error('Failed to load the backup status:', error));
+    });
 
     let exporting = $state(false);
 
@@ -119,6 +143,31 @@
                     <span class="setting-desc">
                         {syncSummary} • Manage paired devices and sync options
                     </span>
+                </div>
+                <svg
+                    class="chevron"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M9 18l6-6-6-6" />
+                </svg>
+            </div>
+        </button>
+    </section>
+
+    <section class="settings-section">
+        <h2 class="section-title">Backup</h2>
+        <button class="section-card settings-link" onclick={goToBackupSettings}>
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-label">Backup & restore</span>
+                    <span class="setting-desc">{backupSummary}</span>
                 </div>
                 <svg
                     class="chevron"

@@ -91,8 +91,9 @@ while it runs.
 The archive is built in a staging directory under the app's cache directory,
 and only then delivered to its destination, disk or remote (ADR 0025). A failed
 write never leaves a partial file where the user will later look for a backup.
-A manual backup asks the editor to flush its pending save first; a scheduled
-one does not (ADR 0026).
+A manual backup needs no flush from the editor: it is started from
+settings, and leaving the editor to get there has already written its pending
+save. A scheduled one takes what is saved (ADR 0026).
 
 **4. Import merges, and it goes through the sync path.** An import is a peer
 that happens to be a file. For each document, the decision is the one
@@ -118,6 +119,10 @@ by the next sync anyway.
 
 Import is idempotent. Merging a state a document already contains changes
 nothing, so importing the same backup twice is harmless.
+
+Preferences follow the same rule of filling in and never overriding: the
+backup's theme is taken only on a device where nobody has chosen one, which is
+the device being set up from nothing that it exists for.
 
 **5. The archive is validated before anything is imported, and entry names are
 never paths.** Rust stages the file, then checks that:

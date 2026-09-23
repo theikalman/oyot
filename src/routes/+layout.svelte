@@ -51,6 +51,8 @@
                 return 'Settings';
             case '/settings/sync':
                 return 'Sync';
+            case '/settings/backup':
+                return 'Backup';
             default:
                 return '';
         }

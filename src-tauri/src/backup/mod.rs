@@ -9,8 +9,10 @@
 //! See docs/decisions/0024-back-up-the-crdt-and-import-by-merging.md.
 
 pub mod format;
+pub mod history;
 pub mod reader;
 pub mod snapshot;
+pub mod staging;
 pub mod writer;
 
 #[cfg(test)]

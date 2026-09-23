@@ -1,10 +1,6 @@
 #[macro_use]
 mod logging;
 
-// Nothing outside its tests calls into this yet: the commands and the
-// settings page that use it are the next step (ADR 0024). The allow goes
-// when they land.
-#[allow(dead_code)]
 mod backup;
 mod commands;
 mod crypto;
@@ -151,6 +147,30 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             last_ok INTEGER,
             PRIMARY KEY (user_id, peer_node_id, host, port)
         );
+
+        -- Every backup attempt, finished or not (ADR 0026). What the settings
+        -- page reads to say when the last backup was made, and where a
+        -- failure is recorded. `location` is where a backup can be found
+        -- again, kept only for backups something will prune.
+        CREATE TABLE IF NOT EXISTS backup_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scheduled INTEGER NOT NULL DEFAULT 0,
+            destination TEXT NOT NULL,
+            destination_label TEXT NOT NULL,
+            location TEXT,
+            started_at INTEGER NOT NULL,
+            finished_at INTEGER,
+            status TEXT NOT NULL
+                CHECK(status IN ('running', 'success', 'failed', 'skipped')),
+            error TEXT,
+            size_bytes INTEGER,
+            document_count INTEGER,
+            attachment_count INTEGER,
+            skipped_attachments INTEGER,
+            skipped_documents INTEGER,
+            fingerprint TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_history_started ON backup_history(started_at);
         ",
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;
@@ -168,7 +188,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -448,6 +468,37 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v10: the backup history (ADR 0026). Nothing is backfilled: no backup
+    // was ever made before this table existed.
+    if version < 10 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS backup_history (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 scheduled INTEGER NOT NULL DEFAULT 0,
+                 destination TEXT NOT NULL,
+                 destination_label TEXT NOT NULL,
+                 location TEXT,
+                 started_at INTEGER NOT NULL,
+                 finished_at INTEGER,
+                 status TEXT NOT NULL
+                     CHECK(status IN ('running', 'success', 'failed', 'skipped')),
+                 error TEXT,
+                 size_bytes INTEGER,
+                 document_count INTEGER,
+                 attachment_count INTEGER,
+                 skipped_attachments INTEGER,
+                 skipped_documents INTEGER,
+                 fingerprint TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_backup_history_started
+                 ON backup_history(started_at);",
+        )
+        .map_err(|e| format!("Migration v10 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 10;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -456,6 +507,10 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Registered for its Rust API: a backup is written to, and read from,
+        // whatever a phone's dialog returns. No capability grants its
+        // commands, so the webview still has no filesystem access.
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init());
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -469,7 +524,14 @@ pub fn run() {
                 let db = state.db.lock();
                 setup_database_tables(&db)?;
                 run_migrations(&db)?;
+                // Nothing can be backing up yet, so a backup still marked
+                // running belonged to a process that died partway through it.
+                let now = chrono::Utc::now().timestamp_millis();
+                if let Err(e) = crate::backup::history::mark_interrupted(&db, now) {
+                    warn_log!("[backup] {e}");
+                }
             }
+            clear_staging(app.handle());
 
             {
                 let db = state.db.lock();
@@ -479,6 +541,7 @@ pub fn run() {
             }
 
             app.manage(state);
+            app.manage(BackupState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -536,6 +599,13 @@ pub fn run() {
             list_reachable_peers,
             list_export_attachments,
             export_notes,
+            create_local_backup,
+            open_local_backup,
+            backup_session_read_state,
+            backup_session_import_attachments,
+            close_backup_session,
+            get_backup_status,
+            list_backup_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1089,5 +1159,32 @@ mod migration_tests {
             .query_row("SELECT COUNT(*) FROM document_tags", [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 0);
+    }
+
+    // Every install shipped so far. Nothing to backfill: no backup could have
+    // been made before the table to record it in existed.
+    #[test]
+    fn migrates_v9_to_v10_and_adds_the_backup_history() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("DROP TABLE backup_history; PRAGMA user_version = 9;")
+            .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let id = crate::backup::history::start(&db, false, "local", "b.zip", 1).unwrap();
+        crate::backup::history::fail(&db, id, 2, "disk full").unwrap();
+        let status = crate::backup::history::status(&db).unwrap();
+        assert_eq!(status.latest_attempt.unwrap().status, "failed");
+
+        // The status is constrained, so a typo in a later change fails loudly
+        // rather than writing a row nothing reads.
+        assert!(db
+            .execute(
+                "UPDATE backup_history SET status = 'succeeded' WHERE id = ?1",
+                [id],
+            )
+            .is_err());
     }
 }

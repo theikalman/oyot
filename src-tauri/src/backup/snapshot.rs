@@ -181,6 +181,9 @@ pub(crate) fn fingerprint(
 }
 
 /// The fingerprint of the library as it stands, without writing a backup.
+// The scheduler's skip-if-unchanged check (ADR 0026) is its caller, and it has
+// not landed yet; until then only the tests call it.
+#[allow(dead_code)]
 pub fn library_fingerprint(conn: &Connection, preferences: &Preferences) -> Result<String, String> {
     let tx = conn
         .unchecked_transaction()

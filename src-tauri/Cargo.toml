@@ -21,6 +21,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# For its Rust API only, which opens what a dialog returns on a phone: a
+# content URI on Android, a security-scoped file URL on iOS. The dialog plugin
+# already depends on it. No capability grants its commands, so the webview
+# gains no filesystem access by it being registered.
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -41,6 +46,9 @@ tauri-plugin-os = "2"
 # - a central directory an extractor half-accepts is a bug the user only finds
 # after they have deleted the original.
 zip = { version = "8", default-features = false, features = ["deflate"] }
+# Naming a backup file after a phone's content URI, whose last segment is
+# percent-encoded. Already in the tree through `url`.
+percent-encoding = "2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.5"

@@ -5,3 +5,4 @@ export { default as PeerAddresses } from './PeerAddresses.svelte';
 export { default as UnpairedAddressList } from './UnpairedAddressList.svelte';
 export { default as ConnectedPeerList } from './ConnectedPeerList.svelte';
 export { default as PairingDialog } from './PairingDialog.svelte';
+export { default as ImportBackupDialog } from './ImportBackupDialog.svelte';

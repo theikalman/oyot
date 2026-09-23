@@ -49,8 +49,9 @@ function readIndex(indexer: RemoteIndexer | null, ydoc: Y.Doc): DocumentIndex | 
     }
 }
 
-// Rust `DocSyncEntry` shape (snake_case, hash as a byte array).
-interface RawSyncEntry {
+// Rust `DocSyncEntry` shape: snake_case, the hash already base64. A backup
+// being imported describes its documents in the same shape.
+export interface RawSyncEntry {
     id: string;
     doc_type: string;
     title: string;
@@ -61,6 +62,20 @@ interface RawSyncEntry {
     deleted_at: number | null;
     lifecycle_updated_at: number;
     content_hash: string | null; // base64
+}
+
+export function toManifestEntry(r: RawSyncEntry): ManifestEntry {
+    return {
+        id: r.id,
+        docType: r.doc_type,
+        title: r.title,
+        titleUpdatedAt: r.title_updated_at,
+        createdAt: r.created_at,
+        isDeleted: r.is_deleted,
+        deletedAt: r.deleted_at,
+        lifecycleUpdatedAt: r.lifecycle_updated_at,
+        contentHash: r.content_hash,
+    };
 }
 
 function toSummary(doc: Document): DocumentSummary {
@@ -92,17 +107,7 @@ export class DocumentRepository {
 
     async listSyncState(): Promise<ManifestEntry[]> {
         const rows = await invoke<RawSyncEntry[]>('list_document_sync_state');
-        return rows.map((r) => ({
-            id: r.id,
-            docType: r.doc_type,
-            title: r.title,
-            titleUpdatedAt: r.title_updated_at,
-            createdAt: r.created_at,
-            isDeleted: r.is_deleted,
-            deletedAt: r.deleted_at,
-            lifecycleUpdatedAt: r.lifecycle_updated_at,
-            contentHash: r.content_hash,
-        }));
+        return rows.map(toManifestEntry);
     }
 
     private async loadDoc(docId: string): Promise<Y.Doc> {

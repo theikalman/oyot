@@ -83,9 +83,11 @@ Until that exists, a schedule on a phone can only target a linked provider.
 starts the sequence over. Retries are rows too, grouped together in the history
 list.
 
-**8. A scheduled backup does not wait for the editor.** A manual backup asks the
-editor to flush its pending save first. A scheduled one takes what is already
-saved: the debounce window is a few seconds, and the next backup picks it up.
+**8. A scheduled backup does not wait for the editor.** A manual backup is
+started from settings, and leaving the editor to get there has already written
+its pending save. A scheduled one can run while a note is open, and takes what
+is already saved: the debounce window is a few seconds, and the next backup
+picks it up.
 
 ## Alternatives considered
 
