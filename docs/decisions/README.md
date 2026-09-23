@@ -34,6 +34,9 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0021](0021-export-notes-as-a-markdown-archive.md)                 | Export every note as a Markdown archive, rendered in the webview and written in Rust | Accepted                                                                         |
 | [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md) | Drop the broker; the local network is the only way devices find each other           | Accepted                                                                         |
 | [0023](0023-reach-a-peer-at-an-address-you-already-know.md)        | Reach a peer at an address you already know, over a VPN the user already runs        | Accepted                                                                         |
+| [0024](0024-back-up-the-crdt-and-import-by-merging.md)             | Back up the CRDT itself, and import a backup by merging it like a peer               | Proposed                                                                         |
+| [0025](0025-remote-backups-behind-one-trait-google-drive-first.md) | Remote backup destinations behind one trait, Google Drive linked like an account     | Proposed                                                                         |
+| [0026](0026-scheduled-backups-run-while-the-app-is-open.md)        | Scheduled backups run while the app is open, and every attempt is recorded           | Proposed                                                                         |
 
 ## Format
 
