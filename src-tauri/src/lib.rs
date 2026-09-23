@@ -542,6 +542,9 @@ pub fn run() {
 
             app.manage(state);
             app.manage(BackupState::default());
+            // Whatever remote destinations this build has credentials for
+            // (ADR 0025). None, in a build without them.
+            app.manage(crate::backup::remote::Providers::for_this_build());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -606,6 +609,14 @@ pub fn run() {
             close_backup_session,
             get_backup_status,
             list_backup_history,
+            list_backup_providers,
+            link_backup_provider,
+            cancel_backup_link,
+            unlink_backup_provider,
+            create_remote_backup,
+            list_remote_backups,
+            open_remote_backup,
+            delete_remote_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

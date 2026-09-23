@@ -49,6 +49,11 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # Naming a backup file after a phone's content URI, whose last segment is
 # percent-encoded. Already in the tree through `url`.
 percent-encoding = "2"
+# The backup provider trait is async and used as a trait object, one per
+# remote destination (ADR 0025). Already in the tree.
+async-trait = "0.1"
+# Building sign-in and Drive addresses, and form bodies. Already in the tree.
+url = "2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.5"
@@ -60,6 +65,25 @@ tauri-plugin-barcode-scanner = "2.4.5"
 # Info.plist entry, and plugs into the same `Discovery` surface.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 mdns-sd = "0.21"
+
+# Google Drive backups, which are desktop only for now (ADR 0025, decision 7).
+# Kept to the desktop targets so the phone builds are untouched until the
+# phone sign-in exists.
+#
+# reqwest is already in the tree through Tauri, without TLS. It gets rustls on
+# the `ring` provider rather than its default `aws-lc-rs`: `ring` is what Tauri
+# itself selects when it enables rustls, and one crypto library is enough.
+# `rustls-no-provider` leaves installing that provider to us, which the Drive
+# client does before it builds one. Default features off: no HTTP/2, no
+# proxy discovery, nothing a handful of Drive API calls need.
+#
+# keyring keeps the refresh token in the OS keychain: Keychain on macOS,
+# Credential Manager on Windows, Secret Service over zbus on Linux, which needs
+# no system library.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+keyring = "4"
 
 
 # Defaults left the release binary unoptimised for size, which matters most on

@@ -1,5 +1,6 @@
 pub mod attachments;
 pub mod backup;
+pub mod backup_remote;
 pub mod config;
 pub mod documents;
 pub mod export;
@@ -9,6 +10,7 @@ pub mod sync;
 
 pub use attachments::*;
 pub use backup::*;
+pub use backup_remote::*;
 pub use config::{get_theme, save_theme};
 pub use documents::*;
 pub use export::*;

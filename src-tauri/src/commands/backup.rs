@@ -15,7 +15,7 @@ use crate::backup::history::{self, BackupRecord, BackupStatus};
 use crate::backup::reader::BackupReader;
 use crate::backup::snapshot::open_snapshot;
 use crate::backup::staging::{self, StagedFile};
-use crate::backup::writer::write_backup;
+use crate::backup::writer::{write_backup, BackupSummary};
 use crate::commands::attachments::{
     held_attachments, store_checked_attachment, AttachmentDownloadedEvent,
 };
@@ -27,28 +27,32 @@ use serde::Serialize;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
 /// Emitted whenever the history changes, so whatever shows "last backup" can
 /// read it again.
-const STATUS_EVENT: &str = "backup-status-changed";
+pub(super) const STATUS_EVENT: &str = "backup-status-changed";
 
 /// Largest file we will copy in to check. A backup's entries are capped, so
 /// anything much bigger than their total is not a backup, and is refused
 /// before it is copied rather than after.
-const MAX_BACKUP_FILE_BYTES: u64 =
+pub(super) const MAX_BACKUP_FILE_BYTES: u64 =
     Limits::STANDARD.max_total_bytes + Limits::STANDARD.max_json_bytes + 64 * 1024 * 1024;
 
 /// Backup state that lives for the length of the process.
 #[derive(Default)]
 pub struct BackupState {
     /// Set for the length of one backup, so only one runs at a time.
-    running: AtomicBool,
+    pub(super) running: AtomicBool,
     /// The backup open for import, if any. One at a time: opening another
     /// closes it.
     import: parking_lot::Mutex<Option<ImportSession>>,
+    /// The account link in progress, and how to cancel it. Numbered, so an
+    /// attempt that ends only clears its own slot.
+    pub(super) linking: parking_lot::Mutex<Option<(u64, tokio::sync::oneshot::Sender<()>)>>,
+    pub(super) link_attempts: AtomicU64,
 }
 
 /// A backup opened for import.
@@ -63,10 +67,10 @@ struct ImportSession {
 }
 
 /// Held for the length of one backup, and released however it ends.
-struct Running<'a>(&'a AtomicBool);
+pub(super) struct Running<'a>(&'a AtomicBool);
 
 impl<'a> Running<'a> {
-    fn claim(flag: &'a AtomicBool) -> Option<Self> {
+    pub(super) fn claim(flag: &'a AtomicBool) -> Option<Self> {
         flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()
             .map(|_| Running(flag))
@@ -79,11 +83,11 @@ impl Drop for Running<'_> {
     }
 }
 
-fn now_ms() -> i64 {
+pub(super) fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn staging_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(super) fn staging_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_cache_dir()
         .map(|dir| dir.join("backup"))
@@ -99,6 +103,52 @@ pub fn clear_staging(app: &AppHandle) {
 }
 
 // --- backing up ------------------------------------------------------------
+
+/// Build a backup of the whole library in staging. The staged file is removed
+/// when the returned handle is dropped, delivered or not.
+///
+/// Off the async runtime: a large library is minutes of disk work, which
+/// would otherwise hold one of the threads signaling runs on.
+pub(super) async fn build_staged(
+    app: &AppHandle,
+    data_dir: PathBuf,
+    created_at: i64,
+) -> Result<(StagedFile, BackupSummary), String> {
+    let staging = staging_dir(app)?;
+    let preferences = Preferences {
+        theme: super::config::get_theme(app.clone()),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let staged = StagedFile::new(&staging, "backup")?;
+        let conn = open_snapshot(&data_dir.join(DB_FILE))?;
+        let summary = write_backup(&conn, &data_dir, &preferences, created_at, staged.path())?;
+        Ok((staged, summary))
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("the backup stopped unexpectedly: {e}")))
+}
+
+/// Finish an attempt's history row, and tell anything showing it. A failure
+/// to record is logged rather than returned: the backup itself is the answer
+/// the caller is waiting for.
+pub(super) fn record_outcome(
+    app: &AppHandle,
+    state: &AppState,
+    attempt: i64,
+    outcome: Result<(&BackupSummary, Option<&str>), &str>,
+) {
+    {
+        let db = state.db.lock();
+        let recorded = match outcome {
+            Ok((summary, location)) => history::succeed(&db, attempt, now_ms(), summary, location),
+            Err(e) => history::fail(&db, attempt, now_ms(), e),
+        };
+        if let Err(e) = recorded {
+            warn_log!("[backup] {e}");
+        }
+    }
+    let _ = app.emit(STATUS_EVENT, ());
+}
 
 #[derive(Debug, Serialize)]
 pub struct LocalBackupResult {
@@ -129,7 +179,6 @@ pub async fn create_local_backup(
 
     let started = chrono::Local::now();
     let suggested = suggested_filename(&started);
-    let staging = staging_dir(&app)?;
 
     // Blocking, which is why this command is async: Tauri runs an async
     // command off the main thread, which is where the plugin requires this
@@ -151,37 +200,26 @@ pub async fn create_local_backup(
     };
     let _ = app.emit(STATUS_EVENT, ());
 
-    let data_dir = state.data_dir.clone();
-    let preferences = Preferences {
-        theme: super::config::get_theme(app.clone()),
-    };
-    let created_at = started.timestamp_millis();
     let handle = app.clone();
-    // Off the async runtime: a large library is minutes of disk work, which
-    // would otherwise hold one of the threads signaling runs on.
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let staged = StagedFile::new(&staging, "backup")?;
-        let summary = {
-            let conn = open_snapshot(&data_dir.join(DB_FILE))?;
-            write_backup(&conn, &data_dir, &preferences, created_at, staged.path())?
-        };
-        deliver(&handle, staged.path(), &destination)?;
-        Ok::<_, String>(summary)
-    })
-    .await
-    .unwrap_or_else(|e| Err(format!("the backup stopped unexpectedly: {e}")));
-
-    {
-        let db = state.db.lock();
-        let recorded = match &outcome {
-            Ok(summary) => history::succeed(&db, attempt, now_ms(), summary, None),
-            Err(e) => history::fail(&db, attempt, now_ms(), e),
-        };
-        if let Err(e) = recorded {
-            warn_log!("[backup] {e}");
-        }
+    let outcome = async {
+        let (staged, summary) =
+            build_staged(&app, state.data_dir.clone(), started.timestamp_millis()).await?;
+        tauri::async_runtime::spawn_blocking(move || {
+            deliver(&handle, staged.path(), &destination).map(|()| summary)
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("saving the backup stopped unexpectedly: {e}")))
     }
-    let _ = app.emit(STATUS_EVENT, ());
+    .await;
+    record_outcome(
+        &app,
+        &state,
+        attempt,
+        outcome
+            .as_ref()
+            .map(|summary| (summary, None))
+            .map_err(String::as_str),
+    );
 
     let summary = outcome?;
     trace!(
@@ -337,19 +375,36 @@ pub async fn open_local_backup(
     .await
     .unwrap_or_else(|e| Err(format!("reading the backup stopped unexpectedly: {e}")))?;
 
+    start_session(&state, &backup, reader, staged).map(Some)
+}
+
+/// Hold a checked backup open for import, replacing any that was open, and
+/// describe it for the preview.
+pub(super) fn start_session(
+    state: &AppState,
+    backup: &BackupState,
+    reader: BackupReader,
+    staged: StagedFile,
+) -> Result<BackupPreview, String> {
     let held = {
         let db = state.db.lock();
         held_attachments(&db, &state.data_dir)?
     };
     let session_id = uuid::Uuid::new_v4().to_string();
-    let preview = preview_of(&reader, &held, &session_id)?;
-
+    let preview = match preview_of(&reader, &held, &session_id) {
+        Ok(preview) => preview,
+        Err(e) => {
+            // The reader first, then the file it holds open.
+            drop(reader);
+            return Err(e);
+        }
+    };
     *backup.import.lock() = Some(ImportSession {
         id: session_id,
         reader,
         _staged: staged,
     });
-    Ok(Some(preview))
+    Ok(preview)
 }
 
 /// Copy the picked file into staging, so the import reads a file nothing

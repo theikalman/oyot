@@ -39,6 +39,8 @@ pub struct BackupSummary {
     pub size_bytes: u64,
     /// See `snapshot::fingerprint`.
     pub fingerprint: String,
+    /// The name of the device that took it, as recorded in the manifest.
+    pub device_name: String,
 }
 
 /// Write a backup of the whole library to `destination`.
@@ -170,6 +172,7 @@ fn write_archive(
     }
 
     let document_count = documents.iter().filter(|d| !d.is_deleted).count();
+    let device_name = snapshot.device_name.unwrap_or_default();
 
     let documents_json = serde_json::to_vec(&DocumentsFile { documents })
         .map_err(|e| format!("could not write the document list: {e}"))?;
@@ -197,7 +200,7 @@ fn write_archive(
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         created_at,
         source_device: SourceDevice {
-            display_name: snapshot.device_name.unwrap_or_default(),
+            display_name: device_name.clone(),
         },
         document_count,
         attachment_count,
@@ -212,6 +215,7 @@ fn write_archive(
         skipped_documents,
         size_bytes,
         fingerprint,
+        device_name,
     })
 }
 

@@ -149,6 +149,19 @@ through `store_attachment`. A backup never contains the signing key, the
 pairings or the stored addresses. See
 [ADR 0024](docs/decisions/0024-back-up-the-crdt-and-import-by-merging.md).
 
+**A linked Google account's tokens never reach the webview.** Linking opens
+Google's sign-in in the system browser, never in the app, and the answer comes
+back to a one-shot listener on `127.0.0.1` at a random port. The code in it is
+bound to the attempt by PKCE and a random `state`, so something else on the
+machine that answers the listener gets nothing it can use. The exchange happens
+in Rust; the refresh token goes into the OS keychain and the access token stays
+in memory. The webview sees the account's email and the list of backups. The
+only scope asked for is `drive.file`, so Oyot can see the files it created and
+nothing else in the user's Drive. A Drive file id arrives from the webview, so
+it is held to the characters ids are made of before it goes into a URL, and a
+downloaded backup is checked exactly as a file from disk is. See
+[ADR 0025](docs/decisions/0025-remote-backups-behind-one-trait-google-drive-first.md).
+
 **The asset protocol is scoped to the attachment directory**
 (`$APPDATA/attachments/**` in `tauri.conf.json`), so a resolved `asset:` URL
 cannot reach anything else.
@@ -397,6 +410,53 @@ row already says which device this is. The only addresses not shown there are
 ones belonging to a pairing that never completed, since an address is stored
 before the request goes out; `UnpairedAddressList.svelte` is where those can be
 removed, and it renders nothing at all when there are none.
+
+## Google Drive backups
+
+A build offers Google Drive only when it was compiled with a Google OAuth
+client. Without one, the Backup page offers files alone, which is what a
+development build does by default. Desktop only for now: the phones need a
+different sign-in ([ADR 0025](docs/decisions/0025-remote-backups-behind-one-trait-google-drive-first.md),
+decision 7).
+
+### Setting up the Google side
+
+Once, by whoever publishes Oyot, in the [Google Cloud console](https://console.cloud.google.com/):
+
+1. Create a project.
+2. In APIs and services, enable the **Google Drive API**.
+3. In the Google Auth Platform, set up the consent screen: user type
+   **External**, the app's name, and a support email. Under data access, add
+   one scope, `https://www.googleapis.com/auth/drive.file`, and nothing else.
+4. Under audience, while the app is in **Testing**, add every Google account
+   that should be able to link as a test user. Google allows 100 of them, and
+   expires a test user's link after seven days; linking again restores it.
+   Publishing the app lifts both limits. It needs a home page and a privacy
+   policy URL, and because `drive.file` is a non-sensitive scope, no security
+   assessment.
+5. Under clients, create a client of type **Desktop app**, and keep its client
+   id and client secret.
+
+### Building with it
+
+The two values are read when the Rust side is compiled, so set them before
+building, and changing them rebuilds it:
+
+```bash
+export OYOT_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+export OYOT_GOOGLE_CLIENT_SECRET=your-client-secret
+npm run tauri dev
+```
+
+Keep them out of git. Google does not treat a Desktop client's secret as
+confidential, since it ships inside the app, but there is no reason to publish
+it either. With direnv, `dotenv_if_exists` in `.envrc` and the two lines in a
+`.env` file, which is git-ignored, does it.
+
+A linked account lives in the OS keychain, under the service
+`com.ajiyakin.oyot` and the account `google-drive`. macOS may ask to allow
+access to it after a rebuild, because a development build is signed afresh
+each time. Deleting that entry is the same as unlinking without telling Google.
 
 ## Project Structure
 

@@ -196,6 +196,7 @@ mod tests {
             skipped_documents: vec!["Huge".to_string()],
             size_bytes: 4096,
             fingerprint: "f".repeat(64),
+            device_name: "Desk".to_string(),
         }
     }
 

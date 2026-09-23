@@ -21,3 +21,20 @@ export {
     type ImportPlan,
     type ImportResult,
 } from './importBackup';
+export {
+    BACKUP_PROGRESS_EVENT,
+    backUpToProvider,
+    cancelLink,
+    deleteRemoteBackup,
+    describeProgress,
+    linkProvider,
+    listProviders,
+    listRemoteBackups,
+    openRemoteBackup,
+    unlinkProvider,
+    type BackupProgress,
+    type BackupProvider,
+    type LinkedAccount,
+    type RemoteBackup,
+    type RemoteBackupResult,
+} from './remote';

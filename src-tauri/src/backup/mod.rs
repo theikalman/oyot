@@ -11,6 +11,7 @@
 pub mod format;
 pub mod history;
 pub mod reader;
+pub mod remote;
 pub mod snapshot;
 pub mod staging;
 pub mod writer;

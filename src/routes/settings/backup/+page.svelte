@@ -3,7 +3,7 @@
     import { listen } from '@tauri-apps/api/event';
     import { formatLastSync } from '$lib/stores/sync';
     import { toasts } from '$lib/services/toast';
-    import { ImportBackupDialog } from '$lib/settings';
+    import { BackupProviderCard, ImportBackupDialog } from '$lib/settings';
     import {
         BACKUP_STATUS_EVENT,
         backUpToFile,
@@ -11,10 +11,12 @@
         getBackupStatus,
         importBackup,
         listBackupHistory,
+        listProviders,
         openBackupFile,
         planBackupImport,
         type BackupImportResult,
         type BackupPreview,
+        type BackupProvider,
         type BackupRecord,
         type BackupStatus,
         type ImportPlan,
@@ -22,6 +24,9 @@
 
     let status = $state<BackupStatus | null>(null);
     let history = $state<BackupRecord[]>([]);
+    // Remote destinations this build can use. Empty in a build without
+    // credentials for any, which shows nothing about them (ADR 0025).
+    let providers = $state<BackupProvider[]>([]);
 
     let backingUp = $state(false);
     let opening = $state(false);
@@ -47,8 +52,22 @@
         }
     }
 
+    async function refreshProviders() {
+        try {
+            providers = await listProviders();
+        } catch (error) {
+            console.error('Failed to load the backup providers:', error);
+        }
+    }
+
+    function handleProvidersChanged() {
+        void refreshProviders();
+        void refresh();
+    }
+
     onMount(() => {
         void refresh();
+        void refreshProviders();
 
         // Registered asynchronously, so a page left before it resolves has to
         // unregister it itself.
@@ -119,6 +138,19 @@
             if (opened) void closeBackup(opened);
         } finally {
             opening = false;
+        }
+    }
+
+    // A backup downloaded from a provider, already checked: from here it is
+    // the same as a file picked from disk.
+    async function handleOpened(opened: BackupPreview) {
+        try {
+            plan = await planBackupImport(opened);
+            preview = opened;
+        } catch (error) {
+            console.error('Failed to open the backup:', error);
+            toasts.error(`Could not open the backup: ${message(error)}`);
+            void closeBackup(opened);
         }
     }
 
@@ -278,6 +310,15 @@
             </div>
         </div>
     </section>
+
+    {#each providers as provider (provider.id)}
+        <BackupProviderCard
+            {provider}
+            {busy}
+            onChanged={handleProvidersChanged}
+            onOpened={handleOpened}
+        />
+    {/each}
 
     {#if history.length > 0}
         <section class="settings-section">

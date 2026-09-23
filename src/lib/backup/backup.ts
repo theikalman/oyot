@@ -150,7 +150,7 @@ export async function listBackupHistory(limit = 10): Promise<BackupRecord[]> {
 
 // --- importing ---------------------------------------------------------------
 
-interface RawBackupPreview {
+export interface RawBackupPreview {
     session_id: string;
     created_at: number;
     source_device: string;
@@ -183,7 +183,11 @@ export interface BackupPreview {
  */
 export async function openBackupFile(): Promise<BackupPreview | null> {
     const raw = await invoke<RawBackupPreview | null>('open_local_backup');
-    if (!raw) return null;
+    return raw ? toPreview(raw) : null;
+}
+
+/** Rust's description of an opened backup, however it was opened. */
+export function toPreview(raw: RawBackupPreview): BackupPreview {
     return {
         sessionId: raw.session_id,
         createdAt: raw.created_at,
