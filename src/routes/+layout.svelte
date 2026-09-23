@@ -113,7 +113,7 @@
         background: var(--bg-primary);
         border-bottom: 1px solid var(--border-color);
         position: sticky;
-        top: 0;
+        top: var(--safe-top);
         z-index: 100;
     }
 

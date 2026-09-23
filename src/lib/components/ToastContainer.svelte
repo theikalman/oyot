@@ -58,8 +58,8 @@
 <style>
     .toast-container {
         position: fixed;
-        bottom: 24px;
-        right: 24px;
+        bottom: calc(24px + var(--safe-bottom));
+        right: calc(24px + var(--safe-right));
         display: flex;
         flex-direction: column;
         gap: 8px;

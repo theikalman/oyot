@@ -36,6 +36,26 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.18-alpha',
+        date: '2026-09-23',
+        summary:
+            'Devices that are not on the same network can sync again, over a VPN you already run, and on phones and tablets the app no longer sits under the status bar.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'A device somewhere else can be reached at an address you give it, such as its address on a VPN like Tailscale. When pairing, choose "Somewhere else" and enter its ID and address once; add the address on both devices. Being on the same VPN does not let anyone in on its own: a device still has to be paired, and every message is still signed and checked.',
+            },
+            {
+                kind: 'added',
+                text: 'Each paired device lists the addresses it is reached at on its own row, with whether each one has answered. A device that is off and an address that is wrong no longer look the same, and "Check now" asks straight away instead of waiting for the next retry.',
+            },
+            {
+                kind: 'fixed',
+                text: "On Android phones and tablets, a note's title and the top of every screen were drawn underneath the status bar. They now start below it, and the sidebar, toasts and dialogs keep clear of the gesture bar at the bottom too.",
+            },
+        ],
+    },
+    {
         version: '0.0.17-alpha',
         date: '2026-09-22',
         summary:

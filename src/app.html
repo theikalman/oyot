@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <link rel="icon" href="%sveltekit.assets%/favicon.png" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>Oyot - Simple Note Taking App that Simply Works</title>
         <script>
             // Pick the theme before anything renders. The stored preference
@@ -21,6 +21,33 @@
             } catch (e) {
                 document.documentElement.dataset.theme = 'light';
             }
+        </script>
+        <script>
+            // Android's status and gesture bars, measured by MainActivity
+            // (window.OyotInsets only exists there). Read here, before the
+            // first paint, so the page does not start under the status bar
+            // and jump down once the app has loaded. Read again on resize,
+            // since rotating the device moves the bars and the cutout.
+            // MainActivity also pushes changes itself, through the same
+            // function.
+            window.__oyotApplyInsets = function (insets) {
+                try {
+                    if (!insets && window.OyotInsets) {
+                        insets = JSON.parse(window.OyotInsets.get());
+                    }
+                    if (!insets) return;
+                    var style = document.documentElement.style;
+                    ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+                        style.setProperty('--native-safe-' + side, (insets[side] || 0) + 'px');
+                    });
+                } catch (e) {
+                    // Without the numbers the page falls back to env().
+                }
+            };
+            window.__oyotApplyInsets();
+            window.addEventListener('resize', function () {
+                window.__oyotApplyInsets();
+            });
         </script>
         %sveltekit.head%
     </head>

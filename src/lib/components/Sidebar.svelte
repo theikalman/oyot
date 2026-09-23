@@ -642,9 +642,9 @@
        about 125px to write in. */
     .sidebar.overlay {
         position: fixed;
-        top: 0;
-        bottom: 0;
-        left: 0;
+        top: var(--safe-top);
+        bottom: var(--safe-bottom);
+        left: var(--safe-left);
         z-index: 120;
         box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
     }
@@ -680,8 +680,8 @@
     /* Floating, because with the sidebar hidden there is nothing to sit in. */
     .expand-btn {
         position: fixed;
-        left: 20px;
-        bottom: 48px;
+        left: calc(20px + var(--safe-left));
+        bottom: calc(48px + var(--safe-bottom));
         z-index: 100;
         width: 40px;
         height: 40px;
