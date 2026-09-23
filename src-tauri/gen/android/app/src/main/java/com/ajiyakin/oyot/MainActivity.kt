@@ -4,7 +4,11 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
   // Held while the app is on screen so mDNS discovery can hear anything.
@@ -19,9 +23,48 @@ class MainActivity : TauriActivity() {
   // someone was listening.
   private var multicastLock: WifiManager.MulticastLock? = null
 
+  // The system bars and cutout, in CSS pixels, as JSON for the page. Written
+  // on the main thread and read from the WebView's JavaScript bridge thread.
+  @Volatile private var safeAreaJson = "{\"top\":0,\"right\":0,\"bottom\":0,\"left\":0}"
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+  }
+
+  // Edge to edge, the WebView is drawn under the status bar and the gesture
+  // bar, and the page has to leave room for them itself. iOS tells the page how
+  // much through env(safe-area-inset-*), but Android's WebView reports zero
+  // there on all but its newest versions, which put a note's title under the
+  // clock. So the insets are measured here and handed to the page, which
+  // prefers them over env() (see app.html and app.css).
+  override fun onWebViewCreate(webView: WebView) {
+    // Pulled by the page as it starts, so the first paint is already clear of
+    // the bars: anything pushed before the page exists is lost.
+    webView.addJavascriptInterface(SafeAreaBridge(), "OyotInsets")
+
+    ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+      )
+      val density = view.resources.displayMetrics.density
+      val json = "{\"top\":${bars.top / density},\"right\":${bars.right / density}," +
+        "\"bottom\":${bars.bottom / density},\"left\":${bars.left / density}}"
+      if (json != safeAreaJson) {
+        safeAreaJson = json
+        // Pushed for changes after load, rotation and the like. Harmless if
+        // the page is not there yet: it pulls the current value when it is.
+        webView.evaluateJavascript("window.__oyotApplyInsets && window.__oyotApplyInsets($json)", null)
+      }
+      // Not consumed, so a WebView that does support env() still sees them.
+      insets
+    }
+    ViewCompat.requestApplyInsets(webView)
+  }
+
+  private inner class SafeAreaBridge {
+    @JavascriptInterface
+    fun get(): String = safeAreaJson
   }
 
   // onStart/onStop rather than onCreate/onDestroy: the lock costs battery for

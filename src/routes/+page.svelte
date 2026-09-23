@@ -48,7 +48,7 @@
 
 <style>
     .entry {
-        height: 100vh;
+        height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
         display: flex;
         align-items: center;
         justify-content: center;

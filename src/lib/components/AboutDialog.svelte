@@ -135,7 +135,8 @@
         align-items: center;
         justify-content: center;
         z-index: 1000;
-        padding: 24px;
+        padding: calc(24px + var(--safe-top)) calc(24px + var(--safe-right))
+            calc(24px + var(--safe-bottom)) calc(24px + var(--safe-left));
     }
 
     .modal {

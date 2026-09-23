@@ -40,7 +40,8 @@
 
 <style>
     .app {
-        height: 100vh;
+        /* The body's safe-area padding already takes this much of the screen. */
+        height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
         display: flex;
         flex-direction: column;
     }
