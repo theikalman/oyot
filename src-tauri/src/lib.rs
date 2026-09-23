@@ -572,7 +572,11 @@ pub fn run() {
         .plugin(tauri_plugin_os::init());
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
-    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    let builder = builder
+        .plugin(tauri_plugin_barcode_scanner::init())
+        // Signing in to Google Drive on a phone (ADR 0025, decision 7).
+        // Rust calls it; no capability lets the webview.
+        .plugin(tauri_plugin_sign_in::init());
 
     builder
         .setup(|app| {
@@ -602,7 +606,9 @@ pub fn run() {
             app.manage(BackupState::default());
             // Whatever remote destinations this build has credentials for
             // (ADR 0025). None, in a build without them.
-            app.manage(crate::backup::remote::Providers::for_this_build());
+            app.manage(crate::backup::remote::Providers::for_this_build(
+                app.handle(),
+            ));
             // After everything it reads is managed (ADR 0026).
             start_scheduler(app.handle().clone());
             Ok(())

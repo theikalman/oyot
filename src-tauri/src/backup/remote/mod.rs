@@ -6,13 +6,11 @@
 //! lists whatever `Providers` holds. Adding a service is one implementation
 //! and one line in `Providers::for_this_build`.
 
-#[cfg(desktop)]
 pub mod google_drive;
-#[cfg(desktop)]
 pub mod http;
-#[cfg(desktop)]
+#[cfg(mobile)]
+mod native;
 pub mod oauth;
-#[cfg(desktop)]
 pub mod secrets;
 
 use async_trait::async_trait;
@@ -63,6 +61,63 @@ pub type OpenUrl<'a> = &'a (dyn Fn(&str) -> Result<(), String> + Send + Sync);
 /// Sent by the user giving up on linking, or dropped when a newer attempt
 /// replaces this one.
 pub type Cancel = tokio::sync::oneshot::Receiver<()>;
+
+/// Why a phone's own sign-in did not give what was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(desktop, allow(dead_code))]
+pub enum NativeError {
+    /// The user closed it.
+    Cancelled,
+    /// It needs the user, and was asked not to show anything.
+    NeedsUser,
+    /// This phone cannot do it at all.
+    Unavailable(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for NativeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NativeError::Cancelled => f.write_str("the sign-in was cancelled"),
+            NativeError::NeedsUser => f.write_str("the sign-in needs you to confirm it again"),
+            NativeError::Unavailable(message) | NativeError::Failed(message) => {
+                f.write_str(message)
+            }
+        }
+    }
+}
+
+/// A system sheet that shows a provider's sign-in page and hands back the
+/// address it ends on, to this app alone: Apple's web authentication session
+/// on iOS.
+#[async_trait]
+pub trait AuthSession: Send + Sync {
+    /// Show `url`, and resolve to the address it redirects to under
+    /// `scheme`.
+    async fn open(&self, url: &str, scheme: &str) -> Result<String, NativeError>;
+
+    /// Close a sheet `open` is waiting on.
+    async fn cancel(&self);
+}
+
+/// Access to a Google API from Google Play services, which keeps the grant
+/// and hands out short-lived access tokens: Android.
+#[async_trait]
+pub trait PlayServices: Send + Sync {
+    /// An access token for `scope`, and the scopes it covers. `account` is
+    /// the one linked before, if any. When the grant needs the user and
+    /// `interactive` is false, fails with `NeedsUser` rather than show
+    /// anything.
+    async fn authorize(
+        &self,
+        scope: &str,
+        account: Option<&str>,
+        interactive: bool,
+    ) -> Result<(String, Vec<String>), NativeError>;
+
+    /// Tell Play services a token was refused, so it hands out another.
+    async fn clear_token(&self, token: &str);
+}
 
 #[async_trait]
 pub trait BackupProvider: Send + Sync {
@@ -122,14 +177,11 @@ pub struct Providers {
 }
 
 impl Providers {
-    /// Every provider whose credentials were compiled into this build. A
-    /// build without them simply offers backups to disk (ADR 0025,
-    /// decision 1).
-    pub fn for_this_build() -> Self {
-        #[allow(unused_mut)]
+    /// Every provider this build was set up for (ADR 0025, decision 6). A
+    /// build without any simply offers backups to disk (decision 1).
+    pub fn for_this_build(app: &tauri::AppHandle) -> Self {
         let mut list: Vec<Arc<dyn BackupProvider>> = Vec::new();
-        #[cfg(desktop)]
-        if let Some(drive) = google_drive::GoogleDrive::from_build() {
+        if let Some(drive) = google_drive::GoogleDrive::from_build(app) {
             list.push(Arc::new(drive));
         }
         Providers { list }

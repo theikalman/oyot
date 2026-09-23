@@ -148,12 +148,19 @@ impl Reqwest {
         // decision 8). Installing ring's is idempotent: a second call finds
         // one installed and changes nothing.
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let client = reqwest::Client::builder()
+        let builder = reqwest::Client::builder()
             .user_agent(concat!("oyot/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(30))
             // Per read, not per request, so a large download on a slow line
             // is not cut off, while a stalled one still is.
-            .read_timeout(Duration::from_secs(60))
+            .read_timeout(Duration::from_secs(60));
+        // On Android, certificates are checked against bundled roots only.
+        // reqwest's platform verifier would otherwise be used, and it panics
+        // on its first handshake unless the app has set up JNI for it first
+        // (ADR 0025, decision 8).
+        #[cfg(target_os = "android")]
+        let builder = builder.tls_certs_only(bundled_roots()?);
+        let client = builder
             .build()
             .map_err(|e| format!("could not prepare to connect: {e}"))?;
         Ok(Reqwest { client })
@@ -176,6 +183,16 @@ impl Reqwest {
         }
         builder
     }
+}
+
+/// Mozilla's root certificates, as of the build.
+#[cfg(target_os = "android")]
+fn bundled_roots() -> Result<Vec<reqwest::Certificate>, String> {
+    webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .map(|der| reqwest::Certificate::from_der(der.as_ref()))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("could not load the root certificates: {e}"))
 }
 
 fn classify(e: reqwest::Error) -> HttpError {

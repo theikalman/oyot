@@ -117,6 +117,36 @@ pub fn parse_redirect(request_line: &str, state: &str) -> Option<Redirect> {
         return None;
     }
     let url = url::Url::parse(&format!("http://127.0.0.1{target}")).ok()?;
+    redirect_in(&url, state)
+}
+
+/// Read the address an authentication session ended on (iOS), given the
+/// `scheme` it was to come back under and the `state` that went out. `None`
+/// when it is not our redirect, which a session handing back only its own
+/// callback should never produce, but which is refused rather than trusted.
+pub fn parse_callback(address: &str, scheme: &str, state: &str) -> Option<Redirect> {
+    let url = url::Url::parse(address).ok()?;
+    if !url.scheme().eq_ignore_ascii_case(scheme) {
+        return None;
+    }
+    redirect_in(&url, state)
+}
+
+/// The iOS redirect scheme for a Google client id: the id reversed, as the
+/// Cloud Console shows it under "iOS URL scheme".
+/// `1234-abc.apps.googleusercontent.com` becomes
+/// `com.googleusercontent.apps.1234-abc`.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub fn reversed_client_id(client_id: &str) -> Option<String> {
+    let parts: Vec<&str> = client_id.split('.').collect();
+    if parts.len() < 2 || parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    Some(parts.into_iter().rev().collect::<Vec<_>>().join("."))
+}
+
+/// The code or the refusal in a redirect's query, if its `state` is ours.
+fn redirect_in(url: &url::Url, state: &str) -> Option<Redirect> {
     let mut code = None;
     let mut error = None;
     let mut returned_state = None;
@@ -402,5 +432,54 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.contains("timed out"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_code_an_authentication_session_came_back_with() {
+        let scheme = "com.googleusercontent.apps.1234-abc";
+        assert_eq!(
+            parse_callback(
+                "com.googleusercontent.apps.1234-abc:/oauth2redirect?state=s1&code=4%2Fxyz&scope=a",
+                scheme,
+                "s1"
+            ),
+            Some(Redirect::Code("4/xyz".to_string()))
+        );
+        assert_eq!(
+            parse_callback(
+                "com.googleusercontent.apps.1234-abc:/oauth2redirect?error=access_denied&state=s1",
+                scheme,
+                "s1"
+            ),
+            Some(Redirect::Denied("access_denied".to_string()))
+        );
+    }
+
+    #[test]
+    fn refuses_a_callback_with_another_state_or_scheme() {
+        let scheme = "com.googleusercontent.apps.1234-abc";
+        assert_eq!(
+            parse_callback(
+                "com.googleusercontent.apps.1234-abc:/oauth2redirect?state=old&code=x",
+                scheme,
+                "s1"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_callback("evil.app:/oauth2redirect?state=s1&code=x", scheme, "s1"),
+            None
+        );
+        assert_eq!(parse_callback("not a url", scheme, "s1"), None);
+    }
+
+    #[test]
+    fn reverses_a_google_client_id_into_its_ios_scheme() {
+        assert_eq!(
+            reversed_client_id("1234-abc.apps.googleusercontent.com").as_deref(),
+            Some("com.googleusercontent.apps.1234-abc")
+        );
+        assert_eq!(reversed_client_id("nodots"), None);
+        assert_eq!(reversed_client_id("a..b"), None);
     }
 }

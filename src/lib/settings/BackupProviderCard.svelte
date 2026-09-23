@@ -235,7 +235,7 @@
                 {#if account}
                     <span class="desc">Linked to <strong>{account.email}</strong></span>
                 {:else if linking}
-                    <span class="desc">Finish signing in in your browser…</span>
+                    <span class="desc">Finish signing in with {provider.name}…</span>
                 {:else}
                     <span class="desc">
                         Not linked. Link an account to back up there. Oyot only sees the backups it
@@ -318,9 +318,13 @@
 {#if confirmUnlink && account}
     <Modal title={`Unlink ${account.email}?`} onClose={() => (confirmUnlink = false)}>
         <p class="modal-note">
-            Oyot stops backing up to {provider.name}, and its access to your account is withdrawn.
-            Backups already there stay where they are, and you can link again at any time. Scheduled
-            backups to {provider.name} pause until an account is linked again.
+            This device stops backing up to {provider.name}, and forgets the account. Scheduled
+            backups from it pause until an account is linked again. Backups already there stay where
+            they are, and other devices you linked keep backing up.
+        </p>
+        <p class="modal-note">
+            To take away Oyot's access on every device at once, remove Oyot from your account's
+            security settings.
         </p>
         {#snippet actions()}
             <button class="btn" data-secondary onclick={() => (confirmUnlink = false)}
@@ -499,5 +503,9 @@
         font-size: 13px;
         line-height: 1.6;
         color: var(--text-secondary);
+    }
+
+    .modal-note + .modal-note {
+        margin-top: 10px;
     }
 </style>

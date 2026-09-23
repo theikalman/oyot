@@ -57,6 +57,26 @@ url = "2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.5"
+# The phones' own sign-in for remote backups, called from Rust only (ADR 0025,
+# decision 7).
+tauri-plugin-sign-in = { path = "plugins/sign-in" }
+
+# HTTP for remote backups, on every platform (ADR 0025, decision 8). reqwest
+# is already in the tree through Tauri, without TLS. It gets rustls on the
+# `ring` provider rather than its default `aws-lc-rs`: `ring` is what Tauri
+# itself selects when it enables rustls, and one crypto library is enough.
+# `rustls-no-provider` leaves installing that provider to us, which the Drive
+# client does before it builds one. Default features off: no HTTP/2, no
+# proxy discovery, nothing a handful of Drive API calls need.
+[dependencies.reqwest]
+version = "0.13"
+default-features = false
+features = ["rustls-no-provider"]
+
+[dependencies.rustls]
+version = "0.23"
+default-features = false
+features = ["ring", "std", "tls12"]
 
 # Local-network discovery (ADR 0018). Not on iOS: this binds a raw multicast
 # socket, which there needs the `com.apple.developer.networking.multicast`
@@ -66,24 +86,27 @@ tauri-plugin-barcode-scanner = "2.4.5"
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 mdns-sd = "0.21"
 
-# Google Drive backups, which are desktop only for now (ADR 0025, decision 7).
-# Kept to the desktop targets so the phone builds are untouched until the
-# phone sign-in exists.
-#
-# reqwest is already in the tree through Tauri, without TLS. It gets rustls on
-# the `ring` provider rather than its default `aws-lc-rs`: `ring` is what Tauri
-# itself selects when it enables rustls, and one crypto library is enough.
-# `rustls-no-provider` leaves installing that provider to us, which the Drive
-# client does before it builds one. Default features off: no HTTP/2, no
-# proxy discovery, nothing a handful of Drive API calls need.
+# Google Drive backups (ADR 0025).
 #
 # keyring keeps the refresh token in the OS keychain: Keychain on macOS,
 # Credential Manager on Windows, Secret Service over zbus on Linux, which needs
 # no system library.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 keyring = "4"
+
+# On iOS the refresh token goes in the keychain through keyring's Apple store
+# directly: keyring's own default setup does not build for iOS, and the store
+# needs its `protected` (data protection keychain) feature there.
+[target.'cfg(target_os = "ios")'.dependencies]
+keyring-core = "1"
+apple-native-keyring-store = { version = "1", features = ["protected"] }
+
+# Android verifies Google's certificates against bundled roots rather than
+# the system's: reqwest's platform verifier needs JNI set up by the app before
+# its first request, and panics without it (ADR 0025, decision 8).
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs = "1"
+
 
 
 # Defaults left the release binary unoptimised for size, which matters most on

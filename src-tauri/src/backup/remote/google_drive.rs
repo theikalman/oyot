@@ -8,8 +8,11 @@
 
 use super::http::{HttpClient, HttpError, HttpRequest, HttpResponse, Method, Reqwest};
 use super::oauth::{self, Loopback, Pkce, Redirect, TokenError, TokenResponse};
-use super::secrets::{Keychain, SecretStore};
-use super::{Account, BackupProvider, Cancel, OpenUrl, Progress, RemoteBackup, UploadMeta};
+use super::secrets::SecretStore;
+use super::{
+    Account, AuthSession, BackupProvider, Cancel, NativeError, OpenUrl, PlayServices, Progress,
+    RemoteBackup, UploadMeta,
+};
 use crate::backup::format::FORMAT_VERSION;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -22,7 +25,6 @@ pub const ID: &str = "google-drive";
 
 const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
-const REVOKE_ENDPOINT: &str = "https://oauth2.googleapis.com/revoke";
 const DRIVE: &str = "https://www.googleapis.com/drive/v3";
 const UPLOAD: &str = "https://www.googleapis.com/upload/drive/v3";
 
@@ -31,7 +33,12 @@ const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 
 /// The keychain entry the link lives in: the app's identifier, and this
 /// provider's id.
+#[cfg(any(desktop, target_os = "ios"))]
 const KEYCHAIN_SERVICE: &str = "com.ajiyakin.oyot";
+
+/// Where an iOS sign-in comes back to, under the client's own scheme.
+#[cfg(any(target_os = "ios", test))]
+const IOS_REDIRECT_PATH: &str = "/oauth2redirect";
 
 const FOLDER_NAME: &str = "Oyot Backups";
 /// The `appProperties` key the app marks what it put in Drive with. Only this
@@ -44,6 +51,13 @@ const FILE_FIELDS: &str = "id,name,size,createdTime,appProperties";
 
 /// How long the browser gets to come back.
 const LINK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// How long Google Play services gets to hand out a token without asking the
+/// user anything.
+const SILENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a token from Google Play services is used before another is
+/// asked for. Play services does not say when one lapses; they last an hour,
+/// and it may hand back one it has held for a while.
+const PLAY_TOKEN_LIFETIME: Duration = Duration::from_secs(30 * 60);
 /// An upload goes in pieces of this size: a multiple of the 256 KiB Drive
 /// requires, large enough that a big backup is not thousands of requests, and
 /// small enough that a failure part way costs little.
@@ -63,15 +77,56 @@ const MAX_LISTED: usize = 1000;
 const NOT_LINKED: &str = "no Google account is linked";
 const RELINK: &str =
     "Google Drive access has ended. Link your Google account again to back up there.";
+const NEEDS_PERMISSION: &str = "Oyot needs permission to add files to your Google Drive. Link \
+     again, and leave that permission ticked.";
+const TOO_LONG: &str = "linking took too long. Try again.";
 
-/// The link, as it is kept in the keychain.
+/// The link, as it is kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Link {
-    refresh_token: String,
+    /// What renews access, where the sign-in gives one: none on Android,
+    /// where Google Play services keeps the grant itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
     email: String,
     #[serde(default)]
     name: Option<String>,
+}
+
+/// How this platform gets Google's permission, and access tokens under it
+/// (ADR 0025, decisions 3 and 7).
+enum SignIn {
+    /// A refresh token, from a sign-in page, renewed at Google's token
+    /// endpoint: desktop and iOS.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    Refresh {
+        client_id: String,
+        /// A desktop client has one. Google gives an iOS client none, and
+        /// PKCE is what ties the code to this app either way.
+        client_secret: Option<String>,
+        page: Consent,
+    },
+    /// Access tokens straight from Google Play services, which keeps the
+    /// grant and never hands the app a refresh token: Android.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    Play(Arc<dyn PlayServices>),
+}
+
+/// Where the sign-in page shows, and how its answer comes back.
+enum Consent {
+    /// The system browser, answering to a one-shot listener on 127.0.0.1
+    /// (RFC 8252): desktop.
+    #[cfg_attr(mobile, allow(dead_code))]
+    Loopback,
+    /// A system sheet that answers to the client's own scheme, and to this
+    /// app alone: iOS.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    Session {
+        scheme: String,
+        redirect_uri: String,
+        session: Arc<dyn AuthSession>,
+    },
 }
 
 struct Access {
@@ -87,8 +142,7 @@ struct Session {
 }
 
 pub struct GoogleDrive {
-    client_id: String,
-    client_secret: String,
+    sign_in: SignIn,
     http: Arc<dyn HttpClient>,
     secrets: Arc<dyn SecretStore>,
     session: tokio::sync::Mutex<Session>,
@@ -161,15 +215,21 @@ enum Progressed {
     Received(u64),
 }
 
+/// A value compiled in from the build environment, when it was set and is
+/// not blank.
+fn configured(value: Option<&'static str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
 impl GoogleDrive {
-    /// The provider, when this build was given a client id and secret to sign
-    /// in with (ADR 0025, decision 6).
-    pub fn from_build() -> Option<Self> {
-        let client_id = option_env!("OYOT_GOOGLE_CLIENT_ID")?.trim();
-        let client_secret = option_env!("OYOT_GOOGLE_CLIENT_SECRET")?.trim();
-        if client_id.is_empty() || client_secret.is_empty() {
-            return None;
-        }
+    /// The provider, when this build was set up to sign in to Google on this
+    /// platform (ADR 0025, decision 6). A build without it offers backups to
+    /// disk only.
+    pub fn from_build(app: &tauri::AppHandle) -> Option<Self> {
+        let (sign_in, secrets) = Self::sign_in_for_build(app)?;
         let http = match Reqwest::new() {
             Ok(http) => http,
             Err(e) => {
@@ -177,23 +237,58 @@ impl GoogleDrive {
                 return None;
             }
         };
-        Some(Self::new(
-            client_id,
-            client_secret,
-            Arc::new(http),
-            Arc::new(Keychain::new(KEYCHAIN_SERVICE, ID)),
-        ))
+        Some(Self::new(sign_in, Arc::new(http), secrets))
     }
 
-    fn new(
-        client_id: &str,
-        client_secret: &str,
-        http: Arc<dyn HttpClient>,
-        secrets: Arc<dyn SecretStore>,
-    ) -> Self {
+    /// Desktop: a Desktop OAuth client, with its id and secret.
+    #[cfg(desktop)]
+    fn sign_in_for_build(_app: &tauri::AppHandle) -> Option<(SignIn, Arc<dyn SecretStore>)> {
+        let client_id = configured(option_env!("OYOT_GOOGLE_CLIENT_ID"))?;
+        let client_secret = configured(option_env!("OYOT_GOOGLE_CLIENT_SECRET"))?;
+        let sign_in = SignIn::Refresh {
+            client_id,
+            client_secret: Some(client_secret),
+            page: Consent::Loopback,
+        };
+        let secrets = super::secrets::Keychain::new(KEYCHAIN_SERVICE, ID);
+        Some((sign_in, Arc::new(secrets)))
+    }
+
+    /// iOS: an iOS OAuth client, which has an id and no secret, and signs in
+    /// through Apple's authentication session.
+    #[cfg(target_os = "ios")]
+    fn sign_in_for_build(app: &tauri::AppHandle) -> Option<(SignIn, Arc<dyn SecretStore>)> {
+        let client_id = configured(option_env!("OYOT_GOOGLE_IOS_CLIENT_ID"))?;
+        let scheme = oauth::reversed_client_id(&client_id)?;
+        let sign_in = SignIn::Refresh {
+            client_id,
+            client_secret: None,
+            page: Consent::Session {
+                redirect_uri: format!("{scheme}:{IOS_REDIRECT_PATH}"),
+                scheme,
+                session: Arc::new(super::native::Native::new(app)),
+            },
+        };
+        let secrets = super::secrets::Keychain::new(KEYCHAIN_SERVICE, ID);
+        Some((sign_in, Arc::new(secrets)))
+    }
+
+    /// Android: Google Play services, which knows the app by its package and
+    /// signing certificate, so nothing is compiled in but the switch that
+    /// says the Cloud project has an Android client for this build.
+    #[cfg(target_os = "android")]
+    fn sign_in_for_build(app: &tauri::AppHandle) -> Option<(SignIn, Arc<dyn SecretStore>)> {
+        use tauri::Manager;
+        configured(option_env!("OYOT_GOOGLE_ANDROID"))?;
+        let dir = app.path().app_data_dir().ok()?;
+        let sign_in = SignIn::Play(Arc::new(super::native::Native::new(app)));
+        let link = super::secrets::LinkFile::new(dir.join("google-drive-link.json"));
+        Some((sign_in, Arc::new(link)))
+    }
+
+    fn new(sign_in: SignIn, http: Arc<dyn HttpClient>, secrets: Arc<dyn SecretStore>) -> Self {
         GoogleDrive {
-            client_id: client_id.to_string(),
-            client_secret: client_secret.to_string(),
+            sign_in,
             http,
             secrets,
             session: tokio::sync::Mutex::new(Session::default()),
@@ -250,8 +345,8 @@ impl GoogleDrive {
         Ok(())
     }
 
-    /// A current access token, renewed from the refresh token when it has
-    /// lapsed or is about to.
+    /// A current access token, renewed when it has lapsed or is about to:
+    /// from the refresh token, or from Google Play services.
     async fn access_token(&self) -> Result<String, String> {
         let link = self.stored_link().await?.ok_or(NOT_LINKED)?;
         let mut session = self.session.lock().await;
@@ -261,40 +356,92 @@ impl GoogleDrive {
             }
         }
 
-        let request = HttpRequest::new(Method::Post, TOKEN_ENDPOINT).form(&[
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.as_str()),
-            ("refresh_token", link.refresh_token.as_str()),
-            ("grant_type", "refresh_token"),
-        ]);
-        let response = self
-            .http
-            .send(request)
-            .await
-            .map_err(|e| format!("could not reach Google: {e}"))?;
-        if !response.is_success() {
-            // The refresh token itself is dead: revoked from the account,
-            // expired, or the password changed. Nothing but linking again
-            // brings it back, so the link is forgotten and the page says so.
-            if response
-                .json::<TokenError>()
-                .is_ok_and(|e| e.error == "invalid_grant")
-            {
-                drop(session);
-                self.forget_link().await?;
-                return Err(RELINK.to_string());
+        let access = match &self.sign_in {
+            SignIn::Refresh {
+                client_id,
+                client_secret,
+                ..
+            } => {
+                let Some(refresh_token) = link.refresh_token.as_deref() else {
+                    // Written by a sign-in of another kind: nothing here can
+                    // renew it.
+                    drop(session);
+                    self.forget_link().await?;
+                    return Err(RELINK.to_string());
+                };
+                let mut form = vec![
+                    ("client_id", client_id.as_str()),
+                    ("refresh_token", refresh_token),
+                    ("grant_type", "refresh_token"),
+                ];
+                if let Some(secret) = client_secret {
+                    form.push(("client_secret", secret.as_str()));
+                }
+                let request = HttpRequest::new(Method::Post, TOKEN_ENDPOINT).form(&form);
+                let response = self
+                    .http
+                    .send(request)
+                    .await
+                    .map_err(|e| format!("could not reach Google: {e}"))?;
+                if !response.is_success() {
+                    // The refresh token itself is dead: revoked from the
+                    // account, expired, or the password changed. Nothing but
+                    // linking again brings it back, so the link is forgotten
+                    // and the page says so.
+                    if response
+                        .json::<TokenError>()
+                        .is_ok_and(|e| e.error == "invalid_grant")
+                    {
+                        drop(session);
+                        self.forget_link().await?;
+                        return Err(RELINK.to_string());
+                    }
+                    return Err(format!(
+                        "Google would not renew access ({})",
+                        response.status
+                    ));
+                }
+                let token: TokenResponse = response.json()?;
+                Access {
+                    token: token.access_token,
+                    expires_at: Instant::now()
+                        + Duration::from_secs(token.expires_in.unwrap_or(3600)),
+                }
             }
-            return Err(format!(
-                "Google would not renew access ({})",
-                response.status
-            ));
+            SignIn::Play(play) => {
+                // Never shows anything: this runs in the middle of a backup,
+                // perhaps a scheduled one, with nobody looking.
+                let asked = play.authorize(SCOPE, Some(&link.email), false);
+                match tokio::time::timeout(SILENT_TIMEOUT, asked).await {
+                    Ok(Ok((token, _))) => Access {
+                        token,
+                        expires_at: Instant::now() + PLAY_TOKEN_LIFETIME,
+                    },
+                    // The grant needs the user again: they removed it from
+                    // their account, or the account left the phone.
+                    Ok(Err(NativeError::NeedsUser)) => {
+                        drop(session);
+                        self.forget_link().await?;
+                        return Err(RELINK.to_string());
+                    }
+                    Ok(Err(e)) => return Err(format!("Google Play services refused: {e}")),
+                    Err(_) => return Err("Google Play services did not answer".to_string()),
+                }
+            }
+        };
+        let token = access.token.clone();
+        session.access = Some(access);
+        Ok(token)
+    }
+
+    /// Drop the access token Drive just refused, so the next one is fresh.
+    /// Google Play services is told as well, or it would hand the same one
+    /// back.
+    async fn invalidate(&self) {
+        let refused = self.session.lock().await.access.take();
+        if let (SignIn::Play(play), Some(access)) = (&self.sign_in, refused) {
+            play.clear_token(&access.token).await;
         }
-        let token: TokenResponse = response.json()?;
-        session.access = Some(Access {
-            token: token.access_token.clone(),
-            expires_at: Instant::now() + Duration::from_secs(token.expires_in.unwrap_or(3600)),
-        });
-        Ok(token.access_token)
     }
 
     /// Send with the access token, renewing it once if Google says it has
@@ -305,7 +452,7 @@ impl GoogleDrive {
         if response.status != 401 {
             return Ok(response);
         }
-        self.session.lock().await.access = None;
+        self.invalidate().await;
         let token = self.access_token().await.map_err(HttpError::Fatal)?;
         self.http.send(request.bearer(&token)).await
     }
@@ -317,6 +464,131 @@ impl GoogleDrive {
         } else {
             Err(drive_error(&response))
         }
+    }
+
+    // --- signing in ------------------------------------------------------------
+
+    /// Show Google's consent page and trade the code it gives for tokens:
+    /// in the browser on desktop, in Apple's sheet on iOS.
+    async fn consent(
+        &self,
+        client_id: &str,
+        client_secret: Option<&str>,
+        page: &Consent,
+        open_url: OpenUrl<'_>,
+        cancel: Cancel,
+    ) -> Result<TokenResponse, String> {
+        let pkce = Pkce::generate();
+        let state = oauth::random_token();
+        let address = |redirect_uri: &str| {
+            oauth::authorization_url(
+                AUTH_ENDPOINT,
+                &[
+                    ("client_id", client_id),
+                    ("redirect_uri", redirect_uri),
+                    ("response_type", "code"),
+                    ("scope", SCOPE),
+                    ("code_challenge", pkce.challenge.as_str()),
+                    ("code_challenge_method", "S256"),
+                    ("state", state.as_str()),
+                    // A refresh token, every time: without `consent`, Google
+                    // leaves it out when the account granted access before.
+                    ("access_type", "offline"),
+                    ("prompt", "consent"),
+                ],
+            )
+        };
+
+        let (code, redirect_uri) = match page {
+            Consent::Loopback => {
+                let loopback = Loopback::bind().await?;
+                open_url(&address(loopback.redirect_uri())?)?;
+                let code = match loopback.wait(&state, LINK_TIMEOUT, cancel).await? {
+                    Redirect::Code(code) => code,
+                    Redirect::Denied(_) => {
+                        return Err("linking was cancelled in the browser".to_string())
+                    }
+                };
+                (code, loopback.redirect_uri().to_string())
+            }
+            Consent::Session {
+                scheme,
+                redirect_uri,
+                session,
+            } => {
+                let url = address(redirect_uri)?;
+                let shown = tokio::time::timeout(LINK_TIMEOUT, session.open(&url, scheme));
+                let answer = tokio::select! {
+                    answer = shown => match answer {
+                        Ok(answer) => answer,
+                        Err(_) => {
+                            session.cancel().await;
+                            return Err(TOO_LONG.to_string());
+                        }
+                    },
+                    _ = cancel => {
+                        session.cancel().await;
+                        return Err(oauth::CANCELLED.to_string());
+                    }
+                };
+                let came_back = answer.map_err(native_link_error)?;
+                let code = match oauth::parse_callback(&came_back, scheme, &state) {
+                    Some(Redirect::Code(code)) => code,
+                    // Declined on Google's page, which is the user saying no.
+                    Some(Redirect::Denied(_)) => return Err(oauth::CANCELLED.to_string()),
+                    None => {
+                        return Err(
+                            "the sign-in came back with something Oyot did not ask for. Try \
+                             again."
+                                .to_string(),
+                        )
+                    }
+                };
+                (code, redirect_uri.clone())
+            }
+        };
+
+        let mut form = vec![
+            ("code", code.as_str()),
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code_verifier", pkce.verifier.as_str()),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+        let response = self
+            .http
+            .send(HttpRequest::new(Method::Post, TOKEN_ENDPOINT).form(&form))
+            .await
+            .map_err(|e| format!("could not reach Google: {e}"))?;
+        if !response.is_success() {
+            return Err(format!("Google refused the sign-in ({})", response.status));
+        }
+        response.json()
+    }
+
+    /// Who the account is, from Drive itself, which the one scope asked for
+    /// allows.
+    async fn about(&self, token: &str) -> Result<AboutUser, String> {
+        #[derive(Deserialize)]
+        struct About {
+            user: AboutUser,
+        }
+        let url = with_query(
+            &format!("{DRIVE}/about"),
+            &[("fields", "user(emailAddress,displayName)")],
+        );
+        let about = self
+            .http
+            .send(HttpRequest::new(Method::Get, url).bearer(token))
+            .await
+            .map_err(|e| format!("could not reach Google: {e}"))?;
+        if !about.is_success() {
+            return Err(drive_error(&about));
+        }
+        Ok(about.json::<About>()?.user)
     }
 
     // --- the folder ----------------------------------------------------------
@@ -511,99 +783,43 @@ impl BackupProvider for GoogleDrive {
     }
 
     async fn link(&self, open_url: OpenUrl<'_>, cancel: Cancel) -> Result<Account, String> {
-        let loopback = Loopback::bind().await?;
-        let pkce = Pkce::generate();
-        let state = oauth::random_token();
-        let url = oauth::authorization_url(
-            AUTH_ENDPOINT,
-            &[
-                ("client_id", self.client_id.as_str()),
-                ("redirect_uri", loopback.redirect_uri()),
-                ("response_type", "code"),
-                ("scope", SCOPE),
-                ("code_challenge", pkce.challenge.as_str()),
-                ("code_challenge_method", "S256"),
-                ("state", state.as_str()),
-                // A refresh token, every time: without `consent`, Google
-                // leaves it out when the account granted access before.
-                ("access_type", "offline"),
-                ("prompt", "consent"),
-            ],
-        )?;
-        open_url(&url)?;
-
-        let code = match loopback.wait(&state, LINK_TIMEOUT, cancel).await? {
-            Redirect::Code(code) => code,
-            Redirect::Denied(_) => return Err("linking was cancelled in the browser".to_string()),
+        let (token, refresh_token, lifetime) = match &self.sign_in {
+            SignIn::Refresh {
+                client_id,
+                client_secret,
+                page,
+            } => {
+                let tokens = self
+                    .consent(client_id, client_secret.as_deref(), page, open_url, cancel)
+                    .await?;
+                // Google lets the user untick a permission on the consent
+                // screen, and a link without it cannot back anything up.
+                // Nothing is handed back to Google here: revoking covers every
+                // device linked to the account, not just this sign-in.
+                if !oauth::grants(tokens.scope.as_deref(), SCOPE) {
+                    return Err(NEEDS_PERMISSION.to_string());
+                }
+                let refresh_token = tokens.refresh_token.ok_or_else(|| {
+                    "Google did not grant lasting access. Link again.".to_string()
+                })?;
+                let lifetime = Duration::from_secs(tokens.expires_in.unwrap_or(3600));
+                (tokens.access_token, Some(refresh_token), lifetime)
+            }
+            SignIn::Play(play) => {
+                let asked = tokio::time::timeout(LINK_TIMEOUT, play.authorize(SCOPE, None, true));
+                let answer = tokio::select! {
+                    answer = asked => answer.map_err(|_| TOO_LONG.to_string())?,
+                    _ = cancel => return Err(oauth::CANCELLED.to_string()),
+                };
+                let (token, scopes) = answer.map_err(native_link_error)?;
+                if !scopes.is_empty() && !scopes.iter().any(|s| s == SCOPE) {
+                    return Err(NEEDS_PERMISSION.to_string());
+                }
+                (token, None, PLAY_TOKEN_LIFETIME)
+            }
         };
 
-        let request = HttpRequest::new(Method::Post, TOKEN_ENDPOINT).form(&[
-            ("code", code.as_str()),
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.as_str()),
-            ("redirect_uri", loopback.redirect_uri()),
-            ("grant_type", "authorization_code"),
-            ("code_verifier", pkce.verifier.as_str()),
-        ]);
-        let response = self
-            .http
-            .send(request)
-            .await
-            .map_err(|e| format!("could not reach Google: {e}"))?;
-        if !response.is_success() {
-            return Err(format!("Google refused the sign-in ({})", response.status));
-        }
-        let tokens: TokenResponse = response.json()?;
-
-        // Google lets the user untick a permission on the consent screen, and
-        // a link without it cannot back anything up. Handing back what was
-        // granted leaves nothing half-linked on their account.
-        if !oauth::grants(tokens.scope.as_deref(), SCOPE) {
-            let granted = tokens
-                .refresh_token
-                .as_deref()
-                .unwrap_or(&tokens.access_token);
-            let _ = self
-                .http
-                .send(HttpRequest::new(Method::Post, REVOKE_ENDPOINT).form(&[("token", granted)]))
-                .await;
-            return Err(
-                "Oyot needs permission to add files to your Google Drive. Link again, and leave \
-                 that permission ticked."
-                    .to_string(),
-            );
-        }
-        let refresh_token = tokens
-            .refresh_token
-            .clone()
-            .ok_or_else(|| "Google did not grant lasting access. Link again.".to_string())?;
-
-        #[derive(Deserialize)]
-        struct About {
-            user: AboutUser,
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct AboutUser {
-            #[serde(default)]
-            email_address: Option<String>,
-            #[serde(default)]
-            display_name: Option<String>,
-        }
-        let url = with_query(
-            &format!("{DRIVE}/about"),
-            &[("fields", "user(emailAddress,displayName)")],
-        );
-        let about = self
-            .http
-            .send(HttpRequest::new(Method::Get, url).bearer(&tokens.access_token))
-            .await
-            .map_err(|e| format!("could not reach Google: {e}"))?;
-        if !about.is_success() {
-            return Err(drive_error(&about));
-        }
-        let user = about.json::<About>()?.user;
-
+        let user = self.about(&token).await?;
         let link = Link {
             refresh_token,
             email: user
@@ -616,22 +832,20 @@ impl BackupProvider for GoogleDrive {
             name: link.name.clone(),
         };
         let access = Access {
-            token: tokens.access_token,
-            expires_at: Instant::now() + Duration::from_secs(tokens.expires_in.unwrap_or(3600)),
+            token,
+            expires_at: Instant::now() + lifetime,
         };
         self.save_link(link, access).await?;
         Ok(account)
     }
 
     async fn unlink(&self) -> Result<(), String> {
-        if let Some(link) = self.stored_link().await? {
-            // A courtesy to the user's account. Failing it must not leave
-            // this device linked, so its outcome is not waited on for more
-            // than it says.
-            let request = HttpRequest::new(Method::Post, REVOKE_ENDPOINT)
-                .form(&[("token", link.refresh_token.as_str())]);
-            if let Err(e) = self.http.send(request).await {
-                warn_log!("[backup] could not revoke Google access: {e}");
+        // Forgotten on this device only (ADR 0025, decision 2). Google's
+        // revocation would cut off every device linked to the account, so
+        // that is left to the user, in their Google Account.
+        if let SignIn::Play(play) = &self.sign_in {
+            if let Some(access) = self.session.lock().await.access.take() {
+                play.clear_token(&access.token).await;
             }
         }
         self.forget_link().await
@@ -707,7 +921,7 @@ impl BackupProvider for GoogleDrive {
         let url = format!("{DRIVE}/files/{id}?alt=media");
         for attempt in 0..2 {
             if attempt == 1 {
-                self.session.lock().await.access = None;
+                self.invalidate().await;
             }
             let token = self.access_token().await?;
             let request = HttpRequest::new(Method::Get, url.as_str()).bearer(&token);
@@ -756,6 +970,24 @@ impl BackupProvider for GoogleDrive {
             _ if response.is_success() => Ok(()),
             _ => Err(drive_error(&response)),
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AboutUser {
+    #[serde(default)]
+    email_address: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+/// What a phone's own sign-in ending without access means for linking.
+fn native_link_error(e: NativeError) -> String {
+    match e {
+        // The page treats this one as nothing to report.
+        NativeError::Cancelled => oauth::CANCELLED.to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -902,6 +1134,11 @@ mod tests {
     use parking_lot::Mutex;
     use std::collections::HashSet;
 
+    /// Google's revocation endpoint. The provider never calls it: revoking
+    /// would cut off every device linked to the account. The fake records
+    /// anything sent there so the tests can say so.
+    const REVOKE_ENDPOINT: &str = "https://oauth2.googleapis.com/revoke";
+
     // --- a Google stand-in ---------------------------------------------------
 
     struct FakeFile {
@@ -929,6 +1166,8 @@ mod tests {
         issued: u32,
         refresh_revoked: bool,
         revoked: Vec<String>,
+        /// Every form sent to the token endpoint.
+        token_forms: Vec<HashMap<String, String>>,
         granted_scope: Option<String>,
         challenge: Option<String>,
         files: Vec<(String, FakeFile)>,
@@ -1005,6 +1244,7 @@ mod tests {
 
             if request.url == TOKEN_ENDPOINT {
                 let form = form_of(request);
+                state.token_forms.push(form.clone());
                 return Ok(match form["grant_type"].as_str() {
                     "authorization_code" => {
                         // The code is only worth anything with the verifier
@@ -1299,12 +1539,24 @@ mod tests {
         }
     }
 
-    fn drive(google: &Arc<FakeGoogle>) -> (GoogleDrive, Arc<MemoryStore>) {
+    fn drive_with(google: &Arc<FakeGoogle>, sign_in: SignIn) -> (GoogleDrive, Arc<MemoryStore>) {
         let secrets = Arc::new(MemoryStore::default());
-        let mut drive = GoogleDrive::new("client", "secret", google.clone(), secrets.clone());
+        let mut drive = GoogleDrive::new(sign_in, google.clone(), secrets.clone());
         drive.chunk = 1000;
         drive.retry_delay = Duration::ZERO;
         (drive, secrets)
+    }
+
+    /// The desktop sign-in: a client with a secret, and the browser.
+    fn drive(google: &Arc<FakeGoogle>) -> (GoogleDrive, Arc<MemoryStore>) {
+        drive_with(
+            google,
+            SignIn::Refresh {
+                client_id: "client".to_string(),
+                client_secret: Some("secret".to_string()),
+                page: Consent::Loopback,
+            },
+        )
     }
 
     /// Link, with this test standing in for the browser: it reads the sign-in
@@ -1393,26 +1645,343 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_a_link_without_permission_to_add_files_and_hands_it_back() {
+    async fn refuses_a_link_without_permission_to_add_files() {
         let google = FakeGoogle::new();
         google.0.lock().granted_scope = Some("openid".to_string());
         let (drive, secrets) = drive(&google);
 
         let error = link(&drive, &google).await.unwrap_err();
         assert!(error.contains("permission"), "{error}");
-        assert_eq!(google.0.lock().revoked, vec!["refresh-1".to_string()]);
+        // Not revoked: that would cut off every other device linked to the
+        // same account.
+        assert!(google.0.lock().revoked.is_empty());
         assert_eq!(secrets.load().unwrap(), None);
         assert_eq!(drive.account().await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn unlinking_revokes_access_and_forgets_the_account() {
+    async fn unlinking_forgets_the_account_on_this_device_only() {
         let (drive, secrets, google) = linked().await;
         drive.unlink().await.unwrap();
-        assert_eq!(google.0.lock().revoked, vec!["refresh-1".to_string()]);
+        assert!(google.0.lock().revoked.is_empty());
         assert_eq!(secrets.load().unwrap(), None);
         assert_eq!(drive.account().await.unwrap(), None);
         assert_eq!(drive.list().await.unwrap_err(), NOT_LINKED);
+    }
+
+    #[tokio::test]
+    async fn a_desktop_client_sends_its_secret() {
+        let (drive, _, google) = linked().await;
+        google.0.lock().valid_access.clear();
+        drive.list().await.unwrap();
+        let forms = google.0.lock().token_forms.clone();
+        assert_eq!(forms.len(), 2);
+        assert!(forms
+            .iter()
+            .all(|f| f.get("client_secret").map(String::as_str) == Some("secret")));
+    }
+
+    // --- iOS: Apple's authentication session ----------------------------------
+
+    const IOS_SCHEME: &str = "com.googleusercontent.apps.1234-abc";
+
+    /// Apple's sheet, with this test as the user: it reads the sign-in
+    /// address, and comes back under the client's scheme.
+    struct FakeSession {
+        google: Arc<FakeGoogle>,
+        /// What to answer with instead of the right redirect.
+        answer: Mutex<Option<Result<String, NativeError>>>,
+        cancelled: Mutex<bool>,
+        /// Never answer, as a sheet the user leaves open.
+        hang: bool,
+        /// Come back as Google does when the user declines.
+        decline: bool,
+    }
+
+    impl FakeSession {
+        fn new(google: &Arc<FakeGoogle>) -> Arc<Self> {
+            Arc::new(FakeSession {
+                google: google.clone(),
+                answer: Mutex::new(None),
+                cancelled: Mutex::new(false),
+                hang: false,
+                decline: false,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl AuthSession for FakeSession {
+        async fn open(&self, url: &str, scheme: &str) -> Result<String, NativeError> {
+            if self.hang {
+                std::future::pending::<()>().await;
+            }
+            if let Some(answer) = self.answer.lock().take() {
+                return answer;
+            }
+            let query = query_of(url);
+            assert_eq!(scheme, IOS_SCHEME);
+            assert_eq!(
+                query["redirect_uri"],
+                format!("{IOS_SCHEME}:{IOS_REDIRECT_PATH}")
+            );
+            assert_eq!(query["code_challenge_method"], "S256");
+            self.google.0.lock().challenge = Some(query["code_challenge"].clone());
+            let outcome = if self.decline {
+                "error=access_denied"
+            } else {
+                "code=the-code"
+            };
+            Ok(format!(
+                "{IOS_SCHEME}:{IOS_REDIRECT_PATH}?state={}&{outcome}",
+                query["state"]
+            ))
+        }
+
+        async fn cancel(&self) {
+            *self.cancelled.lock() = true;
+        }
+    }
+
+    fn ios_drive(
+        google: &Arc<FakeGoogle>,
+        session: Arc<FakeSession>,
+    ) -> (GoogleDrive, Arc<MemoryStore>) {
+        drive_with(
+            google,
+            SignIn::Refresh {
+                client_id: "1234-abc.apps.googleusercontent.com".to_string(),
+                client_secret: None,
+                page: Consent::Session {
+                    scheme: IOS_SCHEME.to_string(),
+                    redirect_uri: format!("{IOS_SCHEME}:{IOS_REDIRECT_PATH}"),
+                    session,
+                },
+            },
+        )
+    }
+
+    fn never_open(_: &str) -> Result<(), String> {
+        panic!("an authentication session opens no browser")
+    }
+
+    #[tokio::test]
+    async fn links_on_ios_through_the_session_without_a_client_secret() {
+        let google = FakeGoogle::new();
+        let (drive, secrets) = ios_drive(&google, FakeSession::new(&google));
+        let (_keep, cancel) = tokio::sync::oneshot::channel();
+        let account = drive.link(&never_open, cancel).await.unwrap();
+        assert_eq!(account.email, "me@example.com");
+        let stored: serde_json::Value =
+            serde_json::from_str(&secrets.load().unwrap().unwrap()).unwrap();
+        assert_eq!(stored["refreshToken"], "refresh-1");
+
+        // Renewing sends no secret either: Google gives iOS clients none.
+        google.0.lock().valid_access.clear();
+        drive.list().await.unwrap();
+        let forms = google.0.lock().token_forms.clone();
+        assert_eq!(forms.len(), 2);
+        assert!(forms.iter().all(|f| !f.contains_key("client_secret")));
+        assert_eq!(
+            forms[0]["redirect_uri"],
+            format!("{IOS_SCHEME}:{IOS_REDIRECT_PATH}")
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_an_ios_callback_that_is_not_the_one_asked_for() {
+        let google = FakeGoogle::new();
+        let session = FakeSession::new(&google);
+        *session.answer.lock() = Some(Ok(format!(
+            "{IOS_SCHEME}:{IOS_REDIRECT_PATH}?state=someone-elses&code=the-code"
+        )));
+        let (drive, secrets) = ios_drive(&google, session);
+        let (_keep, cancel) = tokio::sync::oneshot::channel();
+        assert!(drive.link(&never_open, cancel).await.is_err());
+        assert_eq!(secrets.load().unwrap(), None);
+        assert!(google.0.lock().token_forms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn closing_the_ios_sheet_is_a_quiet_cancel() {
+        let google = FakeGoogle::new();
+        let session = FakeSession::new(&google);
+        *session.answer.lock() = Some(Err(NativeError::Cancelled));
+        let (drive, _) = ios_drive(&google, session);
+        let (_keep, cancel) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            drive.link(&never_open, cancel).await.unwrap_err(),
+            oauth::CANCELLED
+        );
+    }
+
+    #[tokio::test]
+    async fn declining_on_googles_page_is_a_quiet_cancel_too() {
+        let google = FakeGoogle::new();
+        let session = Arc::new(FakeSession {
+            decline: true,
+            ..Arc::try_unwrap(FakeSession::new(&google)).ok().unwrap()
+        });
+        let (drive, secrets) = ios_drive(&google, session);
+        let (_keep, cancel) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            drive.link(&never_open, cancel).await.unwrap_err(),
+            oauth::CANCELLED
+        );
+        assert_eq!(secrets.load().unwrap(), None);
+        assert!(google.0.lock().token_forms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_link_closes_the_ios_sheet() {
+        let google = FakeGoogle::new();
+        let session = Arc::new(FakeSession {
+            hang: true,
+            ..Arc::try_unwrap(FakeSession::new(&google)).ok().unwrap()
+        });
+        let (drive, _) = ios_drive(&google, session.clone());
+        let (stop, cancel) = tokio::sync::oneshot::channel();
+        stop.send(()).unwrap();
+        assert_eq!(
+            drive.link(&never_open, cancel).await.unwrap_err(),
+            oauth::CANCELLED
+        );
+        assert!(*session.cancelled.lock());
+    }
+
+    // --- Android: Google Play services -----------------------------------------
+
+    /// Google Play services, keeping a grant and handing out tokens the fake
+    /// Google accepts.
+    struct FakePlay {
+        google: Arc<FakeGoogle>,
+        granted: Mutex<bool>,
+        /// Scopes it says it granted.
+        scopes: Vec<String>,
+        /// The user took the grant away since.
+        grant_gone: Mutex<bool>,
+        asked: Mutex<Vec<(Option<String>, bool)>>,
+        cleared: Mutex<Vec<String>>,
+    }
+
+    impl FakePlay {
+        fn new(google: &Arc<FakeGoogle>) -> Arc<Self> {
+            Arc::new(FakePlay {
+                google: google.clone(),
+                granted: Mutex::new(false),
+                scopes: vec![SCOPE.to_string()],
+                grant_gone: Mutex::new(false),
+                asked: Mutex::new(Vec::new()),
+                cleared: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl PlayServices for FakePlay {
+        async fn authorize(
+            &self,
+            scope: &str,
+            account: Option<&str>,
+            interactive: bool,
+        ) -> Result<(String, Vec<String>), NativeError> {
+            assert_eq!(scope, SCOPE);
+            self.asked
+                .lock()
+                .push((account.map(str::to_string), interactive));
+            if *self.grant_gone.lock() || !*self.granted.lock() {
+                if !interactive {
+                    return Err(NativeError::NeedsUser);
+                }
+                *self.grant_gone.lock() = false;
+                *self.granted.lock() = true;
+            }
+            let token = FakeGoogle::issue(&mut self.google.0.lock());
+            Ok((token, self.scopes.clone()))
+        }
+
+        async fn clear_token(&self, token: &str) {
+            self.cleared.lock().push(token.to_string());
+        }
+    }
+
+    async fn android_linked() -> (
+        GoogleDrive,
+        Arc<MemoryStore>,
+        Arc<FakeGoogle>,
+        Arc<FakePlay>,
+    ) {
+        let google = FakeGoogle::new();
+        let play = FakePlay::new(&google);
+        let (drive, secrets) = drive_with(&google, SignIn::Play(play.clone()));
+        let (_keep, cancel) = tokio::sync::oneshot::channel();
+        drive.link(&never_open, cancel).await.unwrap();
+        (drive, secrets, google, play)
+    }
+
+    #[tokio::test]
+    async fn links_on_android_and_keeps_no_token_at_all() {
+        let (drive, secrets, google, play) = android_linked().await;
+        assert_eq!(
+            drive.account().await.unwrap().unwrap().email,
+            "me@example.com"
+        );
+        let stored: serde_json::Value =
+            serde_json::from_str(&secrets.load().unwrap().unwrap()).unwrap();
+        assert!(stored.get("refreshToken").is_none());
+        assert_eq!(stored["email"], "me@example.com");
+        // The user chose the account; nothing was asked of Google's token
+        // endpoint.
+        assert_eq!(*play.asked.lock(), vec![(None, true)]);
+        assert!(google.0.lock().token_forms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn renews_on_android_quietly_for_the_linked_account() {
+        let (drive, _, google, play) = android_linked().await;
+        // Drive stops taking the token Play services handed out.
+        google.0.lock().valid_access.clear();
+        assert!(drive.list().await.unwrap().is_empty());
+        // The refused one was handed back, and a new one asked for, for the
+        // same account, without showing anything.
+        assert_eq!(*play.cleared.lock(), vec!["access-1".to_string()]);
+        assert_eq!(
+            play.asked.lock().last().cloned(),
+            Some((Some("me@example.com".to_string()), false))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_android_grant_taken_away_asks_to_link_again() {
+        let (drive, secrets, google, play) = android_linked().await;
+        google.0.lock().valid_access.clear();
+        *play.grant_gone.lock() = true;
+        assert_eq!(drive.list().await.unwrap_err(), RELINK);
+        assert_eq!(secrets.load().unwrap(), None);
+        assert_eq!(drive.account().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn refuses_an_android_link_without_permission_to_add_files() {
+        let google = FakeGoogle::new();
+        let play = Arc::new(FakePlay {
+            scopes: vec!["openid".to_string()],
+            ..Arc::try_unwrap(FakePlay::new(&google)).ok().unwrap()
+        });
+        let (drive, secrets) = drive_with(&google, SignIn::Play(play));
+        let (_keep, cancel) = tokio::sync::oneshot::channel();
+        let error = drive.link(&never_open, cancel).await.unwrap_err();
+        assert!(error.contains("permission"), "{error}");
+        assert_eq!(secrets.load().unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn unlinking_on_android_hands_back_the_token_it_held() {
+        let (drive, secrets, google, play) = android_linked().await;
+        drive.unlink().await.unwrap();
+        assert_eq!(*play.cleared.lock(), vec!["access-1".to_string()]);
+        assert!(google.0.lock().revoked.is_empty());
+        assert_eq!(secrets.load().unwrap(), None);
     }
 
     #[tokio::test]

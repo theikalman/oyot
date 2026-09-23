@@ -38,7 +38,7 @@
     let suggested = $derived(suggestion(schedule, providers));
     let on = $derived(schedule.frequency !== 'off');
     // Whether there is anywhere a schedule could send backups from this
-    // device. A phone has no folder, and no provider it can link yet.
+    // device. A phone has no folder, so only a linked account.
     let possible = $derived(linked.length > 0 || schedule.foldersSupported);
 
     interface Choice {
@@ -230,8 +230,8 @@
             <div class="row">
                 <span class="desc">
                     {#if providers.length === 0}
-                        Scheduled backups are not available on phones yet. For now, use Back up now
-                        to save a copy to a file.
+                        Scheduled backups on a phone go to a linked account, and this version of
+                        Oyot cannot link one. Use Back up now to save a copy to a file.
                     {:else}
                         Link an account above to back up on a schedule.
                     {/if}

@@ -178,7 +178,7 @@ together to decide what is due, so they belong in one transaction.
 - **The history grows by one row per attempt.** A few a day, or up to about 24
   while a schedule is failing and retrying hourly. Rows older than a year can
   be dropped if it ever matters.
-- **Scheduled backups are not available on phones yet.** A phone has no folder
-  it can keep (decision 6) and cannot link an account until ADR 0025's mobile
-  phase, so the page says so instead of offering controls that cannot be
-  saved.
+- **On a phone, a schedule can only go to a linked account.** A phone has no
+  folder it can keep (decision 6). A phone build without a Google client has
+  nowhere to schedule to at all, and the page says so instead of offering
+  controls that cannot be saved.

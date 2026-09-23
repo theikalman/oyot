@@ -414,10 +414,13 @@ removed, and it renders nothing at all when there are none.
 ## Google Drive backups
 
 A build offers Google Drive only when it was compiled with a Google OAuth
-client. Without one, the Backup page offers files alone, which is what a
-development build does by default. Desktop only for now: the phones need a
-different sign-in ([ADR 0025](docs/decisions/0025-remote-backups-behind-one-trait-google-drive-first.md),
-decision 7).
+client for its platform. Without one, the Backup page offers files alone,
+which is what a development build does by default. Each platform signs in its
+own way, through its own client in the same Cloud project
+([ADR 0025](docs/decisions/0025-remote-backups-behind-one-trait-google-drive-first.md),
+decisions 6 and 7). They must share one project: Drive only shows a client the
+files its project created, so a phone would not see the computer's backups
+otherwise.
 
 ### Setting up the Google side
 
@@ -436,6 +439,21 @@ Once, by whoever publishes Oyot, in the [Google Cloud console](https://console.c
    assessment.
 5. Under clients, create a client of type **Desktop app**, and keep its client
    id and client secret.
+6. For iOS, create a client of type **iOS** with the bundle id
+   `com.ajiyakin.oyot`, and keep its client id. It has no secret. Nothing is
+   added to the app's Info.plist: the sign-in sheet returns to the app
+   without a registered URL type.
+7. For Android, create a client of type **Android** with the package name
+   `com.ajiyakin.oyot` and the SHA-1 fingerprint of the key the app is signed
+   with. Every key needs its own client: the debug key `tauri android dev`
+   uses, the release key, and, for builds installed from Google Play, the Play
+   App Signing key shown in the Play Console. A build signed with a key that
+   has no client builds fine and fails when linking, with "this build of Oyot
+   is not registered with Google". The debug key's fingerprint:
+
+   ```bash
+   keytool -list -v -keystore ~/.android/debug.keystore -storepass android
+   ```
 
 ### Building with it
 
@@ -453,10 +471,29 @@ confidential, since it ships inside the app, but there is no reason to publish
 it either. With direnv, `dotenv_if_exists` in `.envrc` and the two lines in a
 `.env` file, which is git-ignored, does it.
 
+The phones read their own variables, the same way:
+
+```bash
+# iOS: the iOS client's id; there is no secret.
+export OYOT_GOOGLE_IOS_CLIENT_ID=your-ios-client-id.apps.googleusercontent.com
+npm run tauri ios dev
+
+# Android: only a switch. Google Play services recognises the app by its
+# package and signing key, which must be registered (step 7).
+export OYOT_GOOGLE_ANDROID=1
+npm run tauri android dev
+```
+
+On Android, linking needs Google Play services, so use an emulator image that
+has it ("Google APIs" or "Google Play"), signed in to a test user.
+
 A linked account lives in the OS keychain, under the service
-`com.ajiyakin.oyot` and the account `google-drive`. macOS may ask to allow
-access to it after a rebuild, because a development build is signed afresh
-each time. Deleting that entry is the same as unlinking without telling Google.
+`com.ajiyakin.oyot` and the account `google-drive`, on desktop and on iOS.
+macOS may ask to allow access to it after a rebuild, because a development
+build is signed afresh each time. On Android no token is kept at all: Google
+Play services holds the grant, and the app keeps only which account it is, in
+`google-drive-link.json` in its data directory. Deleting any of these is the
+same as unlinking.
 
 ## Project Structure
 

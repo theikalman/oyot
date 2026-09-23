@@ -34,25 +34,32 @@ registered. A development build without them still builds, and simply offers
 backups to disk.
 
 **2. Linking is explicit, and nothing reaches Drive without it.** Settings
-shows "Link Google account". Linking opens the system browser at Google's
-consent screen, and when it returns, the page shows the linked account's email
-with "Unlink". Until an account is linked, Drive is not a destination anyone
-can pick, manually or on a schedule.
+shows "Link Google account". Linking shows Google's consent screen (decision
+7 says how, per platform), and when it returns, the page shows the linked
+account's email with "Unlink". Until an account is linked, Drive is not a
+destination anyone can pick, manually or on a schedule.
 
-Unlinking revokes the token with Google, forgets it here, and leaves the
-backups in Drive where they are. A schedule that pointed at Drive stops and
-says why. If the user revokes access from their Google account instead, the
-next call fails and the page asks them to link again.
+Unlinking forgets the account on this device, and leaves the backups in Drive
+where they are. A schedule that pointed at Drive stops and says why. It does
+not revoke access with Google: Google's revocation covers the whole Cloud
+project, so revoking from one device would cut off every device linked to the
+same account. The confirmation says so, and says that removing Oyot from the
+Google Account's security settings takes its access away everywhere. When the
+user does that, the next call on each device fails and the page asks them to
+link again. For the same reason, a consent with the Drive permission unticked
+is refused and forgotten, not revoked.
 
-**3. Sign-in is OAuth for installed apps, done in Rust.** Authorization code
-with PKCE (S256), redirected to a one-shot listener on `127.0.0.1` at a random
-port, with `state` checked on return. The browser is the system one, opened
-through the opener plugin. Tokens never reach the webview. The refresh token
-goes into the OS keychain through `keyring` (Keychain on macOS, Credential
-Manager on Windows, Secret Service on Linux), and the access token stays in
-memory and is refreshed when it expires. Where no keychain is available,
-linking fails and says so, rather than writing a refresh token to disk in
-clear.
+**3. Sign-in is OAuth for installed apps, done in Rust.** On desktop:
+authorization code with PKCE (S256), redirected to a one-shot listener on
+`127.0.0.1` at a random port, with `state` checked on return. The browser is
+the system one, opened through the opener plugin. Tokens never reach the
+webview. The refresh token goes into the OS keychain through `keyring`
+(Keychain on macOS, Credential Manager on Windows, Secret Service on Linux),
+and the access token stays in memory and is refreshed when it expires. Where
+no keychain is available, linking fails and says so, rather than writing a
+refresh token to disk in clear. The phones differ only in how the consent
+screen is shown and where the grant is kept (decision 7); the provider's Drive
+calls are the same on every platform.
 
 **4. The only scope is `drive.file`, and backups go in a folder the user can
 see.** `drive.file` lets the app see and change the files it created and
@@ -81,27 +88,66 @@ from disk does (ADR 0024, decision 5). Nothing from Drive is trusted more than
 a file from disk.
 
 **6. The client id is compiled in, and the publisher sets Google up once.**
-`OYOT_GOOGLE_CLIENT_ID` and its secret are read at build time, from CI secrets
-for a release. For an installed app the secret is not actually secret, which is
-why PKCE carries the security. Creating the Google Cloud project, the consent
-screen and the Desktop OAuth client is a one-time task for whoever publishes
-Oyot, and it is written up in DEVELOPMENT.md. Users never see any of it; they
-see "Link Google account".
+Each platform has its own OAuth client, all in one Cloud project, since
+`drive.file` access and consent belong to the project, and backups made on one
+device have to be listed on another:
 
-**7. Desktop first. Android and iOS follow as their own phase.** Google does
-not allow a loopback redirect for mobile clients. iOS can use a custom-scheme
-redirect through the deep-link plugin, with the token in the iOS keychain.
-Android has custom-scheme redirects disabled for new clients, so it needs the
-native Credential Manager authorization flow through a small Kotlin plugin,
-with the token in the Android Keystore. Each gets a spike before it is built.
-Backups to disk work on every platform from the start.
+- desktop: `OYOT_GOOGLE_CLIENT_ID` and `OYOT_GOOGLE_CLIENT_SECRET`, a Desktop
+  client. For an installed app the secret is not actually secret, which is
+  why PKCE carries the security.
+- iOS: `OYOT_GOOGLE_IOS_CLIENT_ID`, an iOS client for the bundle id. Google
+  gives iOS clients no secret at all.
+- Android: nothing but `OYOT_GOOGLE_ANDROID=1`, the switch that says the
+  project has an Android client for this build. Google Play services
+  recognises the app by its package name and signing certificate, so every
+  signing key (debug, release, Play App Signing) needs its fingerprint
+  registered.
+
+They are read at build time, from CI secrets for a release. A build without
+one simply offers no Drive on that platform. Creating the Cloud project, the
+consent screen and the clients is a one-time task for whoever publishes Oyot,
+written up in DEVELOPMENT.md. Users never see any of it; they see "Link Google
+account".
+
+**7. On phones, the platform shows the consent screen, and a small plugin of
+our own hands the result to Rust.** Google blocks the loopback redirect for
+mobile clients. A spike (2026-09-23) settled the rest, and overturned this
+decision's first guesses on both platforms:
+
+- **iOS: Apple's web authentication session.** The same flow as desktop, with
+  the consent page in an `ASWebAuthenticationSession` sheet and the redirect
+  under the client's reversed-id scheme
+  (`com.googleusercontent.apps.<id>:/oauth2redirect`). The session hands that
+  address to this app alone, even if another app claims the scheme, so no
+  URL type is registered and the deep-link plugin is not used: it would have
+  broadcast the authorization code to the webview. PKCE, the code exchange
+  and refresh stay in Rust, with no client secret. The refresh token goes in
+  the data protection keychain, readable after first unlock and never
+  migrated to another device.
+- **Android: Google Play services' `AuthorizationClient`.** Credential Manager
+  is for signing in, not for API access. `AuthorizationClient` asks the user
+  once, keeps the grant itself, and from then on hands out one-hour access
+  tokens without showing anything. It never hands the app a refresh token, and
+  Google advises against keeping one on a device, so nothing secret is stored:
+  the link is only which account it is, in a file of the app's own. A token
+  Drive refuses is handed back to Play services before another is asked for. A
+  device without Google Play services cannot link, and says so.
+
+The native side is one in-repo plugin, `src-tauri/plugins/sign-in`, called
+from Rust only: it has no commands the webview may call, and no capability
+grants it any. Scheduled backups ask the plugin for nothing that could show UI;
+a grant that needs the user ends the link, and the page asks for it again.
+Backups to disk work on every platform regardless.
 
 **8. HTTP is `reqwest`, on rustls with the `ring` provider.** `reqwest` is
 already in the dependency tree through Tauri, without TLS. Its default TLS
 provider is `aws-lc-rs`; `ring` is the provider Tauri itself selects when it
 enables rustls, and keeping to one provider keeps one C crypto library in the
-Android and iOS cross builds. The Android build is checked with it before the
-provider work starts.
+Android and iOS cross builds. Certificates are checked by the platform's own
+verifier, except on Android, where they are checked against Mozilla's roots
+bundled at build time: reqwest's verifier there needs JNI set up by the app
+before its first request, and panics without it. The cost is that a CA the
+user or their employer installed is not trusted for these few Google hosts.
 
 ## Alternatives considered
 
@@ -139,6 +185,11 @@ Adding one for backups would make the user's backups depend on it.
 - **Backups are visible only to Oyot builds that share this Google Cloud
   project.** `drive.file` access is per project, so a fork with its own client
   id cannot see backups made by the official build, and the reverse.
-- **The TLS stack comes back to the desktop binary.** ADR 0022 removed rustls
-  along with MQTT; this brings it back, and the release binary grows by rustls,
-  `ring` and the root certificates.
+- **The TLS stack comes back.** ADR 0022 removed rustls along with MQTT; this
+  brings it back to every build, and the binaries grow by rustls and `ring`,
+  and on Android by the bundled roots.
+- **Unlinking one device leaves the others linked.** Taking Oyot's access away
+  everywhere is done in the Google Account, which the confirmation says.
+- **Android needs Google Play services,** and every signing key's fingerprint
+  registered with Google. A key that is not fails at linking time with a
+  message, not at build time.
