@@ -104,8 +104,15 @@ pub trait BackupProvider: Send + Sync {
         progress: Progress<'_>,
     ) -> Result<(), String>;
 
-    /// Remove one backup. Where the service has a bin, it goes there.
+    /// Remove one backup. Where the service has a bin, it goes there, and
+    /// the user can take it back out. One that is already gone is not an
+    /// error: gone is what was asked for.
     async fn delete(&self, id: &str) -> Result<(), String>;
+
+    /// Remove one backup for good, past any bin. For pruning old scheduled
+    /// backups, which would otherwise go on filling the user's storage from
+    /// the bin. One that is already gone is not an error.
+    async fn purge(&self, id: &str) -> Result<(), String>;
 }
 
 /// The providers this build can use.

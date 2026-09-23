@@ -151,7 +151,9 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
         -- Every backup attempt, finished or not (ADR 0026). What the settings
         -- page reads to say when the last backup was made, and where a
         -- failure is recorded. `location` is where a backup can be found
-        -- again, kept only for backups something will prune.
+        -- again, cleared once it is removed. `target` names the place it went
+        -- (a provider and account, or the scheduled folder) so backups to the
+        -- same place can be compared and pruned together.
         CREATE TABLE IF NOT EXISTS backup_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             scheduled INTEGER NOT NULL DEFAULT 0,
@@ -168,9 +170,29 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             attachment_count INTEGER,
             skipped_attachments INTEGER,
             skipped_documents INTEGER,
-            fingerprint TEXT
+            fingerprint TEXT,
+            target TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_backup_history_started ON backup_history(started_at);
+
+        -- When and where backups are made on their own (ADR 0026). One row at
+        -- most; none means the defaults, which is Off. `folder` is a path
+        -- chosen in a dialog, and never leaves Rust.
+        CREATE TABLE IF NOT EXISTS backup_schedule (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            frequency TEXT NOT NULL DEFAULT 'off'
+                CHECK(frequency IN ('off', 'daily', 'weekly')),
+            time_of_day INTEGER NOT NULL DEFAULT 120
+                CHECK(time_of_day BETWEEN 0 AND 1439),
+            weekday INTEGER NOT NULL DEFAULT 0 CHECK(weekday BETWEEN 0 AND 6),
+            destination TEXT,
+            folder TEXT,
+            skip_unchanged INTEGER NOT NULL DEFAULT 1,
+            keep INTEGER NOT NULL DEFAULT 10 CHECK(keep BETWEEN 1 AND 100),
+            changed_at INTEGER NOT NULL DEFAULT 0,
+            destination_changed_at INTEGER NOT NULL DEFAULT 0,
+            suggestion_dismissed INTEGER NOT NULL DEFAULT 0
+        );
         ",
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;
@@ -188,7 +210,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -499,6 +521,42 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v11: scheduled backups (ADR 0026). The history learns where each
+    // backup went, so backups to one place can be compared and pruned, and
+    // the schedule gets its table. Nothing to backfill: a backup made before
+    // this has no target, which only means it is never pruned.
+    if version < 11 {
+        // A fresh install's base schema already has the column.
+        let has_target = db
+            .prepare("SELECT target FROM backup_history LIMIT 0")
+            .is_ok();
+        if !has_target {
+            db.execute_batch("ALTER TABLE backup_history ADD COLUMN target TEXT;")
+                .map_err(|e| format!("Migration v11 failed: {}", e))?;
+        }
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS backup_schedule (
+                 id INTEGER PRIMARY KEY CHECK(id = 1),
+                 frequency TEXT NOT NULL DEFAULT 'off'
+                     CHECK(frequency IN ('off', 'daily', 'weekly')),
+                 time_of_day INTEGER NOT NULL DEFAULT 120
+                     CHECK(time_of_day BETWEEN 0 AND 1439),
+                 weekday INTEGER NOT NULL DEFAULT 0 CHECK(weekday BETWEEN 0 AND 6),
+                 destination TEXT,
+                 folder TEXT,
+                 skip_unchanged INTEGER NOT NULL DEFAULT 1,
+                 keep INTEGER NOT NULL DEFAULT 10 CHECK(keep BETWEEN 1 AND 100),
+                 changed_at INTEGER NOT NULL DEFAULT 0,
+                 destination_changed_at INTEGER NOT NULL DEFAULT 0,
+                 suggestion_dismissed INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .map_err(|e| format!("Migration v11 failed: {}", e))?;
+
+        db.execute_batch("PRAGMA user_version = 11;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -545,6 +603,8 @@ pub fn run() {
             // Whatever remote destinations this build has credentials for
             // (ADR 0025). None, in a build without them.
             app.manage(crate::backup::remote::Providers::for_this_build());
+            // After everything it reads is managed (ADR 0026).
+            start_scheduler(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -617,6 +677,10 @@ pub fn run() {
             list_remote_backups,
             open_remote_backup,
             delete_remote_backup,
+            get_backup_schedule,
+            set_backup_schedule,
+            choose_backup_folder,
+            dismiss_backup_suggestion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1184,7 +1248,17 @@ mod migration_tests {
 
         run_migrations(&db).unwrap();
 
-        let id = crate::backup::history::start(&db, false, "local", "b.zip", 1).unwrap();
+        let id = crate::backup::history::start(
+            &db,
+            &crate::backup::history::NewAttempt {
+                scheduled: false,
+                destination: "local",
+                label: "b.zip",
+                target: None,
+                started_at: 1,
+            },
+        )
+        .unwrap();
         crate::backup::history::fail(&db, id, 2, "disk full").unwrap();
         let status = crate::backup::history::status(&db).unwrap();
         assert_eq!(status.latest_attempt.unwrap().status, "failed");
@@ -1197,5 +1271,59 @@ mod migration_tests {
                 [id],
             )
             .is_err());
+    }
+
+    // A database from a build with the history but no schedule, which only
+    // ever existed in development. Its rows keep their meaning: no target, so
+    // nothing will prune them.
+    #[test]
+    fn migrates_v10_to_v11_and_adds_the_schedule() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch(
+            "DROP TABLE backup_schedule;
+             DROP TABLE backup_history;
+             CREATE TABLE backup_history (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 scheduled INTEGER NOT NULL DEFAULT 0,
+                 destination TEXT NOT NULL,
+                 destination_label TEXT NOT NULL,
+                 location TEXT,
+                 started_at INTEGER NOT NULL,
+                 finished_at INTEGER,
+                 status TEXT NOT NULL
+                     CHECK(status IN ('running', 'success', 'failed', 'skipped')),
+                 error TEXT,
+                 size_bytes INTEGER,
+                 document_count INTEGER,
+                 attachment_count INTEGER,
+                 skipped_attachments INTEGER,
+                 skipped_documents INTEGER,
+                 fingerprint TEXT
+             );
+             INSERT INTO backup_history (destination, destination_label, started_at, status)
+                 VALUES ('local', 'old.zip', 5, 'success');
+             PRAGMA user_version = 10;",
+        )
+        .unwrap();
+        // What every launch does before migrating: it must not trip over the
+        // older shape of the history.
+        setup_database_tables(&db).unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let target: Option<String> = db
+            .query_row("SELECT target FROM backup_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(target, None);
+        assert_eq!(
+            crate::backup::schedule::load(&db).unwrap(),
+            crate::backup::schedule::Schedule::default()
+        );
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 }

@@ -7,35 +7,17 @@
 //! the webview sees an account's email and the list of backups, nothing more.
 
 use super::backup::{
-    build_staged, record_outcome, staging_dir, start_session, BackupPreview, BackupState, Running,
-    MAX_BACKUP_FILE_BYTES, STATUS_EVENT,
+    begin, report, run_backup, staging_dir, start_session, BackupPreview, BackupState, Delivery,
+    Running, BUSY, MAX_BACKUP_FILE_BYTES, STATUS_EVENT,
 };
-use crate::backup::format::suggested_filename;
-use crate::backup::history;
+use crate::backup::history::{self, NewAttempt};
 use crate::backup::reader::BackupReader;
-use crate::backup::remote::{Account, Providers, RemoteBackup, UploadMeta};
+use crate::backup::remote::{Account, Providers, RemoteBackup};
 use crate::backup::staging::StagedFile;
 use crate::db::AppState;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
-
-/// Emitted while a backup moves to or from a provider, so the page can show
-/// how far it has got.
-const PROGRESS_EVENT: &str = "backup-progress";
-
-#[derive(Clone, Serialize)]
-struct ProgressEvent {
-    /// `building`, `uploading` or `downloading`.
-    phase: &'static str,
-    done: u64,
-    /// 0 when not known.
-    total: u64,
-}
-
-fn report(app: &AppHandle, phase: &'static str, done: u64, total: u64) {
-    let _ = app.emit(PROGRESS_EVENT, ProgressEvent { phase, done, total });
-}
 
 #[derive(Debug, Serialize)]
 pub struct ProviderView {
@@ -97,9 +79,15 @@ pub async fn link_backup_provider(
     };
     let result = provider.link(&open, cancelled).await;
 
-    let mut slot = backup.linking.lock();
-    if slot.as_ref().is_some_and(|(id, _)| *id == attempt) {
-        *slot = None;
+    {
+        let mut slot = backup.linking.lock();
+        if slot.as_ref().is_some_and(|(id, _)| *id == attempt) {
+            *slot = None;
+        }
+    }
+    // A schedule paused for want of an account resumes with this one.
+    if result.is_ok() {
+        let _ = app.emit(STATUS_EVENT, ());
     }
     result
 }
@@ -115,10 +103,14 @@ pub fn cancel_backup_link(backup: State<'_, BackupState>) {
 /// Unlink the account. Backups already stored with the provider stay there.
 #[tauri::command]
 pub async fn unlink_backup_provider(
+    app: AppHandle,
     providers: State<'_, Providers>,
     provider: String,
 ) -> Result<(), String> {
-    providers.get(&provider)?.unlink().await
+    let result = providers.get(&provider)?.unlink().await;
+    // A schedule backing up there is paused now, and the page should say so.
+    let _ = app.emit(STATUS_EVENT, ());
+    result
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +125,11 @@ pub struct RemoteBackupResult {
     pub backup: RemoteBackup,
 }
 
+/// What the history and the page call a provider's linked account.
+pub(super) fn account_label(provider: &str, account: &Account) -> String {
+    format!("{provider} ({})", account.email)
+}
+
 /// Back up the whole library to the linked account. Recorded in the history
 /// whatever the outcome.
 #[tauri::command]
@@ -144,55 +141,43 @@ pub async fn create_remote_backup(
     provider: String,
 ) -> Result<RemoteBackupResult, String> {
     let Some(_running) = Running::claim(&backup.running) else {
-        return Err("a backup is already running".to_string());
+        return Err(BUSY.to_string());
     };
     let provider = providers.get(&provider)?;
     let account = provider
         .account()
         .await?
         .ok_or_else(|| format!("link an account to {} first", provider.name()))?;
-    let label = format!("{} ({})", provider.name(), account.email);
+    let label = account_label(provider.name(), &account);
+    // Recorded so a scheduled backup to the same account can tell whether
+    // this one already holds what it would back up. Never pruned: only
+    // scheduled backups are.
+    let target = history::target_for_provider(provider.id(), &account.email);
 
     let started = chrono::Local::now();
-    let attempt = {
-        let db = state.db.lock();
-        history::start(
-            &db,
-            false,
-            provider.id(),
-            &label,
-            started.timestamp_millis(),
-        )?
-    };
-    let _ = app.emit(STATUS_EVENT, ());
-
-    let outcome = async {
-        report(&app, "building", 0, 0);
-        let (staged, summary) =
-            build_staged(&app, state.data_dir.clone(), started.timestamp_millis()).await?;
-        let meta = UploadMeta {
-            file_name: suggested_filename(&started),
-            created_at: started.timestamp_millis(),
-            device: summary.device_name.clone(),
-            document_count: summary.document_count,
-            attachment_count: summary.attachment_count,
-        };
-        let progress = |done: u64, total: u64| report(&app, "uploading", done, total);
-        let uploaded = provider.upload(staged.path(), &meta, &progress).await?;
-        Ok::<_, String>((summary, uploaded))
-    }
-    .await;
-    record_outcome(
+    let attempt = begin(
+        &app,
+        &state,
+        &NewAttempt {
+            scheduled: false,
+            destination: provider.id(),
+            label: &label,
+            target: Some(&target),
+            started_at: started.timestamp_millis(),
+        },
+    )?;
+    let delivered = run_backup(
         &app,
         &state,
         attempt,
-        outcome
-            .as_ref()
-            .map(|(summary, uploaded)| (summary, Some(uploaded.id.as_str())))
-            .map_err(String::as_str),
-    );
-
-    let (summary, uploaded) = outcome?;
+        &started,
+        Delivery::Provider(provider),
+    )
+    .await?;
+    let summary = delivered.summary;
+    let uploaded = delivered
+        .remote
+        .ok_or("the backup was uploaded, but its details did not come back")?;
     Ok(RemoteBackupResult {
         destination_label: label,
         document_count: summary.document_count,
@@ -224,6 +209,11 @@ pub async fn open_remote_backup(
     provider: String,
     backup_id: String,
 ) -> Result<BackupPreview, String> {
+    // Held while the backup is fetched: a scheduled backup starting now
+    // would prune at the same place, possibly the very backup coming down.
+    let Some(_running) = Running::claim(&backup.running) else {
+        return Err(BUSY.to_string());
+    };
     let provider = providers.get(&provider)?;
     let staged = StagedFile::new(&staging_dir(&app)?, "import")?;
 
@@ -246,9 +236,23 @@ pub async fn open_remote_backup(
 /// it goes there, and can be taken back out.
 #[tauri::command]
 pub async fn delete_remote_backup(
+    app: AppHandle,
+    state: State<'_, AppState>,
     providers: State<'_, Providers>,
     provider: String,
     backup_id: String,
 ) -> Result<(), String> {
-    providers.get(&provider)?.delete(&backup_id).await
+    let provider = providers.get(&provider)?;
+    provider.delete(&backup_id).await?;
+    // Gone, so neither something to prune nor proof that an unchanged
+    // library is already backed up.
+    let forgotten = {
+        let db = state.db.lock();
+        history::forget_location(&db, provider.id(), &backup_id)
+    };
+    if let Err(e) = forgotten {
+        warn_log!("[backup] {e}");
+    }
+    let _ = app.emit(STATUS_EVENT, ());
+    Ok(())
 }

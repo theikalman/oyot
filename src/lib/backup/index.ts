@@ -38,3 +38,25 @@ export {
     type RemoteBackup,
     type RemoteBackupResult,
 } from './remote';
+export {
+    chooseBackupFolder,
+    dismissBackupSuggestion,
+    getBackupSchedule,
+    setBackupSchedule,
+    settingsOf,
+    type ScheduleSettings,
+} from './schedule';
+export {
+    FOLDER,
+    WEEKDAYS,
+    backupWarning,
+    describeNextRun,
+    fromTimeInput,
+    groupHistory,
+    suggestion,
+    toTimeInput,
+    type Frequency,
+    type HistoryEntry,
+    type ScheduleView,
+} from './scheduleText';
+export { watchScheduledBackups } from './watch';

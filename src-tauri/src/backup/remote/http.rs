@@ -13,6 +13,7 @@ pub enum Method {
     Post,
     Put,
     Patch,
+    Delete,
 }
 
 #[derive(Debug, Clone)]
@@ -164,12 +165,13 @@ impl Reqwest {
             Method::Post => reqwest::Method::POST,
             Method::Put => reqwest::Method::PUT,
             Method::Patch => reqwest::Method::PATCH,
+            Method::Delete => reqwest::Method::DELETE,
         };
         let mut builder = self.client.request(method, &request.url);
         for (name, value) in &request.headers {
             builder = builder.header(name.as_str(), value.as_str());
         }
-        if request.method != Method::Get {
+        if !matches!(request.method, Method::Get | Method::Delete) {
             builder = builder.body(request.body);
         }
         builder

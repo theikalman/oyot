@@ -3,12 +3,15 @@
     import { listen } from '@tauri-apps/api/event';
     import { formatLastSync } from '$lib/stores/sync';
     import { toasts } from '$lib/services/toast';
-    import { BackupProviderCard, ImportBackupDialog } from '$lib/settings';
+    import { BackupProviderCard, BackupScheduleCard, ImportBackupDialog } from '$lib/settings';
     import {
         BACKUP_STATUS_EVENT,
         backUpToFile,
         closeBackup,
+        describeNextRun,
+        getBackupSchedule,
         getBackupStatus,
+        groupHistory,
         importBackup,
         listBackupHistory,
         listProviders,
@@ -19,11 +22,27 @@
         type BackupProvider,
         type BackupRecord,
         type BackupStatus,
+        type HistoryEntry,
         type ImportPlan,
+        type ScheduleView,
     } from '$lib/backup';
 
+    // Rows fetched to make the list from. A failing schedule adds a row an
+    // hour, which the list folds into one entry, so it needs more rows than
+    // it shows.
+    const HISTORY_ROWS = 100;
+    const HISTORY_ENTRIES = 10;
+
     let status = $state<BackupStatus | null>(null);
-    let history = $state<BackupRecord[]>([]);
+    let history = $state<HistoryEntry[]>([]);
+    let schedule = $state<ScheduleView | null>(null);
+    // Counts the history's changes, for what has to be read again after any
+    // of them: a provider's list changes when a backup lands there, and again
+    // when older ones are pruned, which records no new backup.
+    let historyRevision = $state(0);
+    // What "next backup tomorrow at 02:00" is measured from, kept current
+    // while the page is open.
+    let now = $state(Date.now());
     // Remote destinations this build can use. Empty in a build without
     // credentials for any, which shows nothing about them (ADR 0025).
     let providers = $state<BackupProvider[]>([]);
@@ -43,12 +62,33 @@
     let lastFailure = $derived(
         status?.latestAttempt?.status === 'failed' ? status.latestAttempt : null,
     );
+    // A scheduled check since the last backup that found nothing new: the
+    // last backup is older, but still everything (ADR 0026).
+    let lastCheck = $derived(
+        status?.latestAttempt?.status === 'skipped' ? status.latestAttempt : null,
+    );
+    // Not while one is running: "due, and starts within a few minutes" is
+    // the backup already under way.
+    let nextRun = $derived(schedule && !status?.running ? describeNextRun(schedule, now) : null);
+    let scheduleTrouble = $derived(
+        schedule !== null && (schedule.paused !== null || schedule.failures > 0),
+    );
 
     async function refresh() {
         try {
-            [status, history] = await Promise.all([getBackupStatus(), listBackupHistory(10)]);
+            const [latest, rows] = await Promise.all([
+                getBackupStatus(),
+                listBackupHistory(HISTORY_ROWS),
+            ]);
+            status = latest;
+            history = groupHistory(rows, HISTORY_ENTRIES);
         } catch (error) {
             console.error('Failed to load the backup history:', error);
+        }
+        try {
+            schedule = await getBackupSchedule();
+        } catch (error) {
+            console.error('Failed to load the backup schedule:', error);
         }
     }
 
@@ -68,12 +108,18 @@
     onMount(() => {
         void refresh();
         void refreshProviders();
+        const tick = setInterval(() => (now = Date.now()), 30_000);
 
         // Registered asynchronously, so a page left before it resolves has to
         // unregister it itself.
         let left = false;
         let unlisten: (() => void) | null = null;
-        listen(BACKUP_STATUS_EVENT, () => void refresh())
+        // The providers too: a scheduled backup that finds its account's
+        // access revoked forgets the link, and the card should say so.
+        listen(BACKUP_STATUS_EVENT, () => {
+            historyRevision++;
+            handleProvidersChanged();
+        })
             .then((fn) => {
                 if (left) fn();
                 else unlisten = fn;
@@ -82,6 +128,7 @@
 
         return () => {
             left = true;
+            clearInterval(tick);
             unlisten?.();
             // Leaving with a backup open but not imported: close it, so its
             // staged copy does not wait for the next start to be removed.
@@ -201,10 +248,27 @@
             plural(record.attachmentCount ?? 0, 'image'),
         ];
         if (record.sizeBytes !== null) parts.push(formatSize(record.sizeBytes));
+        // A scheduled backup has nobody to tell when it is made, so what it
+        // had to leave out is said here, wherever it is described.
+        if (record.skippedAttachments) {
+            parts.push(`${plural(record.skippedAttachments, 'image')} left out`);
+        }
+        if (record.skippedDocuments) {
+            parts.push(`${plural(record.skippedDocuments, 'note')} left out`);
+        }
         return parts.join(', ');
     }
 
-    function outcome(record: BackupRecord): string {
+    function outcome(entry: HistoryEntry): string {
+        const { record } = entry;
+        const when = record.scheduled ? 'Scheduled • ' : '';
+        if (entry.failedTimes > 1) {
+            return `${when}Failed ${entry.failedTimes} times: ${record.error ?? 'unknown error'}`;
+        }
+        return when + outcomeOf(record);
+    }
+
+    function outcomeOf(record: BackupRecord): string {
         switch (record.status) {
             case 'success':
                 return describe(record);
@@ -272,6 +336,13 @@
                         The last attempt, {ago(lastFailure.startedAt)}, failed: {lastFailure.error ??
                             'unknown error'}
                     </span>
+                {:else if lastCheck}
+                    <span class="status-detail">
+                        Checked {ago(lastCheck.startedAt)}: nothing has changed since.
+                    </span>
+                {/if}
+                {#if nextRun}
+                    <span class="status-next" class:trouble={scheduleTrouble}>{nextRun}</span>
                 {/if}
             </div>
         </div>
@@ -317,14 +388,20 @@
             {busy}
             onChanged={handleProvidersChanged}
             onOpened={handleOpened}
+            {historyRevision}
         />
     {/each}
+
+    {#if schedule}
+        <BackupScheduleCard {schedule} {providers} onChanged={(changed) => (schedule = changed)} />
+    {/if}
 
     {#if history.length > 0}
         <section class="settings-section">
             <h2 class="section-title">Recent backups</h2>
             <div class="section-card">
-                {#each history as record (record.id)}
+                {#each history as entry (entry.record.id)}
+                    {@const record = entry.record}
                     <div class="history-row">
                         <span
                             class="history-dot"
@@ -335,7 +412,7 @@
                         <div class="history-info">
                             <span class="history-label">{record.destinationLabel}</span>
                             <span class="history-desc">
-                                {fullDate(record.startedAt)} • {outcome(record)}
+                                {fullDate(record.startedAt)} • {outcome(entry)}
                             </span>
                         </div>
                     </div>
@@ -404,6 +481,17 @@
     .status-running {
         margin-top: 8px;
         font-size: 13px;
+        color: var(--status-pending);
+    }
+
+    .status-next {
+        margin-top: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        overflow-wrap: anywhere;
+    }
+
+    .status-next.trouble {
         color: var(--status-pending);
     }
 

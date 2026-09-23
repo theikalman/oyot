@@ -33,7 +33,8 @@ and move between paired devices over an encrypted peer-to-peer connection.
   included, to one file wherever you choose, or to your Google Drive once you
   link an account (desktop), and imports one back. An import merges into what
   is already there and never removes a note, so it is safe to run on a device
-  you are still using.
+  you are still using. On a computer, backups can also run on their own, daily
+  or weekly, to Google Drive or a folder you choose, while Oyot is open.
 
 ## Sync
 

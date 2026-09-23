@@ -6,7 +6,12 @@
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
     import { exportAllNotes } from '$lib/export';
-    import { getBackupStatus, type BackupStatus } from '$lib/backup';
+    import {
+        getBackupSchedule,
+        getBackupStatus,
+        type BackupStatus,
+        type ScheduleView,
+    } from '$lib/backup';
     import { formatLastSync } from '$lib/stores/sync';
     import { toasts } from '$lib/services/toast';
     import { onMount } from 'svelte';
@@ -41,11 +46,13 @@
     }
 
     let backupStatus = $state<BackupStatus | null>(null);
+    let backupSchedule = $state<ScheduleView | null>(null);
     let backupSummary = $derived.by(() => {
         if (!backupStatus) return 'Back up to a file, or import a backup';
         const last = backupStatus.lastSuccess;
-        // A failure since the last good backup is the thing worth seeing
-        // from here; the page it opens says the rest.
+        // Trouble is the thing worth seeing from here; the page it opens
+        // says the rest.
+        if (backupSchedule?.paused) return 'Scheduled backups are paused';
         if (backupStatus.latestAttempt?.status === 'failed') return 'The last backup failed';
         if (!last) return 'No backup yet';
         return `Last backup ${formatLastSync(last.finishedAt ?? last.startedAt).toLowerCase()}`;
@@ -55,6 +62,9 @@
         getBackupStatus()
             .then((status) => (backupStatus = status))
             .catch((error) => console.error('Failed to load the backup status:', error));
+        getBackupSchedule()
+            .then((schedule) => (backupSchedule = schedule))
+            .catch((error) => console.error('Failed to load the backup schedule:', error));
     });
 
     let exporting = $state(false);

@@ -11,8 +11,9 @@
 //! itself so their bytes never cross IPC.
 
 use crate::backup::format::{suggested_filename, Limits, Preferences};
-use crate::backup::history::{self, BackupRecord, BackupStatus};
+use crate::backup::history::{self, BackupRecord, BackupStatus, NewAttempt};
 use crate::backup::reader::BackupReader;
+use crate::backup::remote::{BackupProvider, RemoteBackup, UploadMeta};
 use crate::backup::snapshot::open_snapshot;
 use crate::backup::staging::{self, StagedFile};
 use crate::backup::writer::{write_backup, BackupSummary};
@@ -28,12 +29,30 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
 /// Emitted whenever the history changes, so whatever shows "last backup" can
 /// read it again.
 pub(super) const STATUS_EVENT: &str = "backup-status-changed";
+
+/// Emitted while a backup is built, and while one moves to or from a
+/// provider, so the page can show how far it has got.
+pub(super) const PROGRESS_EVENT: &str = "backup-progress";
+
+#[derive(Clone, Serialize)]
+struct ProgressEvent {
+    /// `building`, `uploading` or `downloading`.
+    phase: &'static str,
+    done: u64,
+    /// 0 when not known.
+    total: u64,
+}
+
+pub(super) fn report(app: &AppHandle, phase: &'static str, done: u64, total: u64) {
+    let _ = app.emit(PROGRESS_EVENT, ProgressEvent { phase, done, total });
+}
 
 /// Largest file we will copy in to check. A backup's entries are capped, so
 /// anything much bigger than their total is not a backup, and is refused
@@ -66,8 +85,13 @@ struct ImportSession {
     _staged: StagedFile,
 }
 
-/// Held for the length of one backup, and released however it ends.
+/// Held for the length of one backup, or of reading one in to restore, and
+/// released however it ends. One at a time: a scheduled backup prunes, and
+/// must not do it under a restore.
 pub(super) struct Running<'a>(&'a AtomicBool);
+
+/// Why a backup or a restore cannot start.
+pub(super) const BUSY: &str = "a backup is already running. Try again when it has finished.";
 
 impl<'a> Running<'a> {
     pub(super) fn claim(flag: &'a AtomicBool) -> Option<Self> {
@@ -104,6 +128,13 @@ pub fn clear_staging(app: &AppHandle) {
 
 // --- backing up ------------------------------------------------------------
 
+/// The preferences a backup carries, as they are now.
+pub(super) fn preferences(app: &AppHandle) -> Preferences {
+    Preferences {
+        theme: super::config::get_theme(app.clone()),
+    }
+}
+
 /// Build a backup of the whole library in staging. The staged file is removed
 /// when the returned handle is dropped, delivered or not.
 ///
@@ -115,9 +146,7 @@ pub(super) async fn build_staged(
     created_at: i64,
 ) -> Result<(StagedFile, BackupSummary), String> {
     let staging = staging_dir(app)?;
-    let preferences = Preferences {
-        theme: super::config::get_theme(app.clone()),
-    };
+    let preferences = preferences(app);
     tauri::async_runtime::spawn_blocking(move || {
         let staged = StagedFile::new(&staging, "backup")?;
         let conn = open_snapshot(&data_dir.join(DB_FILE))?;
@@ -131,7 +160,7 @@ pub(super) async fn build_staged(
 /// Finish an attempt's history row, and tell anything showing it. A failure
 /// to record is logged rather than returned: the backup itself is the answer
 /// the caller is waiting for.
-pub(super) fn record_outcome(
+fn record_outcome(
     app: &AppHandle,
     state: &AppState,
     attempt: i64,
@@ -174,7 +203,7 @@ pub async fn create_local_backup(
     backup: State<'_, BackupState>,
 ) -> Result<Option<LocalBackupResult>, String> {
     let Some(_running) = Running::claim(&backup.running) else {
-        return Err("a backup is already running".to_string());
+        return Err(BUSY.to_string());
     };
 
     let started = chrono::Local::now();
@@ -194,34 +223,22 @@ pub async fn create_local_backup(
     };
     let file_name = file_label(&destination).unwrap_or(suggested);
 
-    let attempt = {
-        let db = state.db.lock();
-        history::start(&db, false, "local", &file_name, started.timestamp_millis())?
-    };
-    let _ = app.emit(STATUS_EVENT, ());
-
-    let handle = app.clone();
-    let outcome = async {
-        let (staged, summary) =
-            build_staged(&app, state.data_dir.clone(), started.timestamp_millis()).await?;
-        tauri::async_runtime::spawn_blocking(move || {
-            deliver(&handle, staged.path(), &destination).map(|()| summary)
-        })
-        .await
-        .unwrap_or_else(|e| Err(format!("saving the backup stopped unexpectedly: {e}")))
-    }
-    .await;
-    record_outcome(
+    let attempt = begin(
         &app,
         &state,
-        attempt,
-        outcome
-            .as_ref()
-            .map(|summary| (summary, None))
-            .map_err(String::as_str),
-    );
-
-    let summary = outcome?;
+        &NewAttempt {
+            scheduled: false,
+            destination: LOCAL,
+            label: &file_name,
+            // A file saved somewhere once is not a place backups go again,
+            // so it is neither compared with nor pruned.
+            target: None,
+            started_at: started.timestamp_millis(),
+        },
+    )?;
+    let summary = run_backup(&app, &state, attempt, &started, Delivery::File(destination))
+        .await?
+        .summary;
     trace!(
         "[cmd] create_local_backup wrote {} documents and {} attachments",
         summary.document_count,
@@ -235,6 +252,116 @@ pub async fn create_local_backup(
         skipped_documents: summary.skipped_documents,
         size_bytes: summary.size_bytes,
     }))
+}
+
+/// Where a backup is going.
+pub(super) enum Delivery {
+    /// A file the user just chose in a save dialog.
+    File(FilePath),
+    /// A new file in the scheduled folder, at this path. Never written over
+    /// a file already there.
+    Folder(PathBuf),
+    /// The account linked at a provider.
+    Provider(Arc<dyn BackupProvider>),
+}
+
+/// A backup that reached its destination.
+pub(super) struct Delivered {
+    pub summary: BackupSummary,
+    /// Where it can be found again: its path in the folder, or the
+    /// provider's id for it. `None` for a file saved through a dialog.
+    pub location: Option<String>,
+    /// The uploaded file, for a provider.
+    pub remote: Option<RemoteBackup>,
+}
+
+/// The history's name for a file saved through a dialog.
+pub(super) const LOCAL: &str = "local";
+
+/// Record that a backup is starting, and tell anything showing the history.
+pub(super) fn begin(
+    app: &AppHandle,
+    state: &AppState,
+    attempt: &NewAttempt,
+) -> Result<i64, String> {
+    let id = {
+        let db = state.db.lock();
+        history::start(&db, attempt)?
+    };
+    let _ = app.emit(STATUS_EVENT, ());
+    Ok(id)
+}
+
+/// Build a backup, deliver it, and finish the attempt's history row however
+/// that goes. The one operation behind every backup, manual or scheduled
+/// (ADR 0026, decision 1); the caller holds `Running`.
+pub(super) async fn run_backup(
+    app: &AppHandle,
+    state: &AppState,
+    attempt: i64,
+    started: &chrono::DateTime<chrono::Local>,
+    delivery: Delivery,
+) -> Result<Delivered, String> {
+    let outcome = async {
+        report(app, "building", 0, 0);
+        let (staged, summary) =
+            build_staged(app, state.data_dir.clone(), started.timestamp_millis()).await?;
+        match delivery {
+            Delivery::File(destination) => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    deliver(&handle, staged.path(), &destination)
+                })
+                .await
+                .unwrap_or_else(|e| Err(format!("saving the backup stopped unexpectedly: {e}")))?;
+                Ok(Delivered {
+                    summary,
+                    location: None,
+                    remote: None,
+                })
+            }
+            Delivery::Folder(path) => {
+                let location = path.to_string_lossy().into_owned();
+                tauri::async_runtime::spawn_blocking(move || deliver_new(staged.path(), &path))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(format!("saving the backup stopped unexpectedly: {e}"))
+                    })?;
+                Ok(Delivered {
+                    summary,
+                    location: Some(location),
+                    remote: None,
+                })
+            }
+            Delivery::Provider(provider) => {
+                let meta = UploadMeta {
+                    file_name: suggested_filename(started),
+                    created_at: started.timestamp_millis(),
+                    device: summary.device_name.clone(),
+                    document_count: summary.document_count,
+                    attachment_count: summary.attachment_count,
+                };
+                let progress = |done: u64, total: u64| report(app, "uploading", done, total);
+                let uploaded = provider.upload(staged.path(), &meta, &progress).await?;
+                Ok(Delivered {
+                    summary,
+                    location: Some(uploaded.id.clone()),
+                    remote: Some(uploaded),
+                })
+            }
+        }
+    }
+    .await;
+    record_outcome(
+        app,
+        state,
+        attempt,
+        outcome
+            .as_ref()
+            .map(|delivered| (&delivered.summary, delivered.location.as_deref()))
+            .map_err(String::as_str),
+    );
+    outcome
 }
 
 /// Put a finished backup where the user asked for it.
@@ -263,15 +390,54 @@ fn deliver_to_path(staged: &Path, destination: &Path) -> Result<(), String> {
     if result.is_err() {
         let _ = std::fs::remove_file(&partial);
     }
-    result.map_err(|e| {
-        format!(
-            "could not save the backup to {}: {e}",
-            destination.display()
-        )
-    })
+    // The name only: the error reaches the webview, and the folder is the
+    // user's to know, not the page's.
+    result.map_err(|e| format!("could not save {}: {e}", display_name(destination)))
 }
 
-fn partial_path(destination: &Path) -> PathBuf {
+/// Save a backup as a new file, never in place of one already there. For
+/// the scheduled folder, which another device may share, and where a file
+/// of the same name is someone else's.
+///
+/// Written beside it first, as `deliver_to_path` does, but the partial file
+/// must be new too: two writers sharing one partial would interleave.
+pub(super) fn deliver_new(staged: &Path, destination: &Path) -> Result<(), String> {
+    let failed = |e: std::io::Error| format!("could not save {}: {e}", display_name(destination));
+    let partial = partial_path(destination);
+    let mut input = File::open(staged).map_err(failed)?;
+    // A partial file that is already there is someone else's, and is left
+    // alone: only one this call made is ever removed.
+    let output = File::options()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(failed)?;
+    let result = (|mut output: File| -> std::io::Result<()> {
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        // Closed before the rename, which Windows refuses on an open file.
+        drop(output);
+        if destination.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "a file with that name appeared while the backup was being saved",
+            ));
+        }
+        std::fs::rename(&partial, destination)
+    })(output);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result.map_err(failed)
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "the backup".to_string())
+}
+
+pub(super) fn partial_path(destination: &Path) -> PathBuf {
     let name = destination
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -362,6 +528,11 @@ pub async fn open_local_backup(
     let dialog = dialog.add_filter("Oyot backup", &["zip"]);
     let Some(source) = dialog.blocking_pick_file() else {
         return Ok(None);
+    };
+    // Not while the dialog is open, which can be for as long as the user
+    // likes, but while the file is read in.
+    let Some(_running) = Running::claim(&backup.running) else {
+        return Err(BUSY.to_string());
     };
 
     let staging = staging_dir(&app)?;
@@ -663,6 +834,46 @@ mod tests {
         assert_eq!(std::fs::read(&destination).unwrap(), b"an older backup");
         assert!(!partial_path(&destination).exists());
 
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_file_never_replaces_one_already_there() {
+        let dir = crate::backup::test_support::scratch();
+        let staged = dir.join("staged.zip");
+        std::fs::write(&staged, b"the new backup").unwrap();
+
+        let fresh = dir.join("fresh.zip");
+        deliver_new(&staged, &fresh).unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"the new backup");
+        assert!(!partial_path(&fresh).exists());
+
+        let taken = dir.join("taken.zip");
+        std::fs::write(&taken, b"another device's backup").unwrap();
+        assert!(deliver_new(&staged, &taken).is_err());
+        assert_eq!(std::fs::read(&taken).unwrap(), b"another device's backup");
+        assert!(!partial_path(&taken).exists());
+
+        // Nor one mid-write, whose partial file is not shared, and is left
+        // as it was.
+        let busy = dir.join("busy.zip");
+        std::fs::write(partial_path(&busy), b"half of something").unwrap();
+        assert!(deliver_new(&staged, &busy).is_err());
+        assert!(!busy.exists());
+        assert_eq!(
+            std::fs::read(partial_path(&busy)).unwrap(),
+            b"half of something"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_names_the_file_not_where_it_is() {
+        let dir = crate::backup::test_support::scratch();
+        let error = deliver_to_path(&dir.join("missing.zip"), &dir.join("backup.zip")).unwrap_err();
+        assert!(error.contains("backup.zip"), "{error}");
+        assert!(!error.contains(&dir.display().to_string()), "{error}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

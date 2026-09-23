@@ -28,9 +28,14 @@
         onChanged: () => void;
         /** A backup was downloaded and checked, ready for the import preview. */
         onOpened: (preview: BackupPreview) => void;
+        /**
+         * Goes up whenever the backup history changes. The list is read again
+         * then: a scheduled backup may have landed here, or pruned older ones.
+         */
+        historyRevision: number;
     }
 
-    let { provider, busy, onChanged, onOpened }: Props = $props();
+    let { provider, busy, onChanged, onOpened, historyRevision }: Props = $props();
 
     // Rust's word for a link the user called off, which is not worth a toast.
     const CANCELLED = 'linking was cancelled';
@@ -54,8 +59,10 @@
     let linkedEmail = $derived(provider.account?.email ?? null);
 
     // The list follows the link: read when an account is linked, cleared when
-    // it is not.
+    // it is not. Read again when a backup lands here from elsewhere on the
+    // page, or from the schedule.
     $effect(() => {
+        void historyRevision;
         if (linkedEmail) {
             untrack(() => void loadBackups());
         } else {
@@ -312,7 +319,8 @@
     <Modal title={`Unlink ${account.email}?`} onClose={() => (confirmUnlink = false)}>
         <p class="modal-note">
             Oyot stops backing up to {provider.name}, and its access to your account is withdrawn.
-            Backups already there stay where they are, and you can link again at any time.
+            Backups already there stay where they are, and you can link again at any time. Scheduled
+            backups to {provider.name} pause until an account is linked again.
         </p>
         {#snippet actions()}
             <button class="btn" data-secondary onclick={() => (confirmUnlink = false)}

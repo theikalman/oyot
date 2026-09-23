@@ -734,7 +734,28 @@ impl BackupProvider for GoogleDrive {
         let url = with_query(&format!("{DRIVE}/files/{id}"), &[("fields", "id")]);
         let request =
             HttpRequest::new(Method::Patch, url).json(&serde_json::json!({ "trashed": true }));
-        self.call(request).await.map(|_| ())
+        let response = self.authorized(request).await.map_err(|e| e.to_string())?;
+        match response.status {
+            // Deleted for good already, or never visible to this app: either
+            // way, not there, which is what was asked for.
+            404 | 410 => Ok(()),
+            _ if response.is_success() => Ok(()),
+            _ => Err(drive_error(&response)),
+        }
+    }
+
+    async fn purge(&self, id: &str) -> Result<(), String> {
+        check_id(id)?;
+        // `drive.file` allows deleting a file this app created, and one it
+        // did not create is invisible to it, so answers 404 like one that is
+        // gone.
+        let request = HttpRequest::new(Method::Delete, format!("{DRIVE}/files/{id}"));
+        let response = self.authorized(request).await.map_err(|e| e.to_string())?;
+        match response.status {
+            404 | 410 => Ok(()),
+            _ if response.is_success() => Ok(()),
+            _ => Err(drive_error(&response)),
+        }
     }
 }
 
@@ -1125,12 +1146,21 @@ mod tests {
 
             if let Some(id) = path.strip_prefix(&format!("{DRIVE}/files/")) {
                 let id = id.to_string();
-                let Some((_, file)) = state.files.iter_mut().find(|(fid, _)| *fid == id) else {
+                let Some(index) = state.files.iter().position(|(fid, _)| *fid == id) else {
                     return Ok(ok(
                         404,
                         serde_json::json!({ "error": { "message": "File not found" } }),
                     ));
                 };
+                if request.method == Method::Delete {
+                    state.files.remove(index);
+                    return Ok(HttpResponse {
+                        status: 204,
+                        headers: Vec::new(),
+                        body: Vec::new(),
+                    });
+                }
+                let file = &mut state.files[index].1;
                 if request.method == Method::Patch {
                     file.trashed = true;
                     return Ok(ok(200, serde_json::json!({ "id": id })));
@@ -1547,6 +1577,39 @@ mod tests {
             .files
             .iter()
             .any(|(id, f)| *id == backup.id && f.trashed));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_backup_that_is_already_gone_is_not_an_error() {
+        let (drive, _, _) = linked().await;
+        drive.delete("no-such-file").await.unwrap();
+        drive.purge("no-such-file").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn purging_removes_a_backup_for_good() {
+        let (drive, _, google) = linked().await;
+        let (path, _) = backup_file(10);
+        let kept = drive.upload(&path, &meta(), &|_, _| {}).await.unwrap();
+        let pruned = drive.upload(&path, &meta(), &|_, _| {}).await.unwrap();
+        drive.purge(&pruned.id).await.unwrap();
+
+        let listed: Vec<String> = drive
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|b| b.id)
+            .collect();
+        assert_eq!(listed, vec![kept.id]);
+        // Not in the bin either, where it would go on using the storage.
+        assert!(!google.0.lock().files.iter().any(|(id, _)| *id == pruned.id));
+        assert!(google
+            .0
+            .lock()
+            .log
+            .iter()
+            .any(|line| line.starts_with("Delete ")));
     }
 
     #[tokio::test]
