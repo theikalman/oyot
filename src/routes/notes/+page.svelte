@@ -1,7 +1,10 @@
 <script lang="ts">
     import { documents } from '$lib/stores/app';
-    import { openDocument } from '$lib/services/navigation';
+    import { indexRevision } from '$lib/stores/derivedIndex';
+    import { openDocument, openTag } from '$lib/services/navigation';
+    import { loadTagsByDocument } from '$lib/services/tags';
     import { filterNotes, notesOf, noteStatus } from '$lib/notes/noteIndex';
+    import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
     import type { DocumentSummary } from '$lib/types';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
     import PinToggle from '$lib/components/PinToggle.svelte';
@@ -13,10 +16,31 @@
     // to the sidebar, rename it, delete it.
     //
     // Read from the document store rather than queried, as the journal index
-    // is. Everything a row shows is already kept current there by the save,
+    // is. All a row shows but its tags is kept current there by the save,
     // merge and pin paths, so a peer's rename or pin moves this page as well.
     let notes = $derived(notesOf($documents));
     let pinnedCount = $derived(notes.filter((note: DocumentSummary) => note.pinned).length);
+
+    // What each note is tagged with, and the one thing here SQL has to
+    // answer: a tag lives in the note's content, so the store knows nothing
+    // about one. The derived rows are what make the chips cover notes this
+    // device has only ever received.
+    //
+    // Reloaded on every change to any document's derived rows, which a tag
+    // being added, renamed or removed is, here or on a paired device. One
+    // query answers every row.
+    let tags = $state<TagsByDocument>(NO_TAGS);
+
+    $effect(() => {
+        void $indexRevision;
+        let live = true;
+        void loadTagsByDocument().then((loaded) => {
+            if (live) tags = loaded;
+        });
+        return () => {
+            live = false;
+        };
+    });
 
     // Filtered here rather than by querying: the whole list is already in
     // hand, and one person's notes are not a corpus worth paging.
@@ -82,9 +106,10 @@
         {:else}
             <ul class="note-list">
                 {#each shown as note (note.id)}
-                    <!-- The row is the container, not the button: the pin and
-                         the menu are buttons of their own, and one button
-                         cannot hold another. -->
+                    {@const noteTags = tagsOf(tags, note.id)}
+                    <!-- The row is the container, not the button: the tags, the
+                         pin and the menu are buttons of their own, and one
+                         button cannot hold another. -->
                     <li class="note-row" class:empty={!note.has_content}>
                         <button
                             class="note-open"
@@ -92,8 +117,24 @@
                             title="Open {note.title}"
                         >
                             <span class="note-title">{note.title}</span>
-                            <span class="note-status">{noteStatus(note)}</span>
                         </button>
+                        {#if noteTags.length > 0}
+                            <!-- Each chip is its own button, as on the journal
+                                 index, so a tag is a way out of this page as
+                                 well as a label on it. -->
+                            <span class="note-tags">
+                                {#each noteTags as tag (tag)}
+                                    <button
+                                        class="tag"
+                                        onclick={() => openTag(tag)}
+                                        title="Everything tagged #{tag}"
+                                    >
+                                        #{tag}
+                                    </button>
+                                {/each}
+                            </span>
+                        {/if}
+                        <span class="note-status">{noteStatus(note)}</span>
                         <PinToggle docId={note.id} pinned={note.pinned} />
                         <div class="row-menu-anchor">
                             <button
@@ -242,7 +283,6 @@
     .note-open {
         display: flex;
         align-items: baseline;
-        gap: 12px;
         flex: 1;
         min-width: 0;
         padding: 9px 0;
@@ -269,8 +309,46 @@
         font-weight: 400;
     }
 
+    /* The title, the tags and the status sit on one baseline, so a status
+       beside chips that wrap stays level with their first line rather than
+       floating between two. The pin and the menu stay centred. */
+    .note-open,
+    .note-tags,
+    .note-status {
+        align-self: baseline;
+    }
+
+    .note-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: flex-end;
+        max-width: 50%;
+    }
+
+    .tag {
+        padding: 1px 7px;
+        border: none;
+        border-radius: 10px;
+        background: var(--accent-bg);
+        color: var(--accent-color);
+        font-family: inherit;
+        font-size: 11px;
+        line-height: 1.6;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .tag:hover {
+        text-decoration: underline;
+    }
+
+    /* A column of its own, however much it says, so the chips beside it line
+       up from one row to the next. */
     .note-status {
         flex-shrink: 0;
+        min-width: 110px;
+        text-align: right;
         font-size: 12px;
         color: var(--text-muted);
     }
@@ -334,21 +412,42 @@
         color: #ef4444;
     }
 
-    /* On a phone the title and what it says about itself do not fit side by
-       side, so the status goes under the title rather than squeezing it. */
+    /* On a phone the title and what goes beside it do not fit on one line, so
+       the title keeps the first line to itself, with the pin and the menu,
+       and the status and the tags share a second one under it. */
     @media (max-width: 640px) {
         .notes {
             padding: 12px 16px 24px;
         }
 
+        .note-row {
+            flex-wrap: wrap;
+        }
+
+        /* Everything on the line but the pin and the menu, which are 28px
+           each with a 4px gap before both. */
         .note-open {
-            flex-direction: column;
-            align-items: stretch;
-            gap: 2px;
+            flex-basis: calc(100% - 64px);
+        }
+
+        .note-status {
+            order: 1;
+            min-width: 0;
+            margin-bottom: 8px;
+            text-align: left;
         }
 
         .note-status:empty {
             display: none;
+        }
+
+        .note-tags {
+            order: 2;
+            flex: 1;
+            min-width: 0;
+            max-width: none;
+            margin-bottom: 8px;
+            justify-content: flex-start;
         }
     }
 </style>
