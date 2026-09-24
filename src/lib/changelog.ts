@@ -36,6 +36,58 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.20-alpha',
+        date: '2026-09-24',
+        summary:
+            'The sidebar keeps only the notes you pin, and every note is on a new Notes page. Notes and journals open for reading, with Edit one press away.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'The sidebar lists only the notes you pin, under Pinned notes, instead of every note. Nothing is pinned when you first update, so the list starts empty, but no note has gone anywhere: every one is on the new Notes page, under Index. Pin a note with the pin beside its title while it is open, or from the Notes page. A note started with the + beside Pinned notes is pinned from the start, which the dialog shows as a "Pin to the sidebar" box you can untick.',
+            },
+            {
+                kind: 'added',
+                text: 'Notes, under Index in the sidebar, lists every note, newest first, with its tags and what is still open on it. The filter finds a note by its title or by one of its tags, and starting with # looks at tags alone, so "#home" finds the notes tagged home and not one titled "Homework". Each row can pin, rename or delete its note, and the page has its own New note button.',
+            },
+            {
+                kind: 'added',
+                text: 'Pinning or unpinning a note on one device does the same on your paired devices, once they are all on this version, so the sidebar is the same on each. A backup keeps which notes are pinned, and importing it brings the pins back.',
+            },
+            {
+                kind: 'added',
+                text: 'Notes and journals now open for reading, however you reach them, so on a phone the tap that scrolls a note no longer puts the caret in it and brings the keyboard up. Press Edit, beside the sync indicator, to change one, and Done to go back to reading; on a phone the button is just a pencil, and a tick while editing. The keyboard shortcut is ⇧⌘E on Apple devices and Ctrl+Shift+E elsewhere. Editing lasts until you leave: opening anything else, or coming back, starts reading again.',
+            },
+            {
+                kind: 'added',
+                text: 'A note you have just made is the one exception, and opens ready to write in, with the caret already in it. Tasks can be ticked off, or unticked, while you are reading, without pressing Edit first.',
+            },
+            {
+                kind: 'improved',
+                text: "The editor toolbar is one set of icons instead of a row of boxed letters and symbols. A tool shows pressed while the text at the caret already has it, so you can see whether Bold will bold or unbold before you press it, and the same goes for headings, lists, quotes and code. Undo and Redo grey out when there is nothing to undo or redo, and each tooltip names the tool's keyboard shortcut, where it has one.",
+            },
+            {
+                kind: 'improved',
+                text: 'On a touch screen every toolbar button is a finger-sized target, and the buttons meet, so a tap between two of them no longer lands on nothing. When the toolbar is wider than the screen, only the formatting tools scroll: Undo and Redo stay at the end of the row, and the row fades at an edge with more tools beyond it.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Pressing a toolbar button keeps the caret in the note. The selection used to blink away for a moment, and on a phone the keyboard could drop and come back up between one tool and the next.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The ⋮ button that opens the menu on a note or a device in the sidebar is always shown. It used to appear only under a mouse pointer, so on a phone or tablet those menus could not be found. On a touch screen it is sized for a finger too, so a tap just beside it no longer opens the note instead.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Deleting the note on screen, here or on another device, no longer reports "Failed to load document". The delete had worked; the app was going back for the note it had just removed.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The "Linked from" bar under a note keeps its links on one row, scrolling sideways when they do not fit, and lines up with the foot of the sidebar beside it.',
+            },
+        ],
+    },
+    {
         version: '0.0.19-alpha',
         date: '2026-09-24',
         summary:
