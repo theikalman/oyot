@@ -1,5 +1,5 @@
 import { reconcile, type Reconciliation } from '$lib/sync/reconcile';
-import type { ManifestEntry } from '$lib/sync/protocol';
+import { pinStamp, type ManifestEntry } from '$lib/sync/protocol';
 
 /**
  * Importing a backup: merging it into this library the way a peer's manifest
@@ -17,7 +17,7 @@ export type ImportOutcome =
     | 'added'
     /** Deleted here before the backup's copy last changed: brought back. */
     | 'restored'
-    /** On both, and the backup's copy differs: a newer title taken, content merged. */
+    /** On both, and the backup's copy differs: a newer title or pin taken, content merged. */
     | 'updated'
     /** On both, the same. */
     | 'unchanged'
@@ -115,7 +115,7 @@ function decide(entry: ManifestEntry, local: ManifestEntry | undefined): ImportS
             return step('restored', hasContent);
         case 'update': {
             const merge = decision.pull && hasContent;
-            return decision.rename || merge
+            return decision.rename || decision.repin || merge
                 ? step('updated', merge)
                 : step('unchanged', false, { kind: 'up-to-date' });
         }
@@ -144,6 +144,7 @@ export interface ImportTarget {
     ensureDoc(entry: ManifestEntry): Promise<void>;
     ensureTombstone(entry: ManifestEntry): Promise<void>;
     applyRename(docId: string, title: string, titleUpdatedAt: number): Promise<void>;
+    applyPin(docId: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void>;
     applyDelete(docId: string, deletedAt: number): Promise<boolean>;
     mergeDelta(docId: string, updateB64: string): Promise<void>;
 }
@@ -156,15 +157,17 @@ export interface ImportAnnouncer {
     created(entry: ManifestEntry): void;
     updated(docId: string, state: string): void;
     renamed(docId: string, title: string, titleUpdatedAt: number): void;
+    pinned(docId: string, pinned: boolean, pinnedUpdatedAt: number): void;
 }
 
 export interface ImportResult {
     added: number;
     restored: number;
     /**
-     * Documents on both sides that the backup actually changed. Differing is
-     * not the same as changing: a copy here that already contains everything
-     * the backup's does hashes differently and gains nothing from it.
+     * Documents on both sides that the backup actually changed: their content,
+     * title or pin. Differing is not the same as changing: a copy here that
+     * already contains everything the backup's does hashes differently and
+     * gains nothing from it.
      */
     changed: number;
     /** Titles of documents that could not be imported. */
@@ -179,7 +182,7 @@ function hasWork(step: ImportStep): boolean {
         case 'delete':
             return true;
         case 'update':
-            return step.decision.rename || step.merge;
+            return step.decision.rename || step.decision.repin || step.merge;
         default:
             return false;
     }
@@ -236,6 +239,11 @@ export async function applyImport(
                         await target.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
                         announce.renamed(entry.id, entry.title, entry.titleUpdatedAt);
                     }
+                    if (decision.repin) {
+                        const pinned = entry.pinned ?? false;
+                        await target.applyPin(entry.id, pinned, pinStamp(entry));
+                        announce.pinned(entry.id, pinned, pinStamp(entry));
+                    }
                     if (step.merge) await mergeFromBackup(entry.id);
                     updated.push(step);
                     break;
@@ -254,7 +262,11 @@ export async function applyImport(
         for (const step of updated) {
             const now = after.get(step.entry.id);
             if (!now || !step.local) continue;
-            if (now.contentHash !== step.local.contentHash || now.title !== step.local.title) {
+            if (
+                now.contentHash !== step.local.contentHash ||
+                now.title !== step.local.title ||
+                (now.pinned ?? false) !== (step.local.pinned ?? false)
+            ) {
                 result.changed++;
             }
         }

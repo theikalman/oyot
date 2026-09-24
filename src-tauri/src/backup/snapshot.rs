@@ -68,7 +68,8 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<LibrarySnapshot, String
                     COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
                     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
                     content_hash, \
-                    is_deleted = 0 AND COALESCE(length(crdt_state), 0) > 2 \
+                    is_deleted = 0 AND COALESCE(length(crdt_state), 0) > 2, \
+                    pinned, pinned_updated_at \
              FROM documents ORDER BY id",
         )
         .map_err(|e| format!("could not read the documents: {e}"))?;
@@ -89,6 +90,8 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<LibrarySnapshot, String
                     is_deleted: row.get::<_, i64>(6)? != 0,
                     deleted_at: row.get(7)?,
                     lifecycle_updated_at: row.get(8)?,
+                    pinned: row.get::<_, i64>(11)? != 0,
+                    pinned_updated_at: row.get(12)?,
                     state: None,
                 },
                 content_hash: row.get(9)?,
@@ -309,6 +312,12 @@ mod tests {
         )
         .unwrap();
         changed(&db, "a rename");
+
+        crate::commands::documents::set_pinned(&db, "a", true, 100).unwrap();
+        changed(&db, "a pin");
+
+        crate::commands::documents::set_pinned(&db, "a", false, 101).unwrap();
+        changed(&db, "an unpin");
 
         add_document(&db, "b", b"more");
         changed(&db, "a new document");

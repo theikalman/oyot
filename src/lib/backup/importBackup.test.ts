@@ -26,11 +26,13 @@ function recorder() {
         created: [] as string[],
         updated: [] as string[],
         renamed: [] as string[],
+        pinned: [] as string[],
     };
     const announce: ImportAnnouncer = {
         created: (entry: ManifestEntry) => void calls.created.push(entry.id),
         updated: (docId) => void calls.updated.push(docId),
         renamed: (docId) => void calls.renamed.push(docId),
+        pinned: (docId) => void calls.pinned.push(docId),
     };
     return { calls, announce };
 }
@@ -155,6 +157,42 @@ describe('importing a backup', () => {
         expect(here.docs.get('renamed-here')?.title).toBe('Mine');
         expect(calls.renamed).toEqual(['renamed-there']);
         expect(result.changed).toBe(1);
+    });
+
+    // A pin is merged by the rule sync uses: the later stamp wins, whichever
+    // way it points.
+    it('takes a newer pin and leaves an older one', async () => {
+        const backedUp = new FakeRepo();
+        backedUp.seed('pinned-there', 'body');
+        backedUp.seed('unpinned-here', 'body');
+        const here = new FakeRepo();
+        share(backedUp, here, 'pinned-there');
+        share(backedUp, here, 'unpinned-here');
+        await backedUp.applyPin('pinned-there', true, 50);
+        await backedUp.applyPin('unpinned-here', true, 20);
+        await here.applyPin('unpinned-here', false, 30);
+
+        const { plan, result, calls } = await importInto(here, await backupOf(backedUp));
+        expect(here.docs.get('pinned-there')?.pinned).toBe(true);
+        expect(here.docs.get('unpinned-here')?.pinned).toBe(false);
+        expect(calls.pinned).toEqual(['pinned-there']);
+        expect(plan.counts.updated).toBe(1);
+        expect(result.changed).toBe(1);
+
+        const again = await importInto(here, await backupOf(backedUp));
+        expect(again.calls.pinned).toEqual([]);
+        expect(again.result.changed).toBe(0);
+    });
+
+    it('restores a pinned note as pinned', async () => {
+        const old = new FakeRepo();
+        old.seed('groceries', 'milk, eggs');
+        await old.applyPin('groceries', true, 50);
+
+        const fresh = new FakeRepo();
+        await importInto(fresh, await backupOf(old));
+        expect(fresh.docs.get('groceries')?.pinned).toBe(true);
+        expect(fresh.docs.get('groceries')?.pinnedUpdatedAt).toBe(50);
     });
 
     it('changes nothing the second time the same backup is imported', async () => {
