@@ -20,6 +20,10 @@ and move between paired devices over an encrypted peer-to-peer connection.
   follow you to your other devices, and into your backups.
 - **Rich text editing.** Headings, lists, tables, task lists, images, and slash
   commands, built on Tiptap.
+- **Reading first.** Notes and journals open for reading, without the toolbar
+  and with nothing a stray tap can change. Press Edit, or Cmd/Ctrl+Shift+E, to
+  write, and Done to go back. A note you have just created opens ready to
+  write in.
 - **Document links and backlinks.** Link one note to another with `/document`.
   Each note shows what links back to it.
 - **Full-text search.** Searches the text of your notes and journals, not just
