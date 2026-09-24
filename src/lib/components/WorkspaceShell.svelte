@@ -10,10 +10,12 @@
     // and left to drift.
     interface Props {
         title?: string | null;
+        /** Controls that belong to the title, such as pinning the open note. */
+        actions?: Snippet;
         children: Snippet;
     }
 
-    let { title = null, children }: Props = $props();
+    let { title = null, actions, children }: Props = $props();
 </script>
 
 <main class="app">
@@ -22,7 +24,10 @@
         <div class="main-content">
             <div class="sync-status-container">
                 {#if title}
-                    <h1 class="page-title">{title}</h1>
+                    <div class="page-heading">
+                        <h1 class="page-title">{title}</h1>
+                        {@render actions?.()}
+                    </div>
                 {/if}
                 <SyncStatus />
             </div>
@@ -67,6 +72,13 @@
         padding: 12px 16px;
         border-bottom: 1px solid var(--border-color);
         min-height: 57px;
+    }
+
+    .page-heading {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
     }
 
     .page-title {
