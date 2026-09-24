@@ -5,6 +5,7 @@ import {
     modIsCommand,
     openNextForEditing,
     opensForEditing,
+    shortcutLabel,
 } from './editorMode';
 
 describe('opensForEditing', () => {
@@ -116,9 +117,31 @@ describe('modIsCommand', () => {
     });
 });
 
+describe('shortcutLabel', () => {
+    it('writes Mod as Command on an Apple device and Control elsewhere', () => {
+        expect(shortcutLabel('Mod-b', true)).toBe('⌘B');
+        expect(shortcutLabel('Mod-b', false)).toBe('Ctrl+B');
+    });
+
+    // Control, Option, Shift, Command: the order every Apple menu uses,
+    // whatever order the binding was written in.
+    it('orders the modifiers the way Apple menus do', () => {
+        expect(shortcutLabel('Mod-Shift-z', true)).toBe('⇧⌘Z');
+        expect(shortcutLabel('Shift-Mod-z', true)).toBe('⇧⌘Z');
+        expect(shortcutLabel('Mod-Alt-1', true)).toBe('⌥⌘1');
+        expect(shortcutLabel('Ctrl-Alt-Shift-Mod-k', true)).toBe('⌃⌥⇧⌘K');
+    });
+
+    it('names the modifiers in full elsewhere', () => {
+        expect(shortcutLabel('Mod-Shift-z', false)).toBe('Ctrl+Shift+Z');
+        expect(shortcutLabel('Mod-Alt-1', false)).toBe('Ctrl+Alt+1');
+        expect(shortcutLabel('Mod-Shift-8', false)).toBe('Ctrl+Shift+8');
+    });
+});
+
 describe('editShortcutLabel', () => {
     it('spells the shortcut the way the keyboard does', () => {
-        expect(editShortcutLabel(true)).toBe('⌘⇧E');
+        expect(editShortcutLabel(true)).toBe('⇧⌘E');
         expect(editShortcutLabel(false)).toBe('Ctrl+Shift+E');
     });
 });

@@ -1,12 +1,19 @@
 <script lang="ts">
     import type { Editor } from '@tiptap/core';
     import { FORMATTING, HISTORY, TOOLS, pressedTools, type Tool } from './toolbarTools';
+    import { shortcutLabel } from './editorMode';
 
     interface Props {
         editor: Editor | null;
     }
 
     let { editor }: Props = $props();
+
+    // A tool's tooltip names its shortcut too, the way the Edit button's
+    // does, so the toolbar teaches the faster way in as it is used.
+    function tooltip(tool: Tool): string {
+        return tool.keys ? `${tool.label} (${shortcutLabel(tool.keys)})` : tool.label;
+    }
 
     // Whether the formatting tools run on past either end of their strip,
     // which is then faded on that side to say there is more to scroll to.
@@ -82,7 +89,7 @@
         class:pressed={pressed.has(tool.id)}
         aria-pressed={tool.toggles ? pressed.has(tool.id) : undefined}
         disabled={unavailable.has(tool.id)}
-        title={tool.label}
+        title={tooltip(tool)}
         aria-label={tool.label}
         onmousedown={(event) => event.preventDefault()}
         onclick={() => editor && tool.run(editor)}

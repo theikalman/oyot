@@ -13,6 +13,12 @@ export interface Tool {
     /** What pressing it does: its tooltip, and the name a screen reader reads. */
     label: string;
     /**
+     * The editor's own key binding for the same thing, in its notation
+     * (`Mod-Shift-s`), for the tooltip to name. The binding itself belongs
+     * to the editor; this only says what it is.
+     */
+    keys?: string;
+    /**
      * Path data for its icon, on a 24-unit square. The toolbar strokes every
      * icon the same way, so these carry the shape and nothing else.
      */
@@ -42,6 +48,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'bold',
             label: 'Bold',
+            keys: 'Mod-b',
             toggles: { name: 'bold' },
             icon: ['M7 5h5.5a3.5 3.5 0 0 1 0 7H7z', 'M7 12h6.5a3.5 3.5 0 0 1 0 7H7z'],
             run: (editor) => editor.chain().focus().toggleBold().run(),
@@ -49,6 +56,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'italic',
             label: 'Italic',
+            keys: 'Mod-i',
             toggles: { name: 'italic' },
             icon: ['M11 5h7', 'M6 19h7', 'M14.5 5l-5 14'],
             run: (editor) => editor.chain().focus().toggleItalic().run(),
@@ -56,6 +64,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'strike',
             label: 'Strikethrough',
+            keys: 'Mod-Shift-s',
             toggles: { name: 'strike' },
             icon: [
                 'M4 12h16',
@@ -69,6 +78,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'heading1',
             label: 'Heading 1',
+            keys: 'Mod-Alt-1',
             toggles: { name: 'heading', attributes: { level: 1 } },
             icon: [...H, 'M16.5 11.5 19 10v8'],
             run: (editor) => editor.chain().focus().toggleHeading({ level: 1 }).run(),
@@ -76,6 +86,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'heading2',
             label: 'Heading 2',
+            keys: 'Mod-Alt-2',
             toggles: { name: 'heading', attributes: { level: 2 } },
             icon: [...H, 'M16.5 12a2.25 2.25 0 1 1 3.9 1.5L16.5 18h4.5'],
             run: (editor) => editor.chain().focus().toggleHeading({ level: 2 }).run(),
@@ -83,6 +94,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'heading3',
             label: 'Heading 3',
+            keys: 'Mod-Alt-3',
             toggles: { name: 'heading', attributes: { level: 3 } },
             icon: [...H, 'M16.5 10h4l-1.9 3.2a2.4 2.4 0 1 1-2.08 3.6'],
             run: (editor) => editor.chain().focus().toggleHeading({ level: 3 }).run(),
@@ -92,6 +104,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'bulletList',
             label: 'Bulleted list',
+            keys: 'Mod-Shift-8',
             toggles: { name: 'bulletList' },
             icon: [
                 'M9 6h11',
@@ -106,6 +119,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'orderedList',
             label: 'Numbered list',
+            keys: 'Mod-Shift-7',
             toggles: { name: 'orderedList' },
             icon: [
                 'M10 6h10',
@@ -120,6 +134,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'taskList',
             label: 'Task list',
+            keys: 'Mod-Shift-9',
             toggles: { name: 'taskList' },
             icon: [
                 'm3.5 6.5 1.75 1.75L8.5 5',
@@ -134,6 +149,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'blockquote',
             label: 'Quote',
+            keys: 'Mod-Shift-b',
             toggles: { name: 'blockquote' },
             icon: [
                 'M10 11H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v5c0 3-1.5 5-4.5 6',
@@ -144,6 +160,7 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
         {
             id: 'codeBlock',
             label: 'Code block',
+            keys: 'Mod-Alt-c',
             toggles: { name: 'codeBlock' },
             icon: ['m8 8-4 4 4 4', 'm16 8 4 4-4 4', 'm13.5 6-3 12'],
             run: (editor) => editor.chain().focus().toggleCodeBlock().run(),
@@ -172,6 +189,7 @@ export const HISTORY: readonly Tool[] = [
     {
         id: 'undo',
         label: 'Undo',
+        keys: 'Mod-z',
         canRun: (editor) => editor.can().undo(),
         icon: ['M4 9h11a5 5 0 0 1 0 10h-3', 'M8 5 4 9l4 4'],
         run: (editor) => editor.chain().focus().undo().run(),
@@ -179,6 +197,7 @@ export const HISTORY: readonly Tool[] = [
     {
         id: 'redo',
         label: 'Redo',
+        keys: 'Mod-Shift-z',
         canRun: (editor) => editor.can().redo(),
         icon: ['M20 9H9a5 5 0 0 0 0 10h3', 'm16 5 4 4-4 4'],
         run: (editor) => editor.chain().focus().redo().run(),

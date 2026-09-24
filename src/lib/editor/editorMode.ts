@@ -52,7 +52,35 @@ export function isEditShortcut(event: Keys, command: boolean = modIsCommand()): 
     return mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'e';
 }
 
-/** The shortcut the way the keyboard in front of the user labels it. */
+// How an Apple menu writes each modifier, in the order it writes them.
+const APPLE_MODIFIERS: [name: string, symbol: string][] = [
+    ['Ctrl', '⌃'],
+    ['Alt', '⌥'],
+    ['Shift', '⇧'],
+    ['Mod', '⌘'],
+];
+
+/**
+ * A key binding in the editor's notation (`Mod-Shift-z`), the way the
+ * keyboard in front of the user labels it: `⇧⌘Z` on an Apple device, in the
+ * order its own menus use, and `Ctrl+Shift+Z` everywhere else.
+ */
+export function shortcutLabel(keys: string, command: boolean = modIsCommand()): string {
+    const parts = keys.split('-');
+    const key = parts.pop()!.toUpperCase();
+    const held = new Set(parts);
+    if (command) {
+        const symbols = APPLE_MODIFIERS.filter(([name]) => held.has(name)).map(([, s]) => s);
+        return symbols.join('') + key;
+    }
+    const names: string[] = [];
+    if (held.has('Mod') || held.has('Ctrl')) names.push('Ctrl');
+    if (held.has('Alt')) names.push('Alt');
+    if (held.has('Shift')) names.push('Shift');
+    return [...names, key].join('+');
+}
+
+/** The Edit button's shortcut the way the keyboard in front of the user labels it. */
 export function editShortcutLabel(command: boolean = modIsCommand()): string {
-    return command ? '⌘⇧E' : 'Ctrl+Shift+E';
+    return shortcutLabel('Mod-Shift-e', command);
 }
