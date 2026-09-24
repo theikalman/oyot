@@ -44,6 +44,19 @@ function createAppStore() {
                     d.id === docId && !d.has_content ? { ...d, has_content: true } : d,
                 ),
             })),
+        // The open document is kept in step too, so nothing reading the pin
+        // off it is left holding the one it had when it was opened.
+        setDocumentPinned: (docId: string, pinned: boolean, pinnedUpdatedAt: number) =>
+            update((s) => ({
+                ...s,
+                documents: s.documents.map((d) =>
+                    d.id === docId && d.pinned !== pinned ? { ...d, pinned } : d,
+                ),
+                currentDocument:
+                    s.currentDocument?.id === docId
+                        ? { ...s.currentDocument, pinned, pinned_updated_at: pinnedUpdatedAt }
+                        : s.currentDocument,
+            })),
         addDocument: (doc: DocumentSummary) =>
             update((s) => {
                 const exists = s.documents.some((d) => d.id === doc.id);

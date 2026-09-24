@@ -17,6 +17,11 @@ pub struct Document {
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
     pub lifecycle_updated_at: i64,
+    /// Whether the user pinned it to the sidebar (ADR 0027).
+    pub pinned: bool,
+    /// When `pinned` was last set, on this device or another. None for a
+    /// document nobody has ever pinned.
+    pub pinned_updated_at: Option<i64>,
 }
 
 // Column list backing `row_to_document`; keep the two in lockstep.
@@ -30,7 +35,8 @@ pub struct Document {
 // for nothing.
 const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, \
      COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
-     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at)";
+     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
+     pinned, pinned_updated_at";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DocumentSummary {
@@ -42,6 +48,7 @@ pub struct DocumentSummary {
     pub created_at: i64,
     pub updated_at: i64,
     pub has_content: bool,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -75,8 +82,11 @@ pub fn get_today_date() -> String {
     now.format("%Y-%m-%d").to_string()
 }
 
+// Every query read through this selects the same nine columns, ending
+// `{HAS_CONTENT} as has_content, d.pinned`; keep them in lockstep.
 fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSummary> {
     let has_content_int: i32 = row.get(7)?;
+    let pinned_int: i64 = row.get(8)?;
     Ok(DocumentSummary {
         id: row.get(0)?,
         doc_type: row.get(1)?,
@@ -86,11 +96,13 @@ fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSumm
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
         has_content: has_content_int != 0,
+        pinned: pinned_int != 0,
     })
 }
 
 fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
     let is_deleted_int: i64 = row.get(6)?;
+    let pinned_int: i64 = row.get(9)?;
     Ok(Document {
         id: row.get(0)?,
         doc_type: row.get(1)?,
@@ -101,6 +113,8 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
         is_deleted: is_deleted_int != 0,
         deleted_at: row.get(7)?,
         lifecycle_updated_at: row.get(8)?,
+        pinned: pinned_int != 0,
+        pinned_updated_at: row.get(10)?,
     })
 }
 
@@ -124,7 +138,7 @@ fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData, String> {
     // which days have an entry; it is not a reason to hide a row.
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                {HAS_CONTENT} as has_content
+                {HAS_CONTENT} as has_content, d.pinned
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
          WHERE d.is_deleted = 0
@@ -382,11 +396,47 @@ pub fn apply_remote_delete(
     apply_tombstone_if_newer(&db, &doc_id, deleted_at)
 }
 
+/// Write a new document's row, or revive the tombstone holding its id.
+/// Takes `&Connection` rather than `State` so a test runs the real SQL.
+///
+/// A revival leaves the row's pin as it was: whether a document is pinned is
+/// `set_pinned`'s business once the row exists, the way the title is
+/// `update_document`'s.
+pub fn insert_document(
+    db: &Connection,
+    doc_id: &str,
+    doc_type: &str,
+    title: &str,
+    pinned: bool,
+    now: i64,
+) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO documents
+             (id, type, title, created_at, updated_at, title_updated_at,
+              is_deleted, deleted_at, lifecycle_updated_at,
+              pinned, pinned_updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?4, 0, NULL, ?4, ?5, CASE WHEN ?5 THEN ?4 END)
+         ON CONFLICT(id) DO UPDATE SET
+             is_deleted           = 0,
+             deleted_at           = NULL,
+             updated_at           = excluded.updated_at,
+             lifecycle_updated_at = excluded.lifecycle_updated_at",
+        params![doc_id, doc_type, title, now, pinned],
+    )
+    .map_err(|e| e.to_string())?;
+    indexer::update_document_title(db, doc_id, title)
+}
+
+/// `pinned` puts a new note straight into the sidebar's pinned list, which is
+/// what starting one from that list asks for. Absent means unpinned, so a
+/// caller with no opinion, such as the calendar making a journal, need not
+/// say so.
 #[tauri::command]
 pub fn create_document(
     state: tauri::State<'_, AppState>,
     doc_type: String,
     title: String,
+    pinned: Option<bool>,
 ) -> Result<Document, String> {
     // Journal ids are derived from the date so two devices creating the same
     // day's entry converge on one row. That also means a deleted journal's
@@ -401,24 +451,14 @@ pub fn create_document(
 
     {
         let db = state.db.lock();
-        db.execute(
-            "INSERT INTO documents
-                 (id, type, title, created_at, updated_at, title_updated_at,
-                  is_deleted, deleted_at, lifecycle_updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4, ?4, 0, NULL, ?4)
-             ON CONFLICT(id) DO UPDATE SET
-                 is_deleted           = 0,
-                 deleted_at           = NULL,
-                 updated_at           = excluded.updated_at,
-                 lifecycle_updated_at = excluded.lifecycle_updated_at",
-            params![&doc_id, &doc_type, &title, now],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    {
-        let db = state.db.lock();
-        indexer::update_document_title(&db, &doc_id, &title)?;
+        insert_document(
+            &db,
+            &doc_id,
+            &doc_type,
+            &title,
+            pinned.unwrap_or(false),
+            now,
+        )?;
     }
 
     get_document(state, doc_id)
@@ -511,6 +551,40 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
     Ok(now)
 }
 
+/// Pin a live document to the sidebar, or unpin it. Returns the stamp
+/// written, so the broadcast to peers carries the same stamp the row does,
+/// for the reason `delete_document` returns one.
+///
+/// The stamp is never earlier than one past the stamp the row already holds.
+/// That one may have come from a peer whose clock runs ahead of this device's,
+/// and a pin stamped by this clock alone would lose to it: the user's newest
+/// choice undone by the next exchange (ADR 0027).
+pub fn set_pinned(db: &Connection, doc_id: &str, pinned: bool, now: i64) -> Result<i64, String> {
+    db.query_row(
+        "UPDATE documents
+            SET pinned            = ?1,
+                pinned_updated_at = MAX(?2, COALESCE(pinned_updated_at, 0) + 1)
+          WHERE id = ?3 AND is_deleted = 0
+      RETURNING pinned_updated_at",
+        params![pinned, now, doc_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "this note no longer exists".to_string())
+}
+
+#[tauri::command]
+pub fn set_document_pinned(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    pinned: bool,
+) -> Result<i64, String> {
+    let now = current_timestamp();
+    let db = state.db.lock();
+    set_pinned(&db, &doc_id, pinned, now)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SearchHit {
     pub id: String,
@@ -593,7 +667,7 @@ fn query_backlinks(
 ) -> Result<Vec<DocumentSummary>, String> {
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                {HAS_CONTENT} as has_content
+                {HAS_CONTENT} as has_content, d.pinned
            FROM document_links l
            JOIN documents d ON d.id = l.source_id
            LEFT JOIN document_index i ON d.id = i.document_id
@@ -783,7 +857,7 @@ fn query_documents_with_tag(
 ) -> Result<Vec<DocumentSummary>, String> {
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                {HAS_CONTENT} as has_content
+                {HAS_CONTENT} as has_content, d.pinned
            FROM document_tags t
            JOIN documents d ON d.id = t.document_id
            LEFT JOIN document_index i ON d.id = i.document_id
@@ -1714,5 +1788,109 @@ mod tests {
             .unwrap();
         assert_eq!(title, "One");
         assert_eq!(deleted, 0);
+    }
+
+    /// The pin as `get_document` reads it back, through the shared column list.
+    fn pin_of(db: &Connection, id: &str) -> (bool, Option<i64>) {
+        let doc = db
+            .query_row(
+                &format!("SELECT {DOCUMENT_COLUMNS} FROM documents WHERE id = ?1"),
+                params![id],
+                row_to_document,
+            )
+            .unwrap();
+        (doc.pinned, doc.pinned_updated_at)
+    }
+
+    #[test]
+    fn pinning_a_note_records_when() {
+        let db = db();
+        assert_eq!(set_pinned(&db, "d1", true, 900).unwrap(), 900);
+        assert_eq!(pin_of(&db, "d1"), (true, Some(900)));
+
+        assert_eq!(set_pinned(&db, "d1", false, 950).unwrap(), 950);
+        assert_eq!(
+            pin_of(&db, "d1"),
+            (false, Some(950)),
+            "unpinning is stamped too, or an older pin elsewhere would win"
+        );
+    }
+
+    // The row's stamp came from a peer whose clock runs an hour ahead. Stamped
+    // with this device's clock, the unpin would be older than the pin it
+    // undoes, and the next exchange would put the pin back.
+    #[test]
+    fn a_pin_always_outranks_the_one_it_replaces() {
+        let db = db();
+        db.execute(
+            "UPDATE documents SET pinned = 1, pinned_updated_at = 5000 WHERE id = 'd1'",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(set_pinned(&db, "d1", false, 900).unwrap(), 5001);
+        assert_eq!(pin_of(&db, "d1"), (false, Some(5001)));
+    }
+
+    #[test]
+    fn a_deleted_note_cannot_be_pinned() {
+        let db = db();
+        tombstone_document(&db, "d1", 900).unwrap();
+        assert!(set_pinned(&db, "d1", true, 950).is_err());
+        assert!(set_pinned(&db, "never-heard-of-it", true, 950).is_err());
+    }
+
+    #[test]
+    fn a_note_can_start_out_pinned() {
+        let db = db();
+        insert_document(&db, "pinned", "note", "Pinned", true, 100).unwrap();
+        insert_document(&db, "plain", "note", "Plain", false, 100).unwrap();
+
+        assert_eq!(pin_of(&db, "pinned"), (true, Some(100)));
+        assert_eq!(
+            pin_of(&db, "plain"),
+            (false, None),
+            "a note nobody pinned has no stamp at all"
+        );
+    }
+
+    // Reviving a journal is `create_document` on an id a tombstone holds. What
+    // it revives is the row, pin included; the pin is not creation's to reset.
+    #[test]
+    fn reviving_a_document_keeps_its_pin() {
+        let db = db();
+        insert_document(&db, "14 Sep 2026", "journal", "2026-09-14", false, 100).unwrap();
+        set_pinned(&db, "14 Sep 2026", true, 150).unwrap();
+        tombstone_document(&db, "14 Sep 2026", 200).unwrap();
+
+        insert_document(&db, "14 Sep 2026", "journal", "2026-09-14", false, 300).unwrap();
+
+        assert_eq!(pin_of(&db, "14 Sep 2026"), (true, Some(150)));
+    }
+
+    #[test]
+    fn the_list_says_which_notes_are_pinned() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        set_pinned(&db, "d2", true, 900).unwrap();
+
+        let listed = query_all_documents(&db).unwrap();
+        let pinned = |id: &str| listed.documents.iter().find(|d| d.id == id).unwrap().pinned;
+        assert!(pinned("d2"));
+        assert!(!pinned("d1"));
+    }
+
+    // Backlinks and a tag's page list documents through the same row reader,
+    // so their queries have to select the pin too or the reader fails.
+    #[test]
+    fn every_list_of_documents_carries_the_pin() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        add_link(&db, "d2", "d1");
+        add_tag(&db, "d2", "work");
+        set_pinned(&db, "d2", true, 900).unwrap();
+
+        assert!(query_backlinks(&db, "d1").unwrap()[0].pinned);
+        assert!(query_documents_with_tag(&db, "work").unwrap()[0].pinned);
     }
 }

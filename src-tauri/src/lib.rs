@@ -31,7 +31,9 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             is_deleted INTEGER DEFAULT 0,
             deleted_at INTEGER,
             lifecycle_updated_at INTEGER,
-            index_version INTEGER NOT NULL DEFAULT 0
+            index_version INTEGER NOT NULL DEFAULT 0,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            pinned_updated_at INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS document_index (
@@ -210,7 +212,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -557,6 +559,31 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v12: a note can be pinned to the sidebar (ADR 0027). `pinned` is a
+    // last-writer-wins register, the shape the title already has, with
+    // `pinned_updated_at` saying when it was last set, here or on a peer.
+    // Nothing to backfill: no note could be pinned before this, and a row
+    // with no stamp is exactly what "never pinned" means.
+    if version < 12 {
+        // Each column guarded on its own, the way v11 guards `target`: a
+        // fresh install's base schema already has both.
+        let has_pinned = db.prepare("SELECT pinned FROM documents LIMIT 0").is_ok();
+        if !has_pinned {
+            db.execute_batch("ALTER TABLE documents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;")
+                .map_err(|e| format!("Migration v12 failed: {}", e))?;
+        }
+        let has_pinned_stamp = db
+            .prepare("SELECT pinned_updated_at FROM documents LIMIT 0")
+            .is_ok();
+        if !has_pinned_stamp {
+            db.execute_batch("ALTER TABLE documents ADD COLUMN pinned_updated_at INTEGER;")
+                .map_err(|e| format!("Migration v12 failed: {}", e))?;
+        }
+
+        db.execute_batch("PRAGMA user_version = 12;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -619,6 +646,7 @@ pub fn run() {
             create_document,
             update_document,
             delete_document,
+            set_document_pinned,
             list_document_sync_state,
             ensure_document,
             ensure_tombstone,
@@ -1327,6 +1355,44 @@ mod migration_tests {
             crate::backup::schedule::load(&db).unwrap(),
             crate::backup::schedule::Schedule::default()
         );
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    // Every install shipped so far. Nothing is backfilled: no note could be
+    // pinned before there was a column to say so, so every row comes through
+    // unpinned and unstamped, which is what "never pinned" is to the sync
+    // layer too.
+    #[test]
+    fn migrates_v11_to_v12_and_leaves_every_note_unpinned() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch(
+            "ALTER TABLE documents DROP COLUMN pinned;
+             ALTER TABLE documents DROP COLUMN pinned_updated_at;
+             INSERT INTO documents (id, type, title, created_at, updated_at)
+                 VALUES ('d1', 'note', 'One', 1, 1);
+             PRAGMA user_version = 11;",
+        )
+        .unwrap();
+        // What every launch does before migrating: a documents table without
+        // the new columns must not trip the base schema up.
+        setup_database_tables(&db).unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let (pinned, stamp): (i64, Option<i64>) = db
+            .query_row(
+                "SELECT pinned, pinned_updated_at FROM documents WHERE id = 'd1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pinned, 0);
+        assert_eq!(stamp, None);
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();

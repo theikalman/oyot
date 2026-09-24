@@ -18,6 +18,7 @@ function doc(
         created_at: 0,
         updated_at: 0,
         has_content: true,
+        pinned: false,
         ...extra,
     };
 }

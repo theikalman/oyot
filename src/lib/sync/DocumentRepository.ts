@@ -88,6 +88,7 @@ function toSummary(doc: Document): DocumentSummary {
         created_at: doc.created_at,
         updated_at: doc.updated_at,
         has_content: false,
+        pinned: doc.pinned,
     };
 }
 

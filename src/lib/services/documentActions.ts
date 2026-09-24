@@ -32,8 +32,12 @@ function announceCreated(doc: Document): void {
 // Creating does not open. The caller navigates, and the document route sets
 // the open document from the URL, so there is exactly one thing that decides
 // what is on screen.
-export async function createNote(title: string): Promise<Document> {
-    const doc = await invoke<Document>('create_document', { docType: 'note', title });
+//
+// `pinned` is decided in the same write as the note itself, rather than by
+// pinning it afterwards, so there is never a moment when the note exists and
+// is not yet where the user asked for it.
+export async function createNote(title: string, pinned = false): Promise<Document> {
+    const doc = await invoke<Document>('create_document', { docType: 'note', title, pinned });
     appStore.addDocument(toDocumentSummary(doc));
     announceCreated(doc);
     return doc;
@@ -80,6 +84,13 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
     bumpIndexRevision();
     broadcastDocRenamed(docId, doc.title, doc.title_updated_at);
     return doc;
+}
+
+// Pinning keeps a note in the sidebar. The stamp comes back from Rust, which
+// wrote it, for the reason the delete's does.
+export async function setPinned(docId: string, pinned: boolean): Promise<void> {
+    const pinnedUpdatedAt = await invoke<number>('set_document_pinned', { docId, pinned });
+    appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
 }
 
 export async function deleteDocument(docId: string): Promise<void> {
