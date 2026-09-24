@@ -1,16 +1,24 @@
 <script lang="ts">
+    import { untrack } from 'svelte';
     import { createNote } from '../services/documentActions';
     import { openDocument } from '../services/navigation';
     import Modal from './Modal.svelte';
 
     // Starting a note: ask for its title, make it, open it.
     interface Props {
+        /**
+         * Whether the note starts out pinned to the sidebar. Shown as a
+         * checkbox, so where a new note will end up is never a surprise.
+         */
+        pinned?: boolean;
         onClose: () => void;
     }
 
-    let { onClose }: Props = $props();
+    let { pinned: pinnedAtFirst = false, onClose }: Props = $props();
 
     let title = $state('');
+    // Seeded once; from then on the checkbox is the user's.
+    let pinned = $state(untrack(() => pinnedAtFirst));
     let error = $state<string | null>(null);
 
     async function create() {
@@ -19,7 +27,7 @@
         error = null;
         let doc;
         try {
-            doc = await createNote(title.trim());
+            doc = await createNote(title.trim(), pinned);
         } catch (err) {
             // Keep the dialog open with what was typed still in it. Closing
             // regardless discarded the title and said nothing went wrong.
@@ -40,6 +48,10 @@
         class="modal-input"
         onkeydown={(e) => e.key === 'Enter' && create()}
     />
+    <label class="pin-choice">
+        <input type="checkbox" bind:checked={pinned} />
+        Pin to the sidebar
+    </label>
     {#if error}
         <p class="modal-error">{error}</p>
     {/if}
@@ -64,8 +76,18 @@
         color: var(--text-muted);
     }
 
+    .pin-choice {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 10px 0 0 0;
+        font-size: 13px;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+
     .modal-error {
-        margin: 0 0 12px 0;
+        margin: 10px 0 0 0;
         font-size: 13px;
         color: var(--status-error);
     }

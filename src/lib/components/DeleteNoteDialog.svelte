@@ -5,6 +5,7 @@
     import { appStore } from '../stores/app';
     import { deleteDocument } from '../services/documentActions';
     import { openDocument, openHome } from '../services/navigation';
+    import { pinnedNotes } from '../notes/noteIndex';
     import Modal from './Modal.svelte';
 
     interface Props {
@@ -39,11 +40,11 @@
 
         onClose();
         if (wasOpen) {
-            const nextNote = get(appStore).documents.find(
-                (d: DocumentSummary) => d.doc_type === 'note' && d.id !== docId,
+            // The first pinned note, since that is the list in front of the
+            // user. With none, the entry point, which opens today's journal.
+            const nextNote = pinnedNotes(get(appStore).documents).find(
+                (d: DocumentSummary) => d.id !== docId,
             );
-            // No note left to fall back to, so go to the entry point, which
-            // opens today's journal.
             await (nextNote ? openDocument(nextNote.id) : openHome());
         }
     }

@@ -3,7 +3,10 @@
     import type { DocumentSummary } from '../types';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import { createJournalForDate as createJournalForDateAction } from '../services/documentActions';
+    import {
+        createJournalForDate as createJournalForDateAction,
+        setPinned,
+    } from '../services/documentActions';
     import {
         openDocument,
         openJournals,
@@ -26,6 +29,7 @@
     import { indexRevision } from '../stores/derivedIndex';
     import { refreshTagCount, tagCount } from '../tags/tagCount';
     import { journalEntries } from '../journals/journalIndex';
+    import { pinnedNotes } from '../notes/noteIndex';
 
     // Navigate; the document route loads it. Fetching and assigning the store
     // here meant the URL never changed, so there was nothing to go back to.
@@ -143,7 +147,13 @@
     // one whose title is not a date has no day to be listed under. Counted the
     // same way here so the badge and the page cannot disagree.
     let journalDayCount = $derived(journalEntries($documents).length);
-    let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
+    // Only the notes the user pinned are listed here, in the order the Notes
+    // index uses; every note is one click away there, and its count is on
+    // the Index entry below.
+    let pinned = $derived(pinnedNotes($documents));
+    let noteCount = $derived(
+        $documents.filter((d: DocumentSummary) => d.doc_type === 'note').length,
+    );
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
@@ -208,6 +218,16 @@
     function startDelete(doc: DocumentSummary) {
         deleteDoc = doc;
         openMenuId = null;
+    }
+
+    async function togglePin(doc: DocumentSummary) {
+        openMenuId = null;
+        try {
+            await setPinned(doc.id, !doc.pinned);
+        } catch (err) {
+            console.error('[Sidebar] Failed to change the pin:', err);
+            toasts.error(doc.pinned ? 'Could not unpin this note' : 'Could not pin this note');
+        }
     }
 
     let showAbout = $state(false);
@@ -331,18 +351,34 @@
 
                 <div class="sidebar-section">
                     <h3>
-                        Notes
-                        <button class="add-doc-btn" onclick={() => (showModal = true)}>+</button>
+                        Pinned notes
+                        <button
+                            class="add-doc-btn"
+                            onclick={() => (showModal = true)}
+                            title="New note"
+                            aria-label="New note">+</button
+                        >
                     </h3>
-                    <DocumentList
-                        documents={notes}
-                        {currentDocId}
-                        {openMenuId}
-                        onOpen={handleDocClick}
-                        onToggleMenu={toggleMenu}
-                        onRename={startRename}
-                        onDelete={startDelete}
-                    />
+                    {#if pinned.length > 0}
+                        <DocumentList
+                            documents={pinned}
+                            {currentDocId}
+                            {openMenuId}
+                            onOpen={handleDocClick}
+                            onToggleMenu={toggleMenu}
+                            onRename={startRename}
+                            onDelete={startDelete}
+                            onTogglePin={togglePin}
+                        />
+                    {:else}
+                        <!-- Where everyone starts after updating, since no note
+                             was pinned before pins existed. It has to say where
+                             the notes that used to be listed here went. -->
+                        <p class="pinned-empty">
+                            Pin a note to keep it here. All your notes are in
+                            <button class="pinned-empty-link" onclick={goToNotes}>Notes</button>.
+                        </p>
+                    {/if}
                 </div>
 
                 <div class="sidebar-section">
@@ -363,8 +399,8 @@
                             />
                         </svg>
                         <span class="nav-label">Notes</span>
-                        {#if notes.length > 0}
-                            <span class="nav-count">{notes.length}</span>
+                        {#if noteCount > 0}
+                            <span class="nav-count">{noteCount}</span>
                         {/if}
                     </button>
                     <!-- The calendar above shows one month; this is the whole
@@ -494,7 +530,10 @@
 {/if}
 
 {#if showModal}
-    <NewNoteDialog onClose={() => (showModal = false)} />
+    <!-- Started from the pinned list, so it starts pinned: what is added
+         to a list lands in it. The dialog shows the choice, and it can be
+         unticked. -->
+    <NewNoteDialog pinned onClose={() => (showModal = false)} />
 {/if}
 
 {#if renameDoc}
@@ -760,6 +799,27 @@
 
     .add-doc-btn:hover {
         color: var(--text-primary);
+    }
+
+    .pinned-empty {
+        margin: 0;
+        padding: 4px 8px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-muted);
+    }
+
+    .pinned-empty-link {
+        padding: 0;
+        border: none;
+        background: none;
+        color: var(--accent-color);
+        font: inherit;
+        cursor: pointer;
+    }
+
+    .pinned-empty-link:hover {
+        text-decoration: underline;
     }
 
     /* ── Sidebar footer ── */

@@ -16,10 +16,20 @@
         onToggleMenu: (e: MouseEvent, docId: string) => void;
         onRename: (doc: DocumentSummary) => void;
         onDelete: (doc: DocumentSummary) => void;
+        /** Offered in the menu when given, as Pin or Unpin for the row. */
+        onTogglePin?: (doc: DocumentSummary) => void;
     }
 
-    let { documents, currentDocId, openMenuId, onOpen, onToggleMenu, onRename, onDelete }: Props =
-        $props();
+    let {
+        documents,
+        currentDocId,
+        openMenuId,
+        onOpen,
+        onToggleMenu,
+        onRename,
+        onDelete,
+        onTogglePin,
+    }: Props = $props();
 </script>
 
 <ul class="doc-list">
@@ -80,6 +90,11 @@
             </button>
             {#if openMenuId === doc.id}
                 <div class="doc-menu">
+                    {#if onTogglePin}
+                        <button class="doc-menu-item" onclick={() => onTogglePin(doc)}>
+                            {doc.pinned ? 'Unpin' : 'Pin'}
+                        </button>
+                    {/if}
                     <button class="doc-menu-item" onclick={() => onRename(doc)}>Rename</button>
                     <button class="doc-menu-item danger" onclick={() => onDelete(doc)}
                         >Delete</button
