@@ -55,14 +55,22 @@
 {/if}
 
 <style>
+    /* Same height as the sidebar footer beside it, so the two top borders
+       make one line across the window. One row, scrolling sideways when
+       there are more links than fit, so the height never changes. */
     .backlinks {
         flex-shrink: 0;
-        padding: 12px 24px 16px;
+        height: 65px;
+        padding: 0 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
         border-top: 1px solid var(--border-color);
         background: var(--bg-primary);
     }
     .backlinks h2 {
-        margin: 0 0 8px 0;
+        flex-shrink: 0;
+        margin: 0;
         font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
@@ -70,14 +78,24 @@
         color: var(--text-muted);
     }
     ul {
+        flex: 1;
+        min-width: 0;
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         gap: 6px;
         margin: 0;
-        padding: 0;
+        /* Room for a focused chip's outline, which the scroller would clip. */
+        padding: 2px 0;
         list-style: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: thin;
+    }
+    li {
+        flex-shrink: 0;
     }
     button {
+        white-space: nowrap;
         padding: 3px 10px;
         font-size: 12px;
         color: var(--accent-color);

@@ -874,8 +874,10 @@
     }
 
     /* ── Sidebar footer ── */
+    /* Pinned so the "Linked from" bar under the editor can match it. */
     .sidebar-footer {
         flex-shrink: 0;
+        height: 65px;
         padding: 12px;
         border-top: 1px solid var(--border-color);
         display: flex;
