@@ -24,6 +24,7 @@
     import { unregisterOpenDoc } from './openDocs';
     import { locateTaskItem } from './taskItems';
     import { JumpTarget, markJumpTarget } from './jumpTarget';
+    import { TickWhileReading } from './tickWhileReading';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
 
@@ -72,8 +73,9 @@
         // open, which leaves the cursor wherever the editor puts it.
         focusTodo?: number | null;
         // False to show the document for reading: nothing typed, clicked or
-        // pasted changes it. A peer's edit still lands, since that is the
-        // document changing rather than the reader changing it.
+        // pasted changes it, except ticking a task off. A peer's edit still
+        // lands, since that is the document changing rather than the reader
+        // changing it.
         editable?: boolean;
     }
 
@@ -158,6 +160,7 @@
                 ScrollOnFocus,
                 ReadOnlyState,
                 JumpTarget,
+                TickWhileReading,
             ],
             // No initial content. The collaboration binding replaces the
             // document with the Yjs fragment as soon as the editor is
@@ -673,16 +676,10 @@
         pointer-events: all !important;
     }
 
-    /* Reading: nothing in the document offers to be changed. A tick box that
-       looks clickable and then refuses reads as broken, so it stops taking
-       the pointer at all, label included, since clicking a label ticks its
-       box. Images and tags do not show that they are selected, and images
-       lose their resize handles; the editor removes those itself, and this
-       covers an image drawn before it has. */
-    .editor-content.read-only :global(ul[data-type='taskList'] > li > label) {
-        pointer-events: none;
-    }
-
+    /* Reading: nothing in the document offers to be changed but its tick
+       boxes, which still tick. Images and tags do not show that they are
+       selected, and images lose their resize handles; the editor removes
+       those itself, and this covers an image drawn before it has. */
     .editor-content.read-only :global(img) {
         cursor: default;
     }

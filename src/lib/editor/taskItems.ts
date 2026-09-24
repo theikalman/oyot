@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import type { EditorState, Transaction } from '@tiptap/pm/state';
 
 /** Where a task item sits, and where to put the cursor inside it. */
 export interface TaskItemTarget {
@@ -56,4 +57,21 @@ function cursorRange(item: ProseMirrorNode, pos: number): { from: number; to: nu
     // shape the schema does not actually guarantee, so it is the fallback.
     const at = first?.isTextblock ? pos + 2 + first.content.size : pos + 1;
     return { from: at, to: at };
+}
+
+/**
+ * Tick the task item a position is in, or untick it if it was ticked.
+ *
+ * The innermost item, since items nest: a position inside a sub-task is in
+ * its parent task as well, and the box that was clicked is the sub-task's.
+ * Null when the position is in no task item at all.
+ */
+export function toggleTaskAt(state: EditorState, pos: number): Transaction | null {
+    const $pos = state.doc.resolve(pos);
+    for (let depth = $pos.depth; depth > 0; depth--) {
+        const node = $pos.node(depth);
+        if (node.type.name !== 'taskItem') continue;
+        return state.tr.setNodeAttribute($pos.before(depth), 'checked', !node.attrs.checked);
+    }
+    return null;
 }

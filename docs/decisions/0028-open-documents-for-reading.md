@@ -17,7 +17,7 @@ way to switch between reading and editing.
 That leaves six things to decide: what reading is made of, what it still
 allows, where the switch lives and what it remembers, whether anything opens
 straight into editing, what becomes of features that put the caret somewhere,
-and whether ticking a task counts as editing.
+and whether ticking a task off needs editing.
 
 ## Decision
 
@@ -34,12 +34,12 @@ always built editable and switched straight after: the table extension decides
 at construction whether columns can be resized, and an editor built read-only
 would never offer it.
 
-**3. Reading allows reading, and nothing that changes the document.** There
-is no toolbar. Typing, pasting, dropping, the slash menu, image resize handles
-and tick boxes do nothing. Links are still followed, text can still be
-selected and copied, and a screen reader is told the text box is read-only.
-An empty document says to press Edit, instead of "Start writing...", which
-would invite typing that does nothing.
+**3. Reading allows reading, and no change but a tick.** There is no toolbar.
+Typing, pasting, dropping, the slash menu and image resize handles do
+nothing. Links are still followed, text can still be selected and copied,
+tick boxes still tick (decision 7), and a screen reader is told the text box
+is read-only. An empty document says to press Edit, instead of "Start
+writing...", which would invite typing that does nothing.
 
 **4. The switch is a button beside the sync indicator, and it remembers
 nothing.** It reads Edit while reading and Done while editing, in the accent
@@ -62,9 +62,21 @@ puts the caret wherever the selection is, which is where the reader last
 clicked, but only when that is on screen; otherwise it waits for a click, so
 the page does not jump away from what was being read.
 
-**7. Ticking a task is editing.** The request was for a mode where nothing
-can be changed, and a tick is a change that syncs to every device. Tick boxes
-show their state and do not respond.
+**7. A task can be ticked off while reading.** It is the one change reading
+allows. Ticking off the day's tasks is much of what reading a journal is
+for, and pressing Edit for every tick put reading in the way of it. A tick
+box is a small target that only does one thing, and a tick made by mistake
+is undone by ticking again. It is saved and synced like a tick made while
+editing, and it leaves the document reading: the toolbar stays away and the
+keyboard stays down.
+
+The task item's own box writes only while the editor is editable, and while
+reading puts itself back. A plugin takes the same change event once it has
+bubbled up to the editor and makes the tick itself, finding the item from
+the box's place in the document, innermost first, since items nest. The
+item's own hook for this (`onReadOnlyChecked`) was not used: it is handed
+the item as it was when first drawn, with no position, so a tick after any
+change to that item could not be placed.
 
 ## Alternatives considered
 
@@ -92,9 +104,11 @@ every morning, and the request named journals.
 item amounted to before. Rejected to keep one rule for every open; the light
 and the selection keep the jump useful, one press of Edit from where it was.
 
-**Tick boxes that work while reading,** which the editor supports directly.
-Deferred: it is the most likely of these to be revisited, since ticking off a
-day's tasks is common, and it would be a small change on top of this one.
+**Tick boxes that do nothing while reading,** which is what the first
+version of this did, on the reading of the request that nothing can be
+changed. Rejected once it was tried: a tick is the change most often made to
+a document being read, and a mode that forbade it sent every tick through
+Edit.
 
 **Tap to edit,** where touching the text starts editing there. Rejected: that
 is the stray tap this exists to stop.
@@ -103,9 +117,11 @@ is the stray tap this exists to stop.
 
 - Writing takes one more step. Every morning's journal needs Edit before the
   first word, and the placeholder says so.
-- Read-only means the reader cannot change the document, not that it cannot
-  change. A peer's edit and the one-off image address migration both still
-  write to a document being read.
+- Read-only means the reader cannot change the document's text, not that it
+  cannot change. A tick, a peer's edit and the one-off image address
+  migration all still write to a document being read.
+- A stray tap on a tick box, alone of all the taps reading otherwise
+  ignores, changes the note, on every device. Ticking it again undoes it.
 - The caret is placed from an effect that runs just after the tap on Edit,
   not in the tap's own handler. That was checked in a desktop browser only.
   Phones, iOS especially, are stricter about focus outside a user gesture; if
