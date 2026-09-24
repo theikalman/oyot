@@ -4,9 +4,12 @@
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
     import { NodeSelection } from 'prosemirror-state';
+    import { Plugin } from '@tiptap/pm/state';
     import Placeholder from '@tiptap/extension-placeholder';
     import { Extension } from '@tiptap/core';
+    import { exitSuggestion } from '@tiptap/suggestion';
     import { SlashCommand } from '$lib/tiptap/SlashCommand';
+    import { closeAnyPicker } from '$lib/tiptap/pickerPopup';
     import { createContentExtensions } from './extensions';
     import {
         registerDocumentLinkCommand,
@@ -20,6 +23,8 @@
     import { REMOTE_ORIGIN } from './origin';
     import { unregisterOpenDoc } from './openDocs';
     import { locateTaskItem } from './taskItems';
+    import { JumpTarget, markJumpTarget } from './jumpTarget';
+    import { TickWhileReading } from './tickWhileReading';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
 
@@ -32,6 +37,23 @@
                     this.editor.commands.scrollIntoView();
                 });
             }
+        },
+    });
+
+    // A document being read is still announced as a text box, which is what
+    // the editor is, so a screen reader is also told it cannot be typed into.
+    const ReadOnlyState = Extension.create({
+        name: 'readOnlyState',
+        addProseMirrorPlugins() {
+            const editor = this.editor;
+            return [
+                new Plugin({
+                    props: {
+                        attributes: (): Record<string, string> =>
+                            editor.isEditable ? {} : { 'aria-readonly': 'true' },
+                    },
+                }),
+            ];
         },
     });
 
@@ -50,6 +72,11 @@
         // depth-first, as the todo index addresses one. Null for an ordinary
         // open, which leaves the cursor wherever the editor puts it.
         focusTodo?: number | null;
+        // False to show the document for reading: nothing typed, clicked or
+        // pasted changes it, except ticking a task off. A peer's edit still
+        // lands, since that is the document changing rather than the reader
+        // changing it.
+        editable?: boolean;
     }
 
     let {
@@ -58,6 +85,7 @@
         onBeforeTeardown,
         onLocalUpdate,
         focusTodo = null,
+        editable = true,
     }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
@@ -119,18 +147,38 @@
                 // order wherever it sits in this list.
                 collabExt,
                 Placeholder.configure({
-                    placeholder: 'Start writing...',
+                    // The stylesheet only shows this on an empty document.
+                    // Reading one, typing does nothing, so rather than invite
+                    // it the placeholder says how to start.
+                    showOnlyWhenEditable: false,
+                    placeholder: ({ editor }) =>
+                        editor.isEditable
+                            ? 'Start writing...'
+                            : 'Nothing here yet. Press Edit to start writing.',
                 }),
                 SlashCommand,
                 ScrollOnFocus,
+                ReadOnlyState,
+                JumpTarget,
+                TickWhileReading,
             ],
             // No initial content. The collaboration binding replaces the
             // document with the Yjs fragment as soon as the editor is
             // constructed, so anything passed here was discarded before it
             // could be seen. A new document starts empty, which is what it
             // did in practice anyway.
+            //
+            // Always built editable, and made read-only straight after. The
+            // table extension decides at construction whether columns can be
+            // resized, and leaves resizing out for good in an editor built
+            // read-only, so switching that editor to editing would have lost
+            // it. Nothing runs in between that a reader could act on.
             editable: true,
         });
+        // Opened for editing, which only a note just created is: the caret
+        // goes straight in, so writing starts without a click.
+        if (!editable) ed.setEditable(false);
+        else placeCaretIfOnScreen(ed);
 
         ed.view.dom.addEventListener('click', handleImageClick);
 
@@ -174,11 +222,14 @@
             if (ed.isDestroyed) return true; // nothing left to focus; stop
             const target = locateTaskItem(ed.state.doc, ordinal);
             if (!target) return false;
-            ed.chain()
-                .setTextSelection({ from: target.from, to: target.to })
-                .focus()
-                .scrollIntoView()
-                .run();
+            // Reading, there is no caret to put on the item, but the
+            // selection still moves there, and Edit puts the caret wherever
+            // the selection is. So the jump lands on the item either way,
+            // one press of Edit later.
+            const jump = ed.chain().setTextSelection({ from: target.from, to: target.to });
+            if (ed.isEditable) jump.focus();
+            jump.scrollIntoView().run();
+            markJumpTarget(ed.view, target.pos);
             return true;
         };
 
@@ -236,8 +287,52 @@
         focusTaskItem(ed, ordinal);
     });
 
+    // Reading and editing are one editor, switched, so the scroll position
+    // and a peer's edits arriving carry on across the switch. Rebuilding the
+    // editor for each mode would reload the document and lose the reader's
+    // place.
+    $effect(() => {
+        const ed = editor;
+        const on = editable;
+        if (ed === null || ed.isDestroyed || ed.isEditable === on) return;
+        // The editor on screen is for a document being replaced, and the
+        // mode is the new document's. Its editor is built in that mode, and
+        // this one is about to go.
+        if (document?.id !== currentDocId) return;
+
+        if (!on) {
+            // A slash menu or picker left open would still insert when chosen,
+            // into a document that is meant to be read-only by then.
+            exitSuggestion(ed.view);
+            closeAnyPicker();
+        }
+        ed.setEditable(on);
+        if (on) placeCaretIfOnScreen(ed);
+        // Out of the document, so a phone puts its keyboard away.
+        else ed.commands.blur();
+    });
+
+    // Switched to editing: the caret goes where the selection is, which is
+    // wherever the reader last clicked, or the item a todo jump landed on.
+    // Only if that is on screen, though. Scrolling to it would lose the
+    // reader's place, and so would typing at a caret out of sight, so then
+    // the caret waits for a click where the writing is to go.
+    function placeCaretIfOnScreen(ed: EditorType) {
+        if (!element) return;
+        let caret: { top: number; bottom: number };
+        try {
+            caret = ed.view.coordsAtPos(ed.state.selection.head);
+        } catch {
+            return; // not laid out yet
+        }
+        const box = element.getBoundingClientRect();
+        if (caret.top < box.top || caret.bottom > box.bottom) return;
+        ed.commands.focus(null, { scrollIntoView: false });
+    }
+
     function handleImageClick(e: MouseEvent) {
-        if (!editor) return;
+        // Selecting an image is how it gets its resize handles.
+        if (!editor || !editor.isEditable) return;
 
         const target = e.target as HTMLElement;
         if (target.tagName !== 'IMG') return;
@@ -312,7 +407,7 @@
             <p>Loading editor...</p>
         </div>
     {/if}
-    <div class="editor-content" bind:this={element}></div>
+    <div class="editor-content" class:read-only={!editable} bind:this={element}></div>
 </div>
 
 <style>
@@ -579,6 +674,41 @@
     .editor-content :global(.ProseMirror-selectednode [data-resize-handle]) {
         opacity: 1 !important;
         pointer-events: all !important;
+    }
+
+    /* Reading: nothing in the document offers to be changed but its tick
+       boxes, which still tick. Images and tags do not show that they are
+       selected, and images lose their resize handles; the editor removes
+       those itself, and this covers an image drawn before it has. */
+    .editor-content.read-only :global(img) {
+        cursor: default;
+    }
+
+    .editor-content.read-only :global(.ProseMirror-selectednode img),
+    .editor-content.read-only :global(.tag-chip.ProseMirror-selectednode) {
+        outline: none;
+    }
+
+    .editor-content.read-only :global(.resize-handle),
+    .editor-content.read-only :global([data-resize-handle]) {
+        display: none !important;
+    }
+
+    /* The item a jump from the todo index landed on, lit for a moment. The
+       length is JUMP_TARGET_MS in jumpTarget.ts. */
+    .editor-content :global(.jump-target) {
+        border-radius: 4px;
+        animation: jump-target 2s ease-out;
+    }
+
+    @keyframes jump-target {
+        0%,
+        40% {
+            background-color: var(--accent-bg);
+        }
+        100% {
+            background-color: transparent;
+        }
     }
 
     .editor-content :global(.collaboration-cursor__caret) {

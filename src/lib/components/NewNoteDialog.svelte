@@ -2,6 +2,7 @@
     import { untrack } from 'svelte';
     import { createNote } from '../services/documentActions';
     import { openDocument } from '../services/navigation';
+    import { openNextForEditing } from '../editor/editorMode';
     import Modal from './Modal.svelte';
 
     // Starting a note: ask for its title, make it, open it.
@@ -36,6 +37,8 @@
             return;
         }
         onClose();
+        // Made to be written in, so it skips reading.
+        openNextForEditing(doc.id);
         await openDocument(doc.id);
     }
 </script>

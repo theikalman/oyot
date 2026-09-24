@@ -22,9 +22,11 @@
         // Which task item to put the cursor on, from the URL. Passed through
         // rather than read here: the route owns what the URL means.
         focusTodo?: number | null;
+        // False to show the document for reading, without the toolbar.
+        editable?: boolean;
     }
 
-    let { debounceMs = DEFAULT_DEBOUNCE_MS, focusTodo = null }: Props = $props();
+    let { debounceMs = DEFAULT_DEBOUNCE_MS, focusTodo = null, editable = true }: Props = $props();
 
     let current = $derived($currentDocument);
     let editorInstance = $state<EditorType | null>(null);
@@ -150,7 +152,9 @@
 
 <div class="editor-container">
     {#if current}
-        <Toolbar editor={editorInstance} />
+        {#if editable}
+            <Toolbar editor={editorInstance} />
+        {/if}
 
         <EditorInstance
             document={current}
@@ -158,6 +162,7 @@
             onBeforeTeardown={handleBeforeTeardown}
             onLocalUpdate={handleLocalUpdate}
             {focusTodo}
+            {editable}
         />
 
         <Backlinks docId={current.id} revision={indexRevision} />
