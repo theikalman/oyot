@@ -116,6 +116,7 @@
     /* Only the icon shows until the pointer is on it, as the sidebar's own
        buttons do, so a row of fifteen reads as one quiet strip. */
     .tool {
+        position: relative;
         flex: 0 0 auto;
         display: flex;
         align-items: center;
@@ -124,30 +125,63 @@
         height: 32px;
         padding: 0;
         border: none;
-        border-radius: 6px;
-        background: transparent;
+        background: none;
         color: var(--text-secondary);
         cursor: pointer;
-        transition:
-            background-color 0.15s,
-            color 0.15s;
+        transition: color 0.15s;
+        /* The chip below is the feedback. The platform's own tap flash
+           would cover the whole target instead. */
+        -webkit-tap-highlight-color: transparent;
     }
 
-    .tool:hover:enabled {
+    /* The rounded square that hover, a press and being on light up, behind
+       the icon. It fills the button here, and sits inside a larger target
+       on a touch screen. */
+    .tool::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 6px;
+        transition: background-color 0.15s;
+    }
+
+    .tool:enabled:active::before {
         background: var(--bg-hover);
-        color: var(--text-primary);
     }
 
     /* On where the caret is: tinted the way the sidebar marks the page that
        is open. */
     .tool.pressed {
-        background: var(--accent-bg);
         color: var(--accent-color);
     }
 
-    .tool.pressed:hover:enabled {
+    .tool.pressed::before {
+        background: var(--accent-bg);
+    }
+
+    .tool.pressed:enabled:active::before {
         background: var(--accent-bg-hover);
-        color: var(--accent-color);
+    }
+
+    /* Only where the pointer can hover. A phone counts the last button
+       tapped as hovered until a tap lands somewhere else, which left a grey
+       square behind every press. */
+    @media (hover: hover) {
+        .tool:enabled:hover {
+            color: var(--text-primary);
+        }
+
+        .tool:enabled:hover::before {
+            background: var(--bg-hover);
+        }
+
+        .tool.pressed:enabled:hover {
+            color: var(--accent-color);
+        }
+
+        .tool.pressed:enabled:hover::before {
+            background: var(--accent-bg-hover);
+        }
     }
 
     .tool:disabled {
@@ -156,11 +190,18 @@
     }
 
     .tool:focus-visible {
+        outline: none;
+    }
+
+    .tool:focus-visible::before {
         outline: 2px solid var(--accent-color);
         outline-offset: -2px;
     }
 
     .tool svg {
+        /* Over the chip, which is positioned and would otherwise paint on
+           top. */
+        position: relative;
         width: 18px;
         height: 18px;
         fill: none;
@@ -175,5 +216,36 @@
         height: 18px;
         margin: 0 6px;
         background: var(--border-color);
+    }
+
+    /* Sized for a finger. Every button is a 44px target, the least Apple's
+       guidelines allow, and they touch, so no tap on the row falls between
+       two. The chip stays compact inside, which keeps the strip from
+       looking any heavier than it does under a mouse. */
+    @media (pointer: coarse) {
+        .toolbar {
+            gap: 0;
+            padding: 0 8px;
+        }
+
+        .tool {
+            width: 44px;
+            height: 44px;
+        }
+
+        .tool::before {
+            inset: 4px;
+            border-radius: 8px;
+        }
+
+        .tool svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .separator {
+            height: 20px;
+            margin: 0 2px;
+        }
     }
 </style>
