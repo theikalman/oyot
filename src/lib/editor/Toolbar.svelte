@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Editor } from '@tiptap/core';
-    import { insertImageFromFile } from '$lib/tiptap';
+    import { FORMATTING, HISTORY, type Tool } from './toolbarTools';
 
     interface Props {
         editor: Editor | null;
@@ -8,94 +8,45 @@
 
     let { editor }: Props = $props();
 
-    function handleImageInsert() {
-        if (editor) {
-            insertImageFromFile(editor);
-        }
-    }
+    // Undo and redo go last, as a group of their own.
+    const groups = [...FORMATTING, HISTORY];
 </script>
 
-<div class="toolbar visible">
-    <button onclick={() => editor?.chain().focus().toggleBold().run()} title="Bold">
-        <strong>B</strong>
-    </button>
-    <button onclick={() => editor?.chain().focus().toggleItalic().run()} title="Italic">
-        <em>I</em>
-    </button>
-    <button onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough">
-        <s>S</s>
-    </button>
-    <span class="separator"></span>
+{#snippet button(tool: Tool)}
     <button
-        onclick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
-        title="Heading 1"
+        type="button"
+        class="tool"
+        title={tool.label}
+        aria-label={tool.label}
+        onclick={() => editor && tool.run(editor)}
     >
-        H1
-    </button>
-    <button
-        onclick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
-        title="Heading 2"
-    >
-        H2
-    </button>
-    <button
-        onclick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()}
-        title="Heading 3"
-    >
-        H3
-    </button>
-    <span class="separator"></span>
-    <button onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List">
-        •
-    </button>
-    <button onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Ordered List">
-        1.
-    </button>
-    <button onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List">
-        ☑
-    </button>
-    <span class="separator"></span>
-    <button onclick={() => editor?.chain().focus().toggleBlockquote().run()} title="Quote">
-        "
-    </button>
-    <button onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title="Code Block">
-        &lt;/&gt;
-    </button>
-    <button
-        onclick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3 }).run()}
-        title="Table"
-    >
-        ⊞
-    </button>
-    <button onclick={handleImageInsert} title="Insert Image">
-        <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#A1A1A1"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-        >
-            <path
-                d="m4.272 20.728 6.597-6.597c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668l6.553 6.553M14 15l2.869-2.869c.396-.396.594-.594.822-.668a1 1 0 0 1 .618 0c.228.074.426.272.822.668L22 15M10 9a2 2 0 1 1-4 0 2 2 0 0 1 4 0M6.8 21h10.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C22 18.72 22 17.88 22 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C19.72 3 18.88 3 17.2 3H6.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C2 5.28 2 6.12 2 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C4.28 21 5.12 21 6.8 21"
-            />
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+            {#each tool.icon as d, i (i)}
+                <path {d} />
+            {/each}
         </svg>
     </button>
-    <span class="separator"></span>
-    <button onclick={() => editor?.chain().focus().undo().run()} title="Undo"> ↩ </button>
-    <button onclick={() => editor?.chain().focus().redo().run()} title="Redo"> ↪ </button>
+{/snippet}
+
+<div class="toolbar" role="toolbar" aria-label="Formatting">
+    {#each groups as group, i (i)}
+        {#if i > 0}
+            <span class="separator" aria-hidden="true"></span>
+        {/if}
+        {#each group as tool (tool.id)}
+            {@render button(tool)}
+        {/each}
+    {/each}
 </div>
 
 <style>
     .toolbar {
         display: flex;
         align-items: center;
-        padding: 8px 16px;
-        background: var(--bg-secondary);
+        gap: 2px;
+        padding: 4px 12px;
+        background: var(--bg-primary);
         border-bottom: 1px solid var(--border-color);
-        gap: 4px;
         /* Keep every control on a single row and scroll sideways when the
            screen is too narrow (mobile / tablet) instead of wrapping. */
         flex: 0 0 auto;
@@ -117,28 +68,50 @@
         display: none;
     }
 
-    .toolbar button {
-        padding: 6px 10px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-light);
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-        min-width: 32px;
-        color: var(--text-primary);
+    /* Only the icon shows until the pointer is on it, as the sidebar's own
+       buttons do, so a row of fifteen reads as one quiet strip. */
+    .tool {
         flex: 0 0 auto;
-        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition:
+            background-color 0.15s,
+            color 0.15s;
     }
 
-    .toolbar button:hover {
+    .tool:hover {
         background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .tool:focus-visible {
+        outline: 2px solid var(--accent-color);
+        outline-offset: -2px;
+    }
+
+    .tool svg {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.75;
+        stroke-linecap: round;
+        stroke-linejoin: round;
     }
 
     .separator {
         flex: 0 0 1px;
-        align-self: stretch;
-        min-height: 20px;
-        background: var(--border-light);
-        margin: 0 4px;
+        height: 18px;
+        margin: 0 6px;
+        background: var(--border-color);
     }
 </style>
