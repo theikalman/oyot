@@ -181,6 +181,9 @@ pub struct DocSyncEntry {
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
     pub lifecycle_updated_at: i64,
+    /// Last-writer-wins on `pinned_updated_at`, like the title (ADR 0027).
+    pub pinned: bool,
+    pub pinned_updated_at: Option<i64>,
     /// base64 of the content hash, matching how it crosses IPC elsewhere.
     pub content_hash: Option<String>,
 }
@@ -191,17 +194,13 @@ pub struct DocSyncEntry {
 // rename). Unlike get_all_documents this is not scoped to the sidebar and does
 // not filter out content-less or deleted rows.
 // See docs/decisions/0003-full-document-set-sync.md.
-#[tauri::command]
-pub fn list_document_sync_state(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<DocSyncEntry>, String> {
-    let db = state.db.lock();
+pub fn query_sync_state(db: &Connection) -> Result<Vec<DocSyncEntry>, String> {
     let mut stmt = db
         .prepare(
             "SELECT id, type, title, created_at, updated_at, \
                     COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
                     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
-                    content_hash \
+                    content_hash, pinned, pinned_updated_at \
              FROM documents",
         )
         .map_err(|e| e.to_string())?;
@@ -209,6 +208,7 @@ pub fn list_document_sync_state(
     let entries: Vec<DocSyncEntry> = stmt
         .query_map([], |row| {
             let is_deleted_int: i64 = row.get(6)?;
+            let pinned_int: i64 = row.get(10)?;
             Ok(DocSyncEntry {
                 id: row.get(0)?,
                 doc_type: row.get(1)?,
@@ -219,6 +219,8 @@ pub fn list_document_sync_state(
                 is_deleted: is_deleted_int != 0,
                 deleted_at: row.get(7)?,
                 lifecycle_updated_at: row.get(8)?,
+                pinned: pinned_int != 0,
+                pinned_updated_at: row.get(11)?,
                 content_hash: row.get::<_, Option<Vec<u8>>>(9)?.map(|h| BASE64.encode(h)),
             })
         })
@@ -227,6 +229,14 @@ pub fn list_document_sync_state(
         .collect();
 
     Ok(entries)
+}
+
+#[tauri::command]
+pub fn list_document_sync_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DocSyncEntry>, String> {
+    let db = state.db.lock();
+    query_sync_state(&db)
 }
 
 // One document as a peer advertised it. Mirrors the frontend `ManifestEntry`;
@@ -245,6 +255,14 @@ pub struct EnsureDocumentRequest {
     /// has no use for it and does not send it.
     #[serde(default)]
     pub deleted_at: Option<i64>,
+    /// The peer's pin, taken only when the row is new. Once this device holds
+    /// the document, `apply_remote_pin` decides, as `apply_remote_rename`
+    /// decides the title. Defaulted, because a peer on a build from before
+    /// pins sends neither.
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub pinned_updated_at: Option<i64>,
 }
 
 /// Record a peer's tombstone for a document we have never seen. Returns
@@ -310,52 +328,51 @@ pub fn ensure_document(
     state: tauri::State<'_, AppState>,
     entry: EnsureDocumentRequest,
 ) -> Result<Document, String> {
-    let EnsureDocumentRequest {
-        doc_id,
-        doc_type,
-        title,
-        created_at,
-        updated_at,
-        title_updated_at,
-        lifecycle_updated_at,
-        // A live document has no delete stamp; `ensure_tombstone` owns that.
-        deleted_at: _,
-    } = entry;
-    let title_updated_at = title_updated_at.unwrap_or(updated_at);
-    let lifecycle_updated_at = lifecycle_updated_at.unwrap_or(created_at);
     {
         let db = state.db.lock();
-        // Insert what we do not have, and clear a local tombstone only when the
-        // peer's lifecycle stamp is newer than ours. Title and created_at are
-        // never overwritten here: apply_remote_rename owns the title, and the
-        // local row is authoritative for its own creation time.
-        db.execute(
-            "INSERT INTO documents
-                 (id, type, title, created_at, updated_at, title_updated_at,
-                  is_deleted, deleted_at, lifecycle_updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7)
-             ON CONFLICT(id) DO UPDATE SET
-                 is_deleted           = 0,
-                 deleted_at           = NULL,
-                 lifecycle_updated_at = excluded.lifecycle_updated_at
-             WHERE documents.is_deleted = 1
-               AND (documents.lifecycle_updated_at IS NULL
-                    OR documents.lifecycle_updated_at < excluded.lifecycle_updated_at)",
-            params![
-                &doc_id,
-                &doc_type,
-                &title,
-                created_at,
-                updated_at,
-                title_updated_at,
-                lifecycle_updated_at
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        indexer::update_document_title(&db, &doc_id, &title)?;
+        ensure_row(&db, &entry)?;
     }
+    get_document(state, entry.doc_id)
+}
 
-    get_document(state, doc_id)
+/// `ensure_document`'s write, taking `&Connection` so a test runs the real
+/// SQL. A live document has no delete stamp, so `deleted_at` is not read;
+/// `ensure_tombstone` owns that.
+pub fn ensure_row(db: &Connection, entry: &EnsureDocumentRequest) -> Result<(), String> {
+    let title_updated_at = entry.title_updated_at.unwrap_or(entry.updated_at);
+    let lifecycle_updated_at = entry.lifecycle_updated_at.unwrap_or(entry.created_at);
+    // Insert what we do not have, and clear a local tombstone only when the
+    // peer's lifecycle stamp is newer than ours. Title, pin and created_at are
+    // never overwritten here: apply_remote_rename owns the title,
+    // apply_remote_pin the pin, and the local row is authoritative for its
+    // own creation time.
+    db.execute(
+        "INSERT INTO documents
+             (id, type, title, created_at, updated_at, title_updated_at,
+              is_deleted, deleted_at, lifecycle_updated_at,
+              pinned, pinned_updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7, ?8, ?9)
+         ON CONFLICT(id) DO UPDATE SET
+             is_deleted           = 0,
+             deleted_at           = NULL,
+             lifecycle_updated_at = excluded.lifecycle_updated_at
+         WHERE documents.is_deleted = 1
+           AND (documents.lifecycle_updated_at IS NULL
+                OR documents.lifecycle_updated_at < excluded.lifecycle_updated_at)",
+        params![
+            &entry.doc_id,
+            &entry.doc_type,
+            &entry.title,
+            entry.created_at,
+            entry.updated_at,
+            title_updated_at,
+            lifecycle_updated_at,
+            entry.pinned,
+            entry.pinned_updated_at
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    indexer::update_document_title(db, &entry.doc_id, &entry.title)
 }
 
 // Applies a peer's rename, last-writer-wins on `title_updated_at`: an older or
@@ -380,6 +397,43 @@ pub fn apply_remote_rename(
         indexer::update_document_title(&db, &doc_id, &title)?;
     }
     Ok(changed > 0)
+}
+
+/// Apply a peer's pin, last-writer-wins on `pinned_updated_at`, the way
+/// `apply_remote_rename` applies a title. Returns whether the row changed.
+///
+/// A tie goes to pinned. Two devices hold different pins at one stamp only by
+/// setting them independently, and with no rule for a tie each would keep its
+/// own for good. The reconciler breaks it the same way
+/// (src/lib/sync/reconcile.ts), so a manifest exchange and a live message
+/// cannot settle on different answers.
+pub fn apply_pin_if_newer(
+    db: &Connection,
+    doc_id: &str,
+    pinned: bool,
+    pinned_updated_at: i64,
+) -> Result<bool, String> {
+    let changed = db
+        .execute(
+            "UPDATE documents SET pinned = ?1, pinned_updated_at = ?2
+              WHERE id = ?3
+                AND (COALESCE(pinned_updated_at, 0) < ?2
+                     OR (COALESCE(pinned_updated_at, 0) = ?2 AND pinned < ?1))",
+            params![pinned, pinned_updated_at, doc_id],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(changed > 0)
+}
+
+#[tauri::command]
+pub fn apply_remote_pin(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    pinned: bool,
+    pinned_updated_at: i64,
+) -> Result<bool, String> {
+    let db = state.db.lock();
+    apply_pin_if_newer(&db, &doc_id, pinned, pinned_updated_at)
 }
 
 // Applies a peer's deletion as a tombstone (the row is kept so the delete keeps
@@ -1692,6 +1746,8 @@ mod tests {
             title_updated_at: Some(20),
             lifecycle_updated_at: Some(700),
             deleted_at: Some(700),
+            pinned: false,
+            pinned_updated_at: None,
         }
     }
 
@@ -1892,5 +1948,92 @@ mod tests {
 
         assert!(query_backlinks(&db, "d1").unwrap()[0].pinned);
         assert!(query_documents_with_tag(&db, "work").unwrap()[0].pinned);
+    }
+
+    #[test]
+    fn a_peers_newer_pin_applies_and_an_older_one_does_not() {
+        let db = db();
+        set_pinned(&db, "d1", true, 500).unwrap();
+
+        assert!(!apply_pin_if_newer(&db, "d1", false, 400).unwrap());
+        assert_eq!(pin_of(&db, "d1"), (true, Some(500)));
+
+        assert!(apply_pin_if_newer(&db, "d1", false, 600).unwrap());
+        assert_eq!(pin_of(&db, "d1"), (false, Some(600)));
+    }
+
+    #[test]
+    fn a_peers_pin_reaches_a_note_nobody_here_ever_pinned() {
+        let db = db();
+        assert!(apply_pin_if_newer(&db, "d1", true, 1).unwrap());
+        assert_eq!(pin_of(&db, "d1"), (true, Some(1)));
+    }
+
+    // Two devices that set different pins at one stamp would otherwise each
+    // keep their own for good. The reconciler breaks the tie the same way.
+    #[test]
+    fn a_tie_on_the_stamp_goes_to_pinned() {
+        let db = db();
+        set_pinned(&db, "d1", false, 500).unwrap();
+        assert!(apply_pin_if_newer(&db, "d1", true, 500).unwrap());
+        assert_eq!(pin_of(&db, "d1"), (true, Some(500)));
+
+        assert!(
+            !apply_pin_if_newer(&db, "d1", false, 500).unwrap(),
+            "and the same tie seen from the other side changes nothing"
+        );
+        assert!(
+            !apply_pin_if_newer(&db, "d1", true, 500).unwrap(),
+            "nor does hearing the winning pin again"
+        );
+    }
+
+    #[test]
+    fn the_manifest_carries_the_pin() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        set_pinned(&db, "d2", true, 900).unwrap();
+
+        let entries = query_sync_state(&db).unwrap();
+        let entry = |id: &str| entries.iter().find(|e| e.id == id).unwrap();
+        assert!(entry("d2").pinned);
+        assert_eq!(entry("d2").pinned_updated_at, Some(900));
+        assert!(!entry("d1").pinned);
+        assert_eq!(entry("d1").pinned_updated_at, None);
+    }
+
+    fn peer_entry(id: &str, pinned: bool, stamp: Option<i64>) -> EnsureDocumentRequest {
+        EnsureDocumentRequest {
+            doc_id: id.to_string(),
+            doc_type: "note".to_string(),
+            title: "From a peer".to_string(),
+            created_at: 10,
+            updated_at: 20,
+            title_updated_at: Some(20),
+            lifecycle_updated_at: Some(10),
+            deleted_at: None,
+            pinned,
+            pinned_updated_at: stamp,
+        }
+    }
+
+    // A note pinned on the device that made it must arrive pinned, not turn
+    // up unpinned here and wait for a second message to put it right.
+    #[test]
+    fn a_note_first_seen_from_a_peer_arrives_with_its_pin() {
+        let db = db();
+        ensure_row(&db, &peer_entry("d2", true, Some(700))).unwrap();
+        assert_eq!(pin_of(&db, "d2"), (true, Some(700)));
+    }
+
+    #[test]
+    fn describing_a_note_this_device_holds_leaves_its_pin_alone() {
+        let db = db();
+        ensure_row(&db, &peer_entry("d1", true, Some(700))).unwrap();
+        assert_eq!(
+            pin_of(&db, "d1"),
+            (false, None),
+            "the pin of a known row is apply_remote_pin's to change"
+        );
     }
 }

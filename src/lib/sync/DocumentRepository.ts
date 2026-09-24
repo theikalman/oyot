@@ -61,6 +61,8 @@ export interface RawSyncEntry {
     is_deleted: boolean;
     deleted_at: number | null;
     lifecycle_updated_at: number;
+    pinned: boolean;
+    pinned_updated_at: number | null;
     content_hash: string | null; // base64
 }
 
@@ -74,6 +76,8 @@ export function toManifestEntry(r: RawSyncEntry): ManifestEntry {
         isDeleted: r.is_deleted,
         deletedAt: r.deleted_at,
         lifecycleUpdatedAt: r.lifecycle_updated_at,
+        pinned: r.pinned,
+        pinnedUpdatedAt: r.pinned_updated_at,
         contentHash: r.content_hash,
     };
 }
@@ -306,7 +310,8 @@ export class DocumentRepository {
         });
     }
 
-    // Materialize a document row learned from a peer. Never clobbers a known row.
+    // Materialize a document row learned from a peer. Never clobbers a known
+    // row: the pin, like the title, is only taken when the row is new.
     async ensureDoc(entry: ManifestEntry): Promise<void> {
         const doc = await invoke<Document>('ensure_document', {
             entry: {
@@ -317,6 +322,8 @@ export class DocumentRepository {
                 updatedAt: entry.titleUpdatedAt,
                 titleUpdatedAt: entry.titleUpdatedAt,
                 lifecycleUpdatedAt: lifecycleStamp(entry),
+                pinned: entry.pinned ?? false,
+                pinnedUpdatedAt: entry.pinnedUpdatedAt ?? null,
             },
         });
         appStore.addDocument(toSummary(doc));
@@ -357,6 +364,17 @@ export class DocumentRepository {
         if (existing) {
             appStore.updateDocumentInList({ ...existing, title, updated_at: titleUpdatedAt });
         }
+    }
+
+    // Last-writer-wins on the pin stamp, decided in Rust by the same rule
+    // `reconcile()` uses. The sidebar only moves when the row did.
+    async applyPin(docId: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void> {
+        const changed = await invoke<boolean>('apply_remote_pin', {
+            docId,
+            pinned,
+            pinnedUpdatedAt,
+        });
+        if (changed) appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
     }
 
     // Returns true if the tombstone won. A losing tombstone (we revived the

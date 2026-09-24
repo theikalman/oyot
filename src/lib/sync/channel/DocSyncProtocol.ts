@@ -1,5 +1,5 @@
 import type { DocumentRepository } from '../DocumentRepository';
-import type { ManifestEntry, SyncMessage } from '../protocol';
+import { pinStamp, type ManifestEntry, type SyncMessage } from '../protocol';
 import { reconcile } from '../reconcile';
 
 export interface SyncProgressSink {
@@ -123,6 +123,9 @@ export class DocSyncProtocol {
                 return;
             case 'doc-renamed':
                 await this.repo.applyRename(msg.id, msg.title, msg.titleUpdatedAt);
+                return;
+            case 'doc-pinned':
+                await this.repo.applyPin(msg.id, msg.pinned, msg.pinnedUpdatedAt);
                 return;
             case 'doc-deleted':
                 await this.repo.applyDelete(msg.id, msg.deletedAt);
@@ -291,6 +294,9 @@ export class DocSyncProtocol {
             case 'update':
                 if (decision.rename) {
                     await this.repo.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
+                }
+                if (decision.repin) {
+                    await this.repo.applyPin(entry.id, entry.pinned ?? false, pinStamp(entry));
                 }
                 if (decision.pull) {
                     const sv = await this.repo.localStateVector(entry.id);

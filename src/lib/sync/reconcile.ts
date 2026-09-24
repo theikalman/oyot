@@ -1,4 +1,4 @@
-import { lifecycleStamp, type ManifestEntry } from './protocol';
+import { lifecycleStamp, pinStamp, type ManifestEntry } from './protocol';
 
 /**
  * What to do about one document, given how another copy of the library
@@ -24,8 +24,8 @@ export type Reconciliation =
     | { kind: 'revive' }
     /** This device deleted it at least as late as they last changed it. */
     | { kind: 'stays-deleted' }
-    /** Both hold it: take a newer title, and exchange content if it differs. */
-    | { kind: 'update'; rename: boolean; pull: boolean }
+    /** Both hold it: take a newer title or pin, and exchange content if it differs. */
+    | { kind: 'update'; rename: boolean; repin: boolean; pull: boolean }
     /** Both hold it, the same. */
     | { kind: 'up-to-date' };
 
@@ -60,8 +60,26 @@ export function reconcile(remote: ManifestEntry, local: ManifestEntry | undefine
     }
 
     const rename = remote.titleUpdatedAt > local.titleUpdatedAt;
+    const repin = pinWins(remote, local);
     // A missing hash is an unknown, not a match: exchange rather than assume.
     const pull =
         !local.contentHash || !remote.contentHash || local.contentHash !== remote.contentHash;
-    return rename || pull ? { kind: 'update', rename, pull } : { kind: 'up-to-date' };
+    return rename || repin || pull
+        ? { kind: 'update', rename, repin, pull }
+        : { kind: 'up-to-date' };
+}
+
+/**
+ * Whether their pin is the later word on a document both sides hold.
+ *
+ * A tie goes to pinned. Two devices hold different pins at one stamp only by
+ * setting them independently, and with no rule for a tie each would keep its
+ * own for good. `apply_remote_pin` breaks it the same way, so a manifest
+ * exchange and a live message cannot settle on different answers (ADR 0027).
+ */
+function pinWins(remote: ManifestEntry, local: ManifestEntry): boolean {
+    const theirs = pinStamp(remote);
+    const ours = pinStamp(local);
+    if (theirs !== ours) return theirs > ours;
+    return (remote.pinned ?? false) && !(local.pinned ?? false);
 }

@@ -29,6 +29,12 @@ export interface ManifestEntry {
     // revival can beat an older tombstone. Optional on the wire: a peer on an
     // older build omits it, and `lifecycleStamp()` falls back.
     lifecycleUpdatedAt?: number;
+    // Whether the document is pinned to the sidebar, and when that was last
+    // set: a last-writer-wins register like the title (ADR 0027). Optional on
+    // the wire, because a peer on a build from before pins sends neither, and
+    // `pinStamp()` reads that as never pinned.
+    pinned?: boolean;
+    pinnedUpdatedAt?: number | null;
     // base64(SHA-256(merged Yjs state)); null when unknown (pre-migration row or
     // never-saved doc) - treated as "force a state-vector exchange".
     contentHash: string | null;
@@ -57,6 +63,7 @@ export type SyncMessage =
     // --- steady-state optimisations ---
     | { t: 'doc-created'; entry: ManifestEntry }
     | { t: 'doc-renamed'; id: string; title: string; titleUpdatedAt: number }
+    | { t: 'doc-pinned'; id: string; pinned: boolean; pinnedUpdatedAt: number }
     | { t: 'doc-deleted'; id: string; deletedAt: number }
     | { t: 'live-update'; id: string; update: string }
     // --- attachments (v3) ---
@@ -82,6 +89,12 @@ export function lifecycleStamp(entry: {
     return (
         entry.lifecycleUpdatedAt ?? entry.deletedAt ?? entry.titleUpdatedAt ?? entry.createdAt ?? 0
     );
+}
+
+// The stamp to compare when deciding whose pin wins. Zero for a document
+// nobody has pinned, which is also how a manifest from before pins reads.
+export function pinStamp(entry: { pinnedUpdatedAt?: number | null }): number {
+    return entry.pinnedUpdatedAt ?? 0;
 }
 
 export function isSyncMessage(v: unknown): v is SyncMessage {

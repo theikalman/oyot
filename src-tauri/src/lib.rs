@@ -651,6 +651,7 @@ pub fn run() {
             ensure_document,
             ensure_tombstone,
             apply_remote_rename,
+            apply_remote_pin,
             apply_remote_delete,
             search_documents,
             get_backlinks,

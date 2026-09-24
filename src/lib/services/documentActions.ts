@@ -4,7 +4,12 @@ import type { Document } from '../types';
 import { appStore } from '../stores/app';
 import { bumpIndexRevision } from '../stores/derivedIndex';
 import { toDocumentSummary } from './documents';
-import { broadcastDocCreated, broadcastDocRenamed, broadcastDocDeleted } from '../sync';
+import {
+    broadcastDocCreated,
+    broadcastDocRenamed,
+    broadcastDocPinned,
+    broadcastDocDeleted,
+} from '../sync';
 
 function appStoreDoc(docId: string) {
     return get(appStore).documents.find((d) => d.id === docId);
@@ -26,6 +31,8 @@ function announceCreated(doc: Document): void {
         titleUpdatedAt: doc.title_updated_at,
         createdAt: doc.created_at,
         lifecycleUpdatedAt: doc.lifecycle_updated_at ?? doc.created_at,
+        pinned: doc.pinned,
+        pinnedUpdatedAt: doc.pinned_updated_at,
     });
 }
 
@@ -86,11 +93,13 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
     return doc;
 }
 
-// Pinning keeps a note in the sidebar. The stamp comes back from Rust, which
-// wrote it, for the reason the delete's does.
+// Pinning keeps a note in the sidebar, on every device: it is the user's
+// choice about the note, like its title (ADR 0027). The stamp comes back from
+// Rust, which wrote it, for the reason the delete's does.
 export async function setPinned(docId: string, pinned: boolean): Promise<void> {
     const pinnedUpdatedAt = await invoke<number>('set_document_pinned', { docId, pinned });
     appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
+    broadcastDocPinned(docId, pinned, pinnedUpdatedAt);
 }
 
 export async function deleteDocument(docId: string): Promise<void> {
