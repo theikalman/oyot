@@ -71,6 +71,7 @@
                 class="doc-menu-btn"
                 onclick={(e) => onToggleMenu(e, doc.id)}
                 title="Note options"
+                aria-expanded={openMenuId === doc.id}
             >
                 <svg
                     width="16"
@@ -164,6 +165,10 @@
         color: var(--accent-color);
     }
 
+    /* Always shown. It used to appear only while the pointer was over the
+       row, and a touch screen has no pointer to hover with: on a phone the
+       menu was an empty strip at the end of each row that only a lucky tap
+       found. */
     .doc-menu-btn {
         flex-shrink: 0;
         display: flex;
@@ -177,19 +182,43 @@
         color: var(--text-secondary);
         border-radius: 4px;
         cursor: pointer;
-        opacity: 0;
     }
 
-    /* Revealed on hover or keyboard focus. Without these the button is
-       permanently at opacity 0 and the row menu is unreachable. */
-    .doc-item:hover .doc-menu-btn,
-    .doc-menu-btn:focus-visible {
-        opacity: 1;
-    }
-
-    .doc-menu-btn:hover {
+    /* Lit while its menu is open, so it stays plain which row the menu
+       belongs to once the pointer is in it. */
+    .doc-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    /* And under the pointer, but only where there is one. A phone counts
+       the last button tapped as hovered until a tap lands somewhere else,
+       so closing a menu with its own button left the button lit as if the
+       menu were still open. */
+    @media (hover: hover) {
+        .doc-menu-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+    }
+
+    /* Sized for a finger. The button looks the same, but what a tap can
+       land on is 44px wide, the least Apple's guidelines allow, and reaches
+       halfway to the rows above and below. A tap just beside the dots opens
+       the menu, where it opened the note and, on a phone, put the sidebar
+       away. The platform's tap flash would outline that whole area, so the
+       button lighting up with its menu is the feedback instead. */
+    @media (pointer: coarse) {
+        .doc-menu-btn {
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .doc-menu-btn::after {
+            content: '';
+            position: absolute;
+            inset: -4px -10px;
+        }
     }
 
     .doc-menu {

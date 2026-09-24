@@ -72,6 +72,7 @@
                         class="device-menu-btn"
                         onclick={(e) => toggleMenu(e, device.peer_node_id)}
                         title="Device options"
+                        aria-expanded={openMenuId === device.peer_node_id}
                     >
                         <svg
                             width="16"
@@ -153,12 +154,15 @@
         margin: 0;
     }
 
+    /* Nothing on the right, so the menu button ends where the pinned notes'
+       do, under the gear in the heading. With the right padding, a column of
+       menu buttons sat out of line with the one above it. */
     .device-item {
         position: relative;
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 6px 8px;
+        padding: 6px 0 6px 8px;
         border-radius: 4px;
         font-size: 14px;
         color: var(--text-primary);
@@ -191,6 +195,9 @@
         color: var(--text-muted);
     }
 
+    /* Always shown, like the menu on a pinned note, and for the same
+       reason: it used to appear only under the pointer, which a touch
+       screen does not have. */
     .device-menu-btn {
         flex-shrink: 0;
         display: flex;
@@ -204,17 +211,35 @@
         color: var(--text-secondary);
         border-radius: 4px;
         cursor: pointer;
-        opacity: 0;
     }
 
-    .device-item:hover .device-menu-btn,
-    .device-menu-btn:focus-visible {
-        opacity: 1;
-    }
-
-    .device-menu-btn:hover {
+    .device-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    /* Only where the pointer can hover, as on a pinned note's button: a
+       phone leaves the last button tapped looking hovered. */
+    @media (hover: hover) {
+        .device-menu-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+    }
+
+    /* Sized for a finger, as on a pinned note: a 44px-wide target the full
+       height of the row, around a button that looks the same. */
+    @media (pointer: coarse) {
+        .device-menu-btn {
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .device-menu-btn::after {
+            content: '';
+            position: absolute;
+            inset: -6px -10px;
+        }
     }
 
     .device-menu {
