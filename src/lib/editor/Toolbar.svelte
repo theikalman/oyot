@@ -307,8 +307,14 @@
         stroke-linejoin: round;
     }
 
+    /* One pixel wide by width, not by flex-basis. Safari's engine, which
+       the app runs in on Apple devices, leaves a flex-basis out when it
+       works out how wide the formatting strip has to be, so each divider
+       left the strip a pixel short, and the last tool was cut off and
+       faded as if there were more to scroll to. */
     .separator {
-        flex: 0 0 1px;
+        flex: none;
+        width: 1px;
         height: 18px;
         margin: 0 6px;
         background: var(--border-color);
