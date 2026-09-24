@@ -71,6 +71,7 @@
                 class="doc-menu-btn"
                 onclick={(e) => onToggleMenu(e, doc.id)}
                 title="Note options"
+                aria-expanded={openMenuId === doc.id}
             >
                 <svg
                     width="16"
@@ -183,7 +184,10 @@
         cursor: pointer;
     }
 
-    .doc-menu-btn:hover {
+    /* Lit while its menu is open as well as under the pointer, so it stays
+       plain which row the menu belongs to once the pointer is in it. */
+    .doc-menu-btn:hover,
+    .doc-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
     }

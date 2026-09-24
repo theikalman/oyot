@@ -72,6 +72,7 @@
                         class="device-menu-btn"
                         onclick={(e) => toggleMenu(e, device.peer_node_id)}
                         title="Device options"
+                        aria-expanded={openMenuId === device.peer_node_id}
                     >
                         <svg
                             width="16"
@@ -212,7 +213,8 @@
         cursor: pointer;
     }
 
-    .device-menu-btn:hover {
+    .device-menu-btn:hover,
+    .device-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
     }
