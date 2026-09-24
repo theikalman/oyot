@@ -41,9 +41,13 @@
     });
 
     // Which tools the selection's formatting is using, shown pressed, and
-    // which could do nothing just now, shown disabled.
+    // which could do nothing just now, shown greyed out.
     let pressed = $state.raw(new Set<string>());
     let unavailable = $state.raw(new Set<string>());
+
+    function press(tool: Tool) {
+        if (editor && !unavailable.has(tool.id)) tool.run(editor);
+    }
 
     // Read again after every change to the editor, the caret moving
     // included, and a microtask late. Undo files what it undid on the redo
@@ -79,20 +83,20 @@
     });
 </script>
 
-<!-- A press never takes focus from the note. Taking it, even until the
-     command gave it back, blinked the selection away and could put a
-     phone's keyboard down between one tool and the next. -->
+<!-- Greyed out with aria-disabled rather than disabled. A disabled button
+     swallows the mouse-down the toolbar uses to keep focus in the note,
+     so a tap on a greyed-out Undo put a phone's keyboard away. This one
+     takes the press and does nothing with it. -->
 {#snippet button(tool: Tool)}
     <button
         type="button"
         class="tool"
         class:pressed={pressed.has(tool.id)}
         aria-pressed={tool.toggles ? pressed.has(tool.id) : undefined}
-        disabled={unavailable.has(tool.id)}
+        aria-disabled={unavailable.has(tool.id) || undefined}
         title={tooltip(tool)}
         aria-label={tool.label}
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => editor && tool.run(editor)}
+        onclick={() => press(tool)}
     >
         <svg viewBox="0 0 24 24" aria-hidden="true">
             {#each tool.icon as d, i (i)}
@@ -104,8 +108,19 @@
 
 <!-- Undo and redo stay at the end of the row whatever the width. Where
      there is not room for everything, it is the formatting tools that
-     scroll, so going back a step never needs a scroll to reach. -->
-<div class="toolbar" role="toolbar" aria-label="Formatting">
+     scroll, so going back a step never needs a scroll to reach.
+
+     A press anywhere on the toolbar, a button or the space between two,
+     never takes focus from the note. Taking it, even until the command
+     gave it back, blinked the selection away and could put a phone's
+     keyboard down between one tool and the next. -->
+<div
+    class="toolbar"
+    role="toolbar"
+    aria-label="Formatting"
+    tabindex="-1"
+    onmousedown={(event) => event.preventDefault()}
+>
     <div
         class="formatting"
         class:more-before={moreBefore}
@@ -226,7 +241,7 @@
         transition: background-color 0.15s;
     }
 
-    .tool:enabled:active::before {
+    .tool:not([aria-disabled='true']):active::before {
         background: var(--bg-hover);
     }
 
@@ -240,7 +255,7 @@
         background: var(--accent-bg);
     }
 
-    .tool.pressed:enabled:active::before {
+    .tool.pressed:active::before {
         background: var(--accent-bg-hover);
     }
 
@@ -248,24 +263,24 @@
        tapped as hovered until a tap lands somewhere else, which left a grey
        square behind every press. */
     @media (hover: hover) {
-        .tool:enabled:hover {
+        .tool:not([aria-disabled='true']):hover {
             color: var(--text-primary);
         }
 
-        .tool:enabled:hover::before {
+        .tool:not([aria-disabled='true']):hover::before {
             background: var(--bg-hover);
         }
 
-        .tool.pressed:enabled:hover {
+        .tool.pressed:hover {
             color: var(--accent-color);
         }
 
-        .tool.pressed:enabled:hover::before {
+        .tool.pressed:hover::before {
             background: var(--accent-bg-hover);
         }
     }
 
-    .tool:disabled {
+    .tool[aria-disabled='true'] {
         cursor: default;
         opacity: 0.35;
     }
