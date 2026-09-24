@@ -227,6 +227,21 @@
         }
     }
 
+    /* Sized for a finger, as on a pinned note: a 44px-wide target the full
+       height of the row, around a button that looks the same. */
+    @media (pointer: coarse) {
+        .device-menu-btn {
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .device-menu-btn::after {
+            content: '';
+            position: absolute;
+            inset: -6px -10px;
+        }
+    }
+
     .device-menu {
         position: absolute;
         top: calc(100% + 2px);

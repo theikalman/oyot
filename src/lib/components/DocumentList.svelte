@@ -202,6 +202,25 @@
         }
     }
 
+    /* Sized for a finger. The button looks the same, but what a tap can
+       land on is 44px wide, the least Apple's guidelines allow, and reaches
+       halfway to the rows above and below. A tap just beside the dots opens
+       the menu, where it opened the note and, on a phone, put the sidebar
+       away. The platform's tap flash would outline that whole area, so the
+       button lighting up with its menu is the feedback instead. */
+    @media (pointer: coarse) {
+        .doc-menu-btn {
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .doc-menu-btn::after {
+            content: '';
+            position: absolute;
+            inset: -4px -10px;
+        }
+    }
+
     .doc-menu {
         position: absolute;
         top: calc(100% + 2px);
