@@ -153,12 +153,15 @@
         margin: 0;
     }
 
+    /* Nothing on the right, so the menu button ends where the pinned notes'
+       do, under the gear in the heading. With the right padding, a column of
+       menu buttons sat out of line with the one above it. */
     .device-item {
         position: relative;
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 6px 8px;
+        padding: 6px 0 6px 8px;
         border-radius: 4px;
         font-size: 14px;
         color: var(--text-primary);
