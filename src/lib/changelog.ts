@@ -36,6 +36,30 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.19-alpha',
+        date: '2026-09-24',
+        summary:
+            'Back up your whole library and bring it back: to a file you keep, to Google Drive, or on its own every day or week.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Settings, Backup saves every note, journal and image to one file wherever you choose, and imports one back. An import adds to what is already here and never removes a note, so it is safe to run on a device you are still using. You see what it will bring in before anything changes.',
+            },
+            {
+                kind: 'added',
+                text: 'Backups can go to Google Drive. Link your Google account once, then back up, restore or delete backups from Settings. Oyot can only see the files it puts there, in an "Oyot Backups" folder you can see too. Unlinking one device leaves your other devices linked.',
+            },
+            {
+                kind: 'added',
+                text: 'Backups can run on their own, every day or every week, to Google Drive or, on a computer, to a folder you pick. They run while Oyot is open, and one that was missed runs a few minutes after Oyot next opens. When nothing has changed, no new backup is made. The newest scheduled backups are kept, 10 unless you choose otherwise, and backups you make yourself are never removed.',
+            },
+            {
+                kind: 'added',
+                text: 'The Backup page shows when the last backup was made, when the next one is due, and what a backup had to leave out. If scheduled backups keep failing or have stopped, Oyot says so when it opens.',
+            },
+        ],
+    },
+    {
         version: '0.0.18-alpha',
         date: '2026-09-23',
         summary:

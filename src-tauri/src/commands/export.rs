@@ -117,7 +117,7 @@ fn validate_hash(hash: &str) -> Result<(), String> {
 /// the app showed. `None` for anything the format cannot hold - it only
 /// reaches back to 1980, and a row written under a badly wrong device clock
 /// should cost the entry its timestamp and nothing more.
-fn zip_time(ms: i64) -> Option<zip::DateTime> {
+pub(crate) fn zip_time(ms: i64) -> Option<zip::DateTime> {
     use chrono::{Datelike, Timelike};
     let at = chrono::DateTime::from_timestamp_millis(ms)?.with_timezone(&chrono::Local);
     zip::DateTime::from_date_and_time(

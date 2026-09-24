@@ -134,6 +134,34 @@ validated rather than repaired: anything that is not recognisably one `.md`
 filename is refused, because a zip entry name is a path on whatever machine
 extracts it. See [ADR 0021](docs/decisions/0021-export-notes-as-a-markdown-archive.md).
 
+**Backups are written and read in Rust, and a backup being imported is
+hostile until checked.** `create_local_backup` and `open_local_backup` open
+their dialogs in Rust, like the export. On Android and iOS the dialog returns a
+content URI or a security-scoped URL rather than a path, which is why
+`tauri-plugin-fs` is registered: for its Rust API only, with no capability
+granting its commands, so the webview gains nothing by it. A picked backup is
+copied into the app's cache and checked in full before anything is imported:
+its format and version, size limits on every entry and on the total (the
+zip-bomb defence), and a SHA-256 for every entry. Entries are read by name into
+memory and never extracted. The webview then pulls one checked document at a
+time and merges it through the sync path, and Rust stores the images itself
+through `store_attachment`. A backup never contains the signing key, the
+pairings or the stored addresses. See
+[ADR 0024](docs/decisions/0024-back-up-the-crdt-and-import-by-merging.md).
+
+**A linked Google account's tokens never reach the webview.** Linking opens
+Google's sign-in in the system browser, never in the app, and the answer comes
+back to a one-shot listener on `127.0.0.1` at a random port. The code in it is
+bound to the attempt by PKCE and a random `state`, so something else on the
+machine that answers the listener gets nothing it can use. The exchange happens
+in Rust; the refresh token goes into the OS keychain and the access token stays
+in memory. The webview sees the account's email and the list of backups. The
+only scope asked for is `drive.file`, so Oyot can see the files it created and
+nothing else in the user's Drive. A Drive file id arrives from the webview, so
+it is held to the characters ids are made of before it goes into a URL, and a
+downloaded backup is checked exactly as a file from disk is. See
+[ADR 0025](docs/decisions/0025-remote-backups-behind-one-trait-google-drive-first.md).
+
 **The asset protocol is scoped to the attachment directory**
 (`$APPDATA/attachments/**` in `tauri.conf.json`), so a resolved `asset:` URL
 cannot reach anything else.
@@ -382,6 +410,90 @@ row already says which device this is. The only addresses not shown there are
 ones belonging to a pairing that never completed, since an address is stored
 before the request goes out; `UnpairedAddressList.svelte` is where those can be
 removed, and it renders nothing at all when there are none.
+
+## Google Drive backups
+
+A build offers Google Drive only when it was compiled with a Google OAuth
+client for its platform. Without one, the Backup page offers files alone,
+which is what a development build does by default. Each platform signs in its
+own way, through its own client in the same Cloud project
+([ADR 0025](docs/decisions/0025-remote-backups-behind-one-trait-google-drive-first.md),
+decisions 6 and 7). They must share one project: Drive only shows a client the
+files its project created, so a phone would not see the computer's backups
+otherwise.
+
+### Setting up the Google side
+
+Once, by whoever publishes Oyot, in the [Google Cloud console](https://console.cloud.google.com/):
+
+1. Create a project.
+2. In APIs and services, enable the **Google Drive API**.
+3. In the Google Auth Platform, set up the consent screen: user type
+   **External**, the app's name, and a support email. Under data access, add
+   one scope, `https://www.googleapis.com/auth/drive.file`, and nothing else.
+4. Under audience, while the app is in **Testing**, add every Google account
+   that should be able to link as a test user. Google allows 100 of them, and
+   expires a test user's link after seven days; linking again restores it.
+   Publishing the app lifts both limits. It needs a home page and a privacy
+   policy URL, and because `drive.file` is a non-sensitive scope, no security
+   assessment.
+5. Under clients, create a client of type **Desktop app**, and keep its client
+   id and client secret.
+6. For iOS, create a client of type **iOS** with the bundle id
+   `com.ajiyakin.oyot`, and keep its client id. It has no secret. Nothing is
+   added to the app's Info.plist: the sign-in sheet returns to the app
+   without a registered URL type.
+7. For Android, create a client of type **Android** with the package name
+   `com.ajiyakin.oyot` and the SHA-1 fingerprint of the key the app is signed
+   with. Every key needs its own client: the debug key `tauri android dev`
+   uses, the release key, and, for builds installed from Google Play, the Play
+   App Signing key shown in the Play Console. A build signed with a key that
+   has no client builds fine and fails when linking, with "this build of Oyot
+   is not registered with Google". The debug key's fingerprint:
+
+   ```bash
+   keytool -list -v -keystore ~/.android/debug.keystore -storepass android
+   ```
+
+### Building with it
+
+The two values are read when the Rust side is compiled, so set them before
+building, and changing them rebuilds it:
+
+```bash
+export OYOT_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+export OYOT_GOOGLE_CLIENT_SECRET=your-client-secret
+npm run tauri dev
+```
+
+Keep them out of git. Google does not treat a Desktop client's secret as
+confidential, since it ships inside the app, but there is no reason to publish
+it either. With direnv, `dotenv_if_exists` in `.envrc` and the two lines in a
+`.env` file, which is git-ignored, does it.
+
+The phones read their own variables, the same way:
+
+```bash
+# iOS: the iOS client's id; there is no secret.
+export OYOT_GOOGLE_IOS_CLIENT_ID=your-ios-client-id.apps.googleusercontent.com
+npm run tauri ios dev
+
+# Android: only a switch. Google Play services recognises the app by its
+# package and signing key, which must be registered (step 7).
+export OYOT_GOOGLE_ANDROID=1
+npm run tauri android dev
+```
+
+On Android, linking needs Google Play services, so use an emulator image that
+has it ("Google APIs" or "Google Play"), signed in to a test user.
+
+A linked account lives in the OS keychain, under the service
+`com.ajiyakin.oyot` and the account `google-drive`, on desktop and on iOS.
+macOS may ask to allow access to it after a rebuild, because a development
+build is signed afresh each time. On Android no token is kept at all: Google
+Play services holds the grant, and the app keeps only which account it is, in
+`google-drive-link.json` in its data directory. Deleting any of these is the
+same as unlinking.
 
 ## Project Structure
 

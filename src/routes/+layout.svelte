@@ -8,6 +8,7 @@
     import { appStore } from '$lib/stores/app';
     import { applyTheme } from '$lib/services/theme';
     import { startApp } from '$lib/services/startup';
+    import { watchScheduledBackups } from '$lib/backup';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import '../app.css';
 
@@ -19,13 +20,19 @@
     // reloaded the document list, re-announced today's journal to every peer,
     // flashed the loading overlay, and put the user back on the journal
     // instead of the note they had been reading.
+    let stopWatchingBackups: (() => void) | null = null;
+
     onMount(() => {
         initSync();
         void startApp();
+        // Here for the same reason: a failing backup schedule should be
+        // heard of wherever the user is, not only on the settings page.
+        stopWatchingBackups = watchScheduledBackups();
     });
 
     onDestroy(() => {
         shutdownSync();
+        stopWatchingBackups?.();
     });
 
     // Every route, so the toggle on the settings page has a visible effect.
@@ -51,6 +58,8 @@
                 return 'Settings';
             case '/settings/sync':
                 return 'Sync';
+            case '/settings/backup':
+                return 'Backup';
             default:
                 return '';
         }

@@ -135,6 +135,46 @@ fn store_attachment(
     })
 }
 
+/// Store bytes that have already been held to their hash, as the backup
+/// importer holds them. The type still comes from the bytes, not from the
+/// name the archive gave the file, which decides nothing.
+pub(crate) fn store_checked_attachment(
+    state: &AppState,
+    bytes: &[u8],
+) -> Result<StoredImage, String> {
+    let mime_type = sniff_image_mime(bytes)
+        .ok_or_else(|| "unsupported image data: only PNG, JPEG, GIF and WebP".to_string())?;
+    store_attachment(state, bytes, mime_type)
+}
+
+/// Every attachment this device holds in full whose file is actually there.
+///
+/// A row can outlive its file. Counting such a row as held would stop an
+/// import from putting back the one thing it could restore.
+pub(crate) fn held_attachments(
+    db: &Connection,
+    data_dir: &std::path::Path,
+) -> Result<std::collections::HashSet<String>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT hash, local_path FROM attachments \
+             WHERE is_fully_downloaded = 1 AND local_path IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, local_path)| data_dir.join(local_path).is_file())
+        .map(|(hash, _)| hash)
+        .collect())
+}
+
 #[derive(serde::Serialize)]
 pub struct StoredImage {
     pub hash: String,
@@ -199,7 +239,7 @@ pub async fn pick_and_import_image(
     store_attachment(&state, &bytes, declared).map(Some)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
@@ -490,8 +530,8 @@ pub fn get_attachment_bytes(
 }
 
 #[derive(Clone, serde::Serialize)]
-struct AttachmentDownloadedEvent {
-    hash: String,
+pub(crate) struct AttachmentDownloadedEvent {
+    pub hash: String,
 }
 
 // Persist an attachment pulled from a peer (`attach-data`). The hash is the

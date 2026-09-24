@@ -1,0 +1,62 @@
+export {
+    BACKUP_STATUS_EVENT,
+    backUpToFile,
+    closeBackup,
+    getBackupStatus,
+    importBackup,
+    listBackupHistory,
+    openBackupFile,
+    planBackupImport,
+    type BackupImportResult,
+    type BackupPreview,
+    type BackupRecord,
+    type BackupStatus,
+    type LocalBackupResult,
+} from './backup';
+export {
+    applyImport,
+    planImport,
+    type ImportCounts,
+    type ImportOutcome,
+    type ImportPlan,
+    type ImportResult,
+} from './importBackup';
+export {
+    BACKUP_PROGRESS_EVENT,
+    backUpToProvider,
+    cancelLink,
+    deleteRemoteBackup,
+    describeProgress,
+    linkProvider,
+    listProviders,
+    listRemoteBackups,
+    openRemoteBackup,
+    unlinkProvider,
+    type BackupProgress,
+    type BackupProvider,
+    type LinkedAccount,
+    type RemoteBackup,
+    type RemoteBackupResult,
+} from './remote';
+export {
+    chooseBackupFolder,
+    dismissBackupSuggestion,
+    getBackupSchedule,
+    setBackupSchedule,
+    settingsOf,
+    type ScheduleSettings,
+} from './schedule';
+export {
+    FOLDER,
+    WEEKDAYS,
+    backupWarning,
+    describeNextRun,
+    fromTimeInput,
+    groupHistory,
+    suggestion,
+    toTimeInput,
+    type Frequency,
+    type HistoryEntry,
+    type ScheduleView,
+} from './scheduleText';
+export { watchScheduledBackups } from './watch';

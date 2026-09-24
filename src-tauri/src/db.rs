@@ -21,6 +21,10 @@ pub fn configure_connection(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("Failed to configure the database connection: {e}"))
 }
 
+/// The database's file name inside the app's data directory. Named once, so a
+/// second connection to it (a backup's snapshot) cannot open a different file.
+pub const DB_FILE: &str = "oyot.db";
+
 pub struct AppState {
     pub db: Arc<parking_lot::Mutex<Connection>>,
     pub signaling_manager: Arc<SignalingManager>,
@@ -54,7 +58,7 @@ impl AppState {
         let attachments_dir = app_data_dir.join("attachments");
         std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
-        let db_path = app_data_dir.join("oyot.db");
+        let db_path = app_data_dir.join(DB_FILE);
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
         configure_connection(&conn)?;
         let db = Arc::new(parking_lot::Mutex::new(conn));
