@@ -4,7 +4,13 @@
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import { createJournalForDate as createJournalForDateAction } from '../services/documentActions';
-    import { openDocument, openJournals, openTags, openTodos } from '../services/navigation';
+    import {
+        openDocument,
+        openJournals,
+        openNotes,
+        openTags,
+        openTodos,
+    } from '../services/navigation';
     import { page } from '$app/state';
     import { toasts } from '../services/toast';
     import { snippetParts } from '../search/snippet';
@@ -93,6 +99,7 @@
     );
     let onTodosPage = $derived(page.url.pathname === '/todos');
     let onJournalsPage = $derived(page.url.pathname === '/journals');
+    let onNotesPage = $derived(page.url.pathname === '/notes');
     // Both the index and any one tag's page, so the item stays lit while the
     // user is reading a tag rather than only on the list itself.
     let onTagsPage = $derived(page.url.pathname.startsWith('/tags'));
@@ -106,6 +113,11 @@
         void $indexRevision;
         void refreshTagCount();
     });
+
+    function goToNotes() {
+        void openNotes();
+        dismissOnSmallScreen();
+    }
 
     function goToJournals() {
         void openJournals();
@@ -335,6 +347,26 @@
 
                 <div class="sidebar-section">
                     <h3>Index</h3>
+                    <button class="nav-item" class:active={onNotesPage} onclick={goToNotes}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
+                            />
+                        </svg>
+                        <span class="nav-label">Notes</span>
+                        {#if notes.length > 0}
+                            <span class="nav-count">{notes.length}</span>
+                        {/if}
+                    </button>
                     <!-- The calendar above shows one month; this is the whole
                          run of them, which is the only way to see how far back
                          the journal goes. -->

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { get } from 'svelte/store';
+    import { page } from '$app/state';
     import type { DocumentSummary } from '../types';
     import { appStore } from '../stores/app';
     import { deleteDocument } from '../services/documentActions';
@@ -17,7 +18,11 @@
 
     async function confirm() {
         const docId = doc.id;
-        const wasOpen = get(appStore).currentDocument?.id === docId;
+        // Only a note on screen needs somewhere else to go afterwards. The
+        // store's open document is not the question: it stays set while the
+        // user is on an index page, and deleting from the Notes page must not
+        // throw them into some other note.
+        const wasOpen = page.route.id === '/doc/[id]' && page.params.id === docId;
 
         // Nothing is cleared until the delete has actually succeeded. Clearing
         // the open document first left the editor on a permanent "Loading..."
