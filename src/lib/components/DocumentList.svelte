@@ -184,12 +184,22 @@
         cursor: pointer;
     }
 
-    /* Lit while its menu is open as well as under the pointer, so it stays
-       plain which row the menu belongs to once the pointer is in it. */
-    .doc-menu-btn:hover,
+    /* Lit while its menu is open, so it stays plain which row the menu
+       belongs to once the pointer is in it. */
     .doc-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    /* And under the pointer, but only where there is one. A phone counts
+       the last button tapped as hovered until a tap lands somewhere else,
+       so closing a menu with its own button left the button lit as if the
+       menu were still open. */
+    @media (hover: hover) {
+        .doc-menu-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
     }
 
     .doc-menu {

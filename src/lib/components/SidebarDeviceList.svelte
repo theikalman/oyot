@@ -213,10 +213,18 @@
         cursor: pointer;
     }
 
-    .device-menu-btn:hover,
     .device-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    /* Only where the pointer can hover, as on a pinned note's button: a
+       phone leaves the last button tapped looking hovered. */
+    @media (hover: hover) {
+        .device-menu-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
     }
 
     .device-menu {
