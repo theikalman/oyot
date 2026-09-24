@@ -15,6 +15,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Every day, in one list.** The sidebar calendar covers a month; the Journals
   index lists every day you have an entry for, newest first. Opening one from
   there moves the calendar to it.
+- **Pinned notes.** The sidebar holds only the notes you pin, from a note's own
+  page or from the Notes index, which lists every note with a filter. Pins
+  follow you to your other devices, and into your backups.
 - **Rich text editing.** Headings, lists, tables, task lists, images, and slash
   commands, built on Tiptap.
 - **Document links and backlinks.** Link one note to another with `/document`.
