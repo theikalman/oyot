@@ -191,6 +191,9 @@
         color: var(--text-muted);
     }
 
+    /* Always shown, like the menu on a pinned note, and for the same
+       reason: it used to appear only under the pointer, which a touch
+       screen does not have. */
     .device-menu-btn {
         flex-shrink: 0;
         display: flex;
@@ -204,12 +207,6 @@
         color: var(--text-secondary);
         border-radius: 4px;
         cursor: pointer;
-        opacity: 0;
-    }
-
-    .device-item:hover .device-menu-btn,
-    .device-menu-btn:focus-visible {
-        opacity: 1;
     }
 
     .device-menu-btn:hover {
