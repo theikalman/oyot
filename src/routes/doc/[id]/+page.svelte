@@ -5,6 +5,7 @@
     import { loadDocument } from '$lib/services/documents';
     import { documentView } from '$lib/editor/documentView';
     import Editor from '$lib/editor/Editor.svelte';
+    import EditToggle from '$lib/editor/EditToggle.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
     import PinToggle from '$lib/components/PinToggle.svelte';
 
@@ -33,6 +34,13 @@
     // has not arrived yet.
     let shownId = $state<string | null>(null);
 
+    // Whether the open document can be typed into. Every open starts out
+    // reading, notes and journals alike, and Edit is a choice made each time,
+    // so looking something up cannot also change it by a stray tap. Held
+    // here, not in the editor, because this is what knows when a document is
+    // opened, and opening is what sets it back.
+    let editing = $state(false);
+
     // Loads when the URL names a document that is not open. Only a change of
     // URL is a reason to, so the open document is read without subscribing to
     // it: it going away is not one. That is a document removed while it was
@@ -42,6 +50,7 @@
         const id = routeId;
         loadFailed = false;
         if (!id) return;
+        editing = false;
         if (id === untrack(() => $currentDocument?.id)) {
             shownId = id;
             return;
@@ -80,8 +89,13 @@
             <PinToggle docId={activeDocument.id} pinned={activeDocument.pinned} />
         {/if}
     {/snippet}
+    {#snippet tools()}
+        {#if view === 'editor'}
+            <EditToggle {editing} onToggle={() => (editing = !editing)} />
+        {/if}
+    {/snippet}
     {#if view === 'editor'}
-        <Editor {focusTodo} />
+        <Editor {focusTodo} editable={editing} />
     {:else if view === 'gone'}
         <div class="empty-state">
             <p>That note no longer exists.</p>

@@ -12,10 +12,12 @@
         title?: string | null;
         /** Controls that belong to the title, such as pinning the open note. */
         actions?: Snippet;
+        /** Controls for the page as a whole, beside the sync indicator. */
+        tools?: Snippet;
         children: Snippet;
     }
 
-    let { title = null, actions, children }: Props = $props();
+    let { title = null, actions, tools, children }: Props = $props();
 </script>
 
 <main class="app">
@@ -29,7 +31,10 @@
                         {@render actions?.()}
                     </div>
                 {/if}
-                <SyncStatus />
+                <div class="page-tools">
+                    {@render tools?.()}
+                    <SyncStatus />
+                </div>
             </div>
             {@render children()}
         </div>
@@ -85,6 +90,13 @@
         margin: 0;
         font-size: 24px;
         color: var(--text-primary);
+    }
+
+    .page-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
     }
 
     .loading-overlay {
