@@ -6,6 +6,8 @@
 // sidebar and the Notes page take their order from here, so a note sits in the
 // same place relative to the others in both.
 
+import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
+import { normalizeTagName } from '$lib/tiptap/tags';
 import type { DocumentSummary } from '$lib/types';
 
 /**
@@ -31,11 +33,33 @@ export function pinnedNotes(documents: DocumentSummary[]): DocumentSummary[] {
     return notesOf(documents).filter((doc) => doc.pinned);
 }
 
-/** The notes whose title holds `query`, ignoring case. A blank query keeps them all. */
-export function filterNotes(notes: DocumentSummary[], query: string): DocumentSummary[] {
-    const needle = query.trim().toLocaleLowerCase();
-    if (!needle) return notes;
-    return notes.filter((doc) => doc.title.toLocaleLowerCase().includes(needle));
+/**
+ * The notes `query` finds: its text is in the title, or in one of the note's
+ * tags, ignoring case either way. A blank query keeps them all.
+ *
+ * Starting with `#` asks about tags alone, the way a chip is spelled, so
+ * `#home` finds the notes tagged home and not one titled "Homework". A `#` on
+ * its own keeps every note with a tag at all, which is where typing one
+ * begins.
+ */
+export function filterNotes(
+    notes: DocumentSummary[],
+    query: string,
+    tags: TagsByDocument = NO_TAGS,
+): DocumentSummary[] {
+    const text = query.trim();
+    if (!text) return notes;
+
+    // Spelled the way a stored tag is, so the comparison is like for like.
+    const tagNeedle = normalizeTagName(text);
+    const hasTag = (doc: DocumentSummary) =>
+        tagsOf(tags, doc.id).some((tag) => tag.includes(tagNeedle));
+    if (text.startsWith('#')) return notes.filter(hasTag);
+
+    const titleNeedle = text.toLocaleLowerCase();
+    return notes.filter(
+        (doc) => doc.title.toLocaleLowerCase().includes(titleNeedle) || hasTag(doc),
+    );
 }
 
 /**

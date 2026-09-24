@@ -43,9 +43,11 @@
     });
 
     // Filtered here rather than by querying: the whole list is already in
-    // hand, and one person's notes are not a corpus worth paging.
+    // hand, tags included, and one person's notes are not a corpus worth
+    // paging. A note's tags find it as well as its title does, since both
+    // are there on its row.
     let filter = $state('');
-    let shown = $derived(filterNotes(notes, filter));
+    let shown = $derived(filterNotes(notes, filter, tags));
 
     let creating = $state(false);
     let renaming = $state<DocumentSummary | null>(null);
@@ -90,9 +92,9 @@
                     <input
                         class="filter"
                         type="search"
-                        placeholder="Filter notes"
+                        placeholder="Filter by title or #tag"
                         bind:value={filter}
-                        aria-label="Filter notes"
+                        aria-label="Filter notes by title or tag"
                     />
                 {/if}
                 <button class="action-btn" onclick={() => (creating = true)}>New note</button>

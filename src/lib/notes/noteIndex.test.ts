@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { filterNotes, notesOf, noteStatus, pinnedNotes } from './noteIndex';
+import { tagsByDocument } from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
 
 function doc(
@@ -101,6 +102,44 @@ describe('filterNotes', () => {
 
     it('finds nothing when nothing matches', () => {
         expect(filterNotes(notes, 'holiday')).toEqual([]);
+    });
+
+    describe('with tags', () => {
+        const tagged = [
+            doc('n1', 'Homework', 'note'),
+            doc('n2', 'Chores', 'note'),
+            doc('n3', 'Reading list', 'note'),
+        ];
+        const tags = tagsByDocument([
+            { document_id: 'n2', name: 'home' },
+            { document_id: 'n2', name: 'weekend' },
+            { document_id: 'n3', name: 'deep work' },
+        ]);
+        const ids = (query: string) => filterNotes(tagged, query, tags).map((n) => n.id);
+
+        // The chips are on the row, so what they say is as much a way to find
+        // a note as its title is.
+        it('matches a note by any of its tags as well as by its title', () => {
+            expect(ids('weekend')).toEqual(['n2']);
+            expect(ids('home')).toEqual(['n1', 'n2']);
+        });
+
+        // A chip reads "#home". Typed that way, the filter asks about tags,
+        // and a note titled "Homework" is not what was meant.
+        it('looks at tags alone when the filter starts with a hash', () => {
+            expect(ids('#home')).toEqual(['n2']);
+            expect(ids('#read')).toEqual([]);
+        });
+
+        it('spells a tag the way tags are stored, whatever case and spacing it is typed in', () => {
+            expect(ids('#Deep   Work')).toEqual(['n3']);
+            expect(ids('DEEP')).toEqual(['n3']);
+        });
+
+        // Where typing a tag begins, and it already narrows the list.
+        it('keeps every note with a tag at all for a hash on its own', () => {
+            expect(ids('#')).toEqual(['n2', 'n3']);
+        });
     });
 });
 
