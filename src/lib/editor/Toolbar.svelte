@@ -50,6 +50,9 @@
     });
 </script>
 
+<!-- A press never takes focus from the note. Taking it, even until the
+     command gave it back, blinked the selection away and could put a
+     phone's keyboard down between one tool and the next. -->
 {#snippet button(tool: Tool)}
     <button
         type="button"
@@ -59,6 +62,7 @@
         disabled={unavailable.has(tool.id)}
         title={tool.label}
         aria-label={tool.label}
+        onmousedown={(event) => event.preventDefault()}
         onclick={() => editor && tool.run(editor)}
     >
         <svg viewBox="0 0 24 24" aria-hidden="true">
