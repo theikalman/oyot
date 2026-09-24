@@ -54,6 +54,7 @@ function assertConverged(a: FakeRepo, b: FakeRepo): void {
         if (!da!.isDeleted) {
             expect(a.text(id), `${id} content mismatch`).toBe(b.text(id));
             expect(da!.title, `${id} title mismatch`).toBe(db!.title);
+            expect(da!.pinned, `${id} pin mismatch`).toBe(db!.pinned);
         }
     }
 }
@@ -191,6 +192,59 @@ describe('DocSyncProtocol', () => {
         await converge(a, b);
         expect(a.docs.get('doc')!.title).toBe('from-b');
         expect(b.docs.get('doc')!.title).toBe('from-b');
+    });
+
+    it('a pin set on one device reaches the other', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('doc', 'x');
+        b.seed('doc', 'x');
+        await a.applyPin('doc', true, 50);
+
+        await converge(a, b);
+        expect(b.docs.get('doc')!.pinned).toBe(true);
+        expect(b.docs.get('doc')!.pinnedUpdatedAt).toBe(50);
+        assertConverged(a, b);
+    });
+
+    // Unpinning is a choice too. It has to travel, not be read as "nothing
+    // to say" and lose to the pin it undid.
+    it('pin race: the later stamp wins on both sides, even when it unpins', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('doc', 'x');
+        b.seed('doc', 'x');
+        await a.applyPin('doc', true, 20);
+        await b.applyPin('doc', false, 30);
+
+        await converge(a, b);
+        expect(a.docs.get('doc')!.pinned).toBe(false);
+        expect(b.docs.get('doc')!.pinned).toBe(false);
+    });
+
+    it('a note first seen from a peer arrives pinned', async () => {
+        const a = new FakeRepo();
+        const b = new FakeRepo();
+        a.seed('doc', 'x');
+        await a.applyPin('doc', true, 50);
+
+        await converge(a, b);
+        expect(b.docs.get('doc')!.pinned).toBe(true);
+        expect(b.text('doc')).toBe('x');
+    });
+
+    it('a live pin applies when newer and is ignored when older', async () => {
+        const a = new FakeRepo();
+        a.seed('doc', 'x');
+        await a.applyPin('doc', true, 50);
+        const proto = new DocSyncProtocol(a as never, () => {}, silentSink());
+
+        await proto.handle({ t: 'doc-pinned', id: 'doc', pinned: false, pinnedUpdatedAt: 40 });
+        expect(a.docs.get('doc')!.pinned).toBe(true);
+
+        await proto.handle({ t: 'doc-pinned', id: 'doc', pinned: false, pinnedUpdatedAt: 60 });
+        expect(a.docs.get('doc')!.pinned).toBe(false);
+        proto.dispose();
     });
 
     it('delete propagates to a peer that still has the document', async () => {

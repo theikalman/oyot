@@ -37,6 +37,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0024](0024-back-up-the-crdt-and-import-by-merging.md)             | Back up the CRDT itself, and import a backup by merging it like a peer               | Proposed                                                                         |
 | [0025](0025-remote-backups-behind-one-trait-google-drive-first.md) | Remote backup destinations behind one trait, Google Drive linked like an account     | Proposed                                                                         |
 | [0026](0026-scheduled-backups-run-while-the-app-is-open.md)        | Scheduled backups run while the app is open, and every attempt is recorded           | Proposed                                                                         |
+| [0027](0027-pin-notes-to-the-sidebar-and-sync-the-pin.md)          | Pin notes to the sidebar, and sync the pin like a title                              | Proposed                                                                         |
 
 ## Format
 

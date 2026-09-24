@@ -121,9 +121,25 @@ pub struct BackupDocument {
     pub is_deleted: bool,
     pub deleted_at: Option<i64>,
     pub lifecycle_updated_at: i64,
+    /// Pinned to the sidebar, and when that was last set (ADR 0027).
+    ///
+    /// Both are left out for a document nobody ever pinned, and read as never
+    /// pinned when absent. So a library without pins backs up to exactly the
+    /// file it did before pins existed, fingerprint included, and a backup
+    /// from before then imports with nothing pinned. An older build reading a
+    /// newer backup skips both, which costs it the pins and nothing else, so
+    /// the format version stays where it is.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_updated_at: Option<i64>,
     /// The entry holding the document's Yjs state. `None` for a tombstone,
     /// and for a document nobody has typed in.
     pub state: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// `documents.json`. An object rather than a bare list so the file has
@@ -272,7 +288,47 @@ mod tests {
             is_deleted: false,
             deleted_at: None,
             lifecycle_updated_at: 1,
+            pinned: false,
+            pinned_updated_at: None,
             state: Some(state_entry_path(0)),
+        }
+    }
+
+    // What documents.json held before pins existed. It has to import as a
+    // backup in which nothing is pinned, not fail to parse.
+    #[test]
+    fn a_row_from_before_pins_reads_as_never_pinned() {
+        let row: BackupDocument = serde_json::from_str(
+            r#"{"id":"n1","docType":"note","title":"Groceries","createdAt":1,
+                "updatedAt":2,"titleUpdatedAt":2,"isDeleted":false,"deletedAt":null,
+                "lifecycleUpdatedAt":1,"state":"documents/000000.yjs"}"#,
+        )
+        .unwrap();
+        assert!(!row.pinned);
+        assert_eq!(row.pinned_updated_at, None);
+    }
+
+    // So a library that never pinned anything backs up to the same bytes, and
+    // the same fingerprint, as it did before pins existed.
+    #[test]
+    fn a_row_never_pinned_is_written_as_it_always_was() {
+        let json = serde_json::to_string(&document()).unwrap();
+        assert!(!json.contains("pinned"), "got {json}");
+    }
+
+    // Unpinning is stamped, and the stamp is what stops an older pin winning,
+    // so it is written even though the flag it goes with is not.
+    #[test]
+    fn a_pin_and_an_unpin_both_survive_the_round_trip() {
+        for (pinned, stamp) in [(true, Some(5)), (false, Some(9))] {
+            let row = BackupDocument {
+                pinned,
+                pinned_updated_at: stamp,
+                ..document()
+            };
+            let back: BackupDocument =
+                serde_json::from_str(&serde_json::to_string(&row).unwrap()).unwrap();
+            assert_eq!(back, row);
         }
     }
 

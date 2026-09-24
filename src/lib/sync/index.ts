@@ -20,6 +20,7 @@ export {
     broadcastLocalUpdate,
     broadcastDocCreated,
     broadcastDocRenamed,
+    broadcastDocPinned,
     broadcastDocDeleted,
     broadcastAttachmentAvailable,
     pullAttachmentFromPeers,

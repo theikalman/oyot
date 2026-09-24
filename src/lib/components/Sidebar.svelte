@@ -4,15 +4,13 @@
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import {
-        createNote,
         createJournalForDate as createJournalForDateAction,
-        renameDocument,
-        deleteDocument as deleteDocumentAction,
+        setPinned,
     } from '../services/documentActions';
     import {
         openDocument,
-        openHome,
         openJournals,
+        openNotes,
         openTags,
         openTodos,
     } from '../services/navigation';
@@ -21,7 +19,9 @@
     import { snippetParts } from '../search/snippet';
     import { createSearch, type SearchHit } from '../search/searchStore.svelte';
     import AboutDialog from './AboutDialog.svelte';
-    import Modal from './Modal.svelte';
+    import NewNoteDialog from './NewNoteDialog.svelte';
+    import RenameNoteDialog from './RenameNoteDialog.svelte';
+    import DeleteNoteDialog from './DeleteNoteDialog.svelte';
     import DocumentList from './DocumentList.svelte';
     import SidebarDeviceList from './SidebarDeviceList.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
@@ -29,6 +29,7 @@
     import { indexRevision } from '../stores/derivedIndex';
     import { refreshTagCount, tagCount } from '../tags/tagCount';
     import { journalEntries } from '../journals/journalIndex';
+    import { pinnedNotes } from '../notes/noteIndex';
 
     // Navigate; the document route loads it. Fetching and assigning the store
     // here meant the URL never changed, so there was nothing to go back to.
@@ -39,7 +40,6 @@
 
     let searchInput = $state('');
     let showModal = $state(false);
-    let newDocTitle = $state('');
     // Tablets and phones start with the sidebar hidden so the editor gets the full
     // width; the floating toggle button is still there to bring it back.
     const SMALL_SCREEN_QUERY = '(max-width: 768px)';
@@ -103,6 +103,7 @@
     );
     let onTodosPage = $derived(page.url.pathname === '/todos');
     let onJournalsPage = $derived(page.url.pathname === '/journals');
+    let onNotesPage = $derived(page.url.pathname === '/notes');
     // Both the index and any one tag's page, so the item stays lit while the
     // user is reading a tag rather than only on the list itself.
     let onTagsPage = $derived(page.url.pathname.startsWith('/tags'));
@@ -116,6 +117,11 @@
         void $indexRevision;
         void refreshTagCount();
     });
+
+    function goToNotes() {
+        void openNotes();
+        dismissOnSmallScreen();
+    }
 
     function goToJournals() {
         void openJournals();
@@ -141,7 +147,13 @@
     // one whose title is not a date has no day to be listed under. Counted the
     // same way here so the badge and the page cannot disagree.
     let journalDayCount = $derived(journalEntries($documents).length);
-    let notes = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'note'));
+    // Only the notes the user pinned are listed here, in the order the Notes
+    // index uses; every note is one click away there, and its count is on
+    // the Index entry below.
+    let pinned = $derived(pinnedNotes($documents));
+    let noteCount = $derived(
+        $documents.filter((d: DocumentSummary) => d.doc_type === 'note').length,
+    );
 
     // Search runs in SQL over an FTS index of titles and bodies, so it finds
     // what the user wrote, not just what they named it, and covers journals as
@@ -182,35 +194,8 @@
         dismissOnSmallScreen();
     }
 
-    let createError = $state<string | null>(null);
-
-    async function createDocument() {
-        if (!newDocTitle.trim()) return;
-
-        createError = null;
-        let doc;
-        try {
-            doc = await createNote(newDocTitle.trim());
-        } catch (error) {
-            // Keep the dialog open with what was typed still in it. Closing
-            // regardless discarded the title and said nothing went wrong.
-            console.error('Failed to create document:', error);
-            createError = 'Could not create this note.';
-            return;
-        }
-        closeModal();
-        await openDocument(doc.id);
-    }
-
-    function closeModal() {
-        newDocTitle = '';
-        createError = null;
-        showModal = false;
-    }
-
     let openMenuId = $state<string | null>(null);
     let renameDoc = $state<DocumentSummary | null>(null);
-    let renameTitle = $state('');
     let deleteDoc = $state<DocumentSummary | null>(null);
 
     function toggleMenu(e: MouseEvent, docId: string) {
@@ -227,34 +212,7 @@
 
     function startRename(doc: DocumentSummary) {
         renameDoc = doc;
-        renameTitle = doc.title;
         openMenuId = null;
-    }
-
-    function closeRenameModal() {
-        renameDoc = null;
-        renameTitle = '';
-        renameError = null;
-    }
-
-    let renameError = $state<string | null>(null);
-
-    async function confirmRename() {
-        if (!renameDoc || !renameTitle.trim()) return;
-        const docId = renameDoc.id;
-        const title = renameTitle.trim();
-
-        renameError = null;
-        try {
-            await renameDocument(docId, title);
-        } catch (err) {
-            // Closing in a `finally` threw the edit away on failure and left
-            // the user believing the rename had worked.
-            console.error('[Sidebar] Failed to rename document:', err);
-            renameError = 'Could not rename this note.';
-            return;
-        }
-        closeRenameModal();
     }
 
     function startDelete(doc: DocumentSummary) {
@@ -262,37 +220,13 @@
         openMenuId = null;
     }
 
-    function closeDeleteModal() {
-        deleteDoc = null;
-        deleteError = null;
-    }
-
-    let deleteError = $state<string | null>(null);
-
-    async function confirmDelete() {
-        if (!deleteDoc) return;
-        const docId = deleteDoc.id;
-        const wasOpen = currentDocId === docId;
-
-        // Nothing is cleared until the delete has actually succeeded. Clearing
-        // the open document first left the editor on a permanent "Loading..."
-        // with no way back whenever the delete failed, and whenever the note
-        // deleted was the last one.
-        deleteError = null;
+    async function togglePin(doc: DocumentSummary) {
+        openMenuId = null;
         try {
-            await deleteDocumentAction(docId);
+            await setPinned(doc.id, !doc.pinned);
         } catch (err) {
-            console.error('[Sidebar] Failed to delete document:', err);
-            deleteError = 'Could not delete this note.';
-            return;
-        }
-
-        closeDeleteModal();
-        if (wasOpen) {
-            const nextNote = notes.find((d: DocumentSummary) => d.id !== docId);
-            // No note left to fall back to, so go to the entry point, which
-            // opens today's journal.
-            await (nextNote ? openDocument(nextNote.id) : openHome());
+            console.error('[Sidebar] Failed to change the pin:', err);
+            toasts.error(doc.pinned ? 'Could not unpin this note' : 'Could not pin this note');
         }
     }
 
@@ -417,22 +351,58 @@
 
                 <div class="sidebar-section">
                     <h3>
-                        Notes
-                        <button class="add-doc-btn" onclick={() => (showModal = true)}>+</button>
+                        Pinned notes
+                        <button
+                            class="add-doc-btn"
+                            onclick={() => (showModal = true)}
+                            title="New note"
+                            aria-label="New note">+</button
+                        >
                     </h3>
-                    <DocumentList
-                        documents={notes}
-                        {currentDocId}
-                        {openMenuId}
-                        onOpen={handleDocClick}
-                        onToggleMenu={toggleMenu}
-                        onRename={startRename}
-                        onDelete={startDelete}
-                    />
+                    {#if pinned.length > 0}
+                        <DocumentList
+                            documents={pinned}
+                            {currentDocId}
+                            {openMenuId}
+                            onOpen={handleDocClick}
+                            onToggleMenu={toggleMenu}
+                            onRename={startRename}
+                            onDelete={startDelete}
+                            onTogglePin={togglePin}
+                        />
+                    {:else}
+                        <!-- Where everyone starts after updating, since no note
+                             was pinned before pins existed. It has to say where
+                             the notes that used to be listed here went. -->
+                        <p class="pinned-empty">
+                            Pin a note to keep it here. All your notes are in
+                            <button class="pinned-empty-link" onclick={goToNotes}>Notes</button>.
+                        </p>
+                    {/if}
                 </div>
 
                 <div class="sidebar-section">
                     <h3>Index</h3>
+                    <button class="nav-item" class:active={onNotesPage} onclick={goToNotes}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
+                            />
+                        </svg>
+                        <span class="nav-label">Notes</span>
+                        {#if noteCount > 0}
+                            <span class="nav-count">{noteCount}</span>
+                        {/if}
+                    </button>
                     <!-- The calendar above shows one month; this is the whole
                          run of them, which is the only way to see how far back
                          the journal goes. -->
@@ -560,60 +530,18 @@
 {/if}
 
 {#if showModal}
-    <Modal title="New Note" onClose={closeModal}>
-        <input
-            type="text"
-            bind:value={newDocTitle}
-            placeholder="Enter file name..."
-            class="modal-input"
-            onkeydown={(e) => e.key === 'Enter' && createDocument()}
-        />
-        {#if createError}
-            <p class="modal-error">{createError}</p>
-        {/if}
-        {#snippet actions()}
-            <button class="modal-btn" onclick={createDocument}>OK</button>
-        {/snippet}
-    </Modal>
+    <!-- Started from the pinned list, so it starts pinned: what is added
+         to a list lands in it. The dialog shows the choice, and it can be
+         unticked. -->
+    <NewNoteDialog pinned onClose={() => (showModal = false)} />
 {/if}
 
 {#if renameDoc}
-    <Modal title="Rename" onClose={closeRenameModal}>
-        <input
-            type="text"
-            bind:value={renameTitle}
-            placeholder="Enter file name..."
-            class="modal-input"
-            onkeydown={(e) => e.key === 'Enter' && confirmRename()}
-        />
-        {#if renameError}
-            <p class="modal-error">{renameError}</p>
-        {/if}
-        {#snippet actions()}
-            <button class="modal-btn secondary" data-secondary onclick={closeRenameModal}>
-                Cancel
-            </button>
-            <button class="modal-btn" onclick={confirmRename}>Rename</button>
-        {/snippet}
-    </Modal>
+    <RenameNoteDialog doc={renameDoc} onClose={() => (renameDoc = null)} />
 {/if}
 
 {#if deleteDoc}
-    <Modal title={`Delete "${deleteDoc.title}"?`} onClose={closeDeleteModal}>
-        <p class="modal-warning">
-            This can't be undone. If this note has been synchronized to other devices, it will be
-            deleted there too.
-        </p>
-        {#if deleteError}
-            <p class="modal-error">{deleteError}</p>
-        {/if}
-        {#snippet actions()}
-            <button class="modal-btn secondary" data-secondary onclick={closeDeleteModal}>
-                Cancel
-            </button>
-            <button class="modal-btn danger" onclick={confirmDelete}>Delete</button>
-        {/snippet}
-    </Modal>
+    <DeleteNoteDialog doc={deleteDoc} onClose={() => (deleteDoc = null)} />
 {/if}
 
 {#if showAbout}
@@ -873,6 +801,27 @@
         color: var(--text-primary);
     }
 
+    .pinned-empty {
+        margin: 0;
+        padding: 4px 8px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-muted);
+    }
+
+    .pinned-empty-link {
+        padding: 0;
+        border: none;
+        background: none;
+        color: var(--accent-color);
+        font: inherit;
+        cursor: pointer;
+    }
+
+    .pinned-empty-link:hover {
+        text-decoration: underline;
+    }
+
     /* ── Sidebar footer ── */
     /* Pinned so the "Linked from" bar under the editor can match it. */
     .sidebar-footer {
@@ -929,67 +878,6 @@
     .settings-btn:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
-    }
-
-    /* ── Modals ── */
-    .modal-input {
-        width: 100%;
-        padding: 8px 12px;
-        border: 1px solid var(--border-light);
-        border-radius: 4px;
-        font-size: 14px;
-        box-sizing: border-box;
-        background: var(--bg-secondary);
-        color: var(--text-primary);
-    }
-
-    .modal-input::placeholder {
-        color: var(--text-muted);
-    }
-
-    .modal-error {
-        margin: 0 0 12px 0;
-        font-size: 13px;
-        color: var(--status-error);
-    }
-
-    .modal-warning {
-        margin: 0 0 4px 0;
-        font-size: 13px;
-        color: var(--text-secondary);
-        line-height: 1.4;
-    }
-
-    .modal-btn {
-        padding: 6px 16px;
-        background: var(--btn-primary-bg);
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-    }
-
-    .modal-btn:hover {
-        background: var(--btn-primary-hover);
-    }
-
-    .modal-btn.secondary {
-        background: transparent;
-        color: var(--text-primary);
-        border: 1px solid var(--border-color);
-    }
-
-    .modal-btn.secondary:hover {
-        background: var(--bg-hover);
-    }
-
-    .modal-btn.danger {
-        background: #ef4444;
-    }
-
-    .modal-btn.danger:hover {
-        background: #dc2626;
     }
 
     /* ── Calendar ── */

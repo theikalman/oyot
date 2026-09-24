@@ -473,6 +473,27 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[test]
+    fn carries_which_notes_are_pinned() {
+        let dir = scratch();
+        let db = library();
+        add_document(&db, "pinned", b"state");
+        add_document(&db, "plain", b"state");
+        crate::commands::documents::set_pinned(&db, "pinned", true, 700).unwrap();
+        let destination = dir.join("backup.zip");
+        write_backup(&db, &dir, &Preferences::default(), 0, &destination).unwrap();
+
+        let reader = BackupReader::open(&destination).unwrap();
+        let pin = |id: &str| {
+            let doc = reader.documents().iter().find(|d| d.id == id).unwrap();
+            (doc.pinned, doc.pinned_updated_at)
+        };
+        assert_eq!(pin("pinned"), (true, Some(700)));
+        assert_eq!(pin("plain"), (false, None));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     // The identity row holds this device's signing key. A backup is a file
     // that is going to end up in someone's cloud storage, and a restored
     // device is a new device (ADR 0024, decision 2).

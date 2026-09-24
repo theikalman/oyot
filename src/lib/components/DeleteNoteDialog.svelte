@@ -1,0 +1,112 @@
+<script lang="ts">
+    import { get } from 'svelte/store';
+    import { page } from '$app/state';
+    import type { DocumentSummary } from '../types';
+    import { appStore } from '../stores/app';
+    import { deleteDocument } from '../services/documentActions';
+    import { openDocument, openHome } from '../services/navigation';
+    import { pinnedNotes } from '../notes/noteIndex';
+    import Modal from './Modal.svelte';
+
+    interface Props {
+        doc: DocumentSummary;
+        onClose: () => void;
+    }
+
+    let { doc, onClose }: Props = $props();
+
+    let error = $state<string | null>(null);
+
+    async function confirm() {
+        const docId = doc.id;
+        // Only a note on screen needs somewhere else to go afterwards. The
+        // store's open document is not the question: it stays set while the
+        // user is on an index page, and deleting from the Notes page must not
+        // throw them into some other note.
+        const wasOpen = page.route.id === '/doc/[id]' && page.params.id === docId;
+
+        // Nothing is cleared until the delete has actually succeeded. Clearing
+        // the open document first left the editor on a permanent "Loading..."
+        // with no way back whenever the delete failed, and whenever the note
+        // deleted was the last one.
+        error = null;
+        try {
+            await deleteDocument(docId);
+        } catch (err) {
+            console.error('[notes] Failed to delete document:', err);
+            error = 'Could not delete this note.';
+            return;
+        }
+
+        onClose();
+        if (wasOpen) {
+            // The first pinned note, since that is the list in front of the
+            // user. With none, the entry point, which opens today's journal.
+            const nextNote = pinnedNotes(get(appStore).documents).find(
+                (d: DocumentSummary) => d.id !== docId,
+            );
+            await (nextNote ? openDocument(nextNote.id) : openHome());
+        }
+    }
+</script>
+
+<Modal title={`Delete "${doc.title}"?`} {onClose}>
+    <p class="modal-warning">
+        This can't be undone. If this note has been synchronized to other devices, it will be
+        deleted there too.
+    </p>
+    {#if error}
+        <p class="modal-error">{error}</p>
+    {/if}
+    {#snippet actions()}
+        <button class="modal-btn secondary" data-secondary onclick={onClose}>Cancel</button>
+        <button class="modal-btn danger" onclick={confirm}>Delete</button>
+    {/snippet}
+</Modal>
+
+<style>
+    .modal-error {
+        margin: 0 0 12px 0;
+        font-size: 13px;
+        color: var(--status-error);
+    }
+
+    .modal-warning {
+        margin: 0 0 4px 0;
+        font-size: 13px;
+        color: var(--text-secondary);
+        line-height: 1.4;
+    }
+
+    .modal-btn {
+        padding: 6px 16px;
+        background: var(--btn-primary-bg);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .modal-btn:hover {
+        background: var(--btn-primary-hover);
+    }
+
+    .modal-btn.secondary {
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+
+    .modal-btn.secondary:hover {
+        background: var(--bg-hover);
+    }
+
+    .modal-btn.danger {
+        background: #ef4444;
+    }
+
+    .modal-btn.danger:hover {
+        background: #dc2626;
+    }
+</style>

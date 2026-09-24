@@ -4,7 +4,7 @@ import { contentHashBase64 } from '$lib/sync/hash';
 
 // A DocumentRepository stand-in backed by real Y.Docs. Mirrors the semantics
 // the protocol relies on (deterministic update encoding, empty-update sentinel,
-// LWW rename, tombstones) without Tauri.
+// LWW rename and pin, tombstones) without Tauri.
 export class FakeRepo {
     docs = new Map<
         string,
@@ -16,6 +16,8 @@ export class FakeRepo {
             isDeleted: boolean;
             deletedAt: number | null;
             lifecycleUpdatedAt: number;
+            pinned: boolean;
+            pinnedUpdatedAt: number | null;
             ydoc: Y.Doc;
         }
     >();
@@ -31,6 +33,8 @@ export class FakeRepo {
             isDeleted: false,
             deletedAt: null,
             lifecycleUpdatedAt: 1,
+            pinned: false,
+            pinnedUpdatedAt: null,
             ydoc,
         });
     }
@@ -75,6 +79,8 @@ export class FakeRepo {
                 isDeleted: d.isDeleted,
                 deletedAt: d.deletedAt,
                 lifecycleUpdatedAt: d.lifecycleUpdatedAt,
+                pinned: d.pinned,
+                pinnedUpdatedAt: d.pinnedUpdatedAt,
                 contentHash: state.length <= 2 ? null : await contentHashBase64(state),
             });
         }
@@ -122,6 +128,9 @@ export class FakeRepo {
             isDeleted: false,
             deletedAt: null,
             lifecycleUpdatedAt: stamp,
+            // Only a new row takes the peer's pin, as ensure_document does.
+            pinned: entry.pinned ?? false,
+            pinnedUpdatedAt: entry.pinnedUpdatedAt ?? null,
             ydoc: new Y.Doc(),
         });
     }
@@ -139,6 +148,8 @@ export class FakeRepo {
             isDeleted: true,
             deletedAt: entry.deletedAt ?? stamp,
             lifecycleUpdatedAt: stamp,
+            pinned: false,
+            pinnedUpdatedAt: null,
             ydoc: new Y.Doc(),
         });
     }
@@ -148,6 +159,18 @@ export class FakeRepo {
         if (d && (d.titleUpdatedAt ?? 0) < titleUpdatedAt) {
             d.title = title;
             d.titleUpdatedAt = titleUpdatedAt;
+        }
+    }
+
+    // Mirrors apply_pin_if_newer: last writer wins on the stamp, and a tie
+    // goes to pinned.
+    async applyPin(id: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void> {
+        const d = this.docs.get(id);
+        if (!d) return;
+        const ours = d.pinnedUpdatedAt ?? 0;
+        if (ours < pinnedUpdatedAt || (ours === pinnedUpdatedAt && pinned && !d.pinned)) {
+            d.pinned = pinned;
+            d.pinnedUpdatedAt = pinnedUpdatedAt;
         }
     }
 

@@ -632,6 +632,8 @@ fn preview_of(
                 is_deleted: doc.is_deleted,
                 deleted_at: doc.deleted_at,
                 lifecycle_updated_at: doc.lifecycle_updated_at,
+                pinned: doc.pinned,
+                pinned_updated_at: doc.pinned_updated_at,
                 content_hash,
             })
         })

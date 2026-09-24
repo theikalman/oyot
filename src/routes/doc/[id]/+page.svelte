@@ -4,6 +4,7 @@
     import { loadDocument } from '$lib/services/documents';
     import Editor from '$lib/editor/Editor.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
+    import PinToggle from '$lib/components/PinToggle.svelte';
 
     let activeDocument = $derived($currentDocument);
 
@@ -49,6 +50,15 @@
 </script>
 
 <WorkspaceShell title={activeDocument?.title ?? null}>
+    <!-- Reading a note is when deciding to keep it at hand usually happens.
+         Only a note: a journal is reached by its day, and nothing lists a
+         pinned journal. The pin is kept current on the open document by
+         every path that changes it, a peer's included. -->
+    {#snippet actions()}
+        {#if activeDocument?.doc_type === 'note'}
+            <PinToggle docId={activeDocument.id} pinned={activeDocument.pinned} />
+        {/if}
+    {/snippet}
     {#if activeDocument}
         <Editor {focusTodo} />
     {:else if loadFailed}

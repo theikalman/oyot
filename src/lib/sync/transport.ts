@@ -168,6 +168,9 @@ export function broadcastLocalUpdate(docId: string, update: string): void {
 
 // Also the revival signal: a peer holding a tombstone for this id clears it
 // when `lifecycleUpdatedAt` is newer than the stamp on its own tombstone.
+//
+// The pin travels with it, so a note started as pinned arrives pinned rather
+// than needing a second message that could be handled before this one.
 export function broadcastDocCreated(entry: {
     id: string;
     docType: string;
@@ -175,6 +178,8 @@ export function broadcastDocCreated(entry: {
     titleUpdatedAt: number;
     createdAt: number;
     lifecycleUpdatedAt: number;
+    pinned?: boolean;
+    pinnedUpdatedAt?: number | null;
 }): void {
     broadcast({
         t: 'doc-created',
@@ -187,6 +192,8 @@ export function broadcastDocCreated(entry: {
             isDeleted: false,
             deletedAt: null,
             lifecycleUpdatedAt: entry.lifecycleUpdatedAt,
+            pinned: entry.pinned ?? false,
+            pinnedUpdatedAt: entry.pinnedUpdatedAt ?? null,
             contentHash: null,
         },
     });
@@ -194,6 +201,10 @@ export function broadcastDocCreated(entry: {
 
 export function broadcastDocRenamed(docId: string, title: string, titleUpdatedAt: number): void {
     broadcast({ t: 'doc-renamed', id: docId, title, titleUpdatedAt });
+}
+
+export function broadcastDocPinned(docId: string, pinned: boolean, pinnedUpdatedAt: number): void {
+    broadcast({ t: 'doc-pinned', id: docId, pinned, pinnedUpdatedAt });
 }
 
 export function broadcastDocDeleted(docId: string, deletedAt: number): void {

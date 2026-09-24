@@ -3,6 +3,7 @@ import {
     documentRepository,
     broadcastDocCreated,
     broadcastDocRenamed,
+    broadcastDocPinned,
     broadcastLocalUpdate,
 } from '$lib/sync';
 import { toManifestEntry, type RawSyncEntry } from '$lib/sync/DocumentRepository';
@@ -223,9 +224,12 @@ const announce: ImportAnnouncer = {
             titleUpdatedAt: entry.titleUpdatedAt,
             createdAt: entry.createdAt,
             lifecycleUpdatedAt: lifecycleStamp(entry),
+            pinned: entry.pinned,
+            pinnedUpdatedAt: entry.pinnedUpdatedAt,
         }),
     updated: (docId, state) => broadcastLocalUpdate(docId, state),
     renamed: (docId, title, titleUpdatedAt) => broadcastDocRenamed(docId, title, titleUpdatedAt),
+    pinned: (docId, pinned, pinnedUpdatedAt) => broadcastDocPinned(docId, pinned, pinnedUpdatedAt),
 };
 
 /**

@@ -77,6 +77,7 @@ describe('reconcile', () => {
         expect(reconcile(entry({ title: 'New', titleUpdatedAt: 11 }), local)).toEqual({
             kind: 'update',
             rename: true,
+            repin: false,
             pull: false,
         });
         expect(reconcile(entry({ title: 'Old', titleUpdatedAt: 9 }), local)).toEqual({
@@ -89,6 +90,7 @@ describe('reconcile', () => {
         expect(reconcile(entry({ contentHash: 'hash-b' }), local)).toEqual({
             kind: 'update',
             rename: false,
+            repin: false,
             pull: true,
         });
         expect(reconcile(entry({ contentHash: null }), local)).toMatchObject({ pull: true });
@@ -97,5 +99,46 @@ describe('reconcile', () => {
 
     it('does nothing for an identical document', () => {
         expect(reconcile(entry(), entry())).toEqual({ kind: 'up-to-date' });
+    });
+
+    // A pin is a register like the title: whichever side set it last, pinned
+    // or unpinned, is the answer.
+    it('takes a newer pin, and only a newer one', () => {
+        const local = entry({ pinned: true, pinnedUpdatedAt: 50 });
+        expect(reconcile(entry({ pinned: false, pinnedUpdatedAt: 60 }), local)).toEqual({
+            kind: 'update',
+            rename: false,
+            repin: true,
+            pull: false,
+        });
+        expect(reconcile(entry({ pinned: false, pinnedUpdatedAt: 40 }), local)).toEqual({
+            kind: 'up-to-date',
+        });
+    });
+
+    it('takes a pin on a note this device never pinned', () => {
+        expect(reconcile(entry({ pinned: true, pinnedUpdatedAt: 1 }), entry())).toMatchObject({
+            repin: true,
+        });
+    });
+
+    // Without a rule for a tie, two devices that set different pins at one
+    // stamp would each keep their own for good.
+    it('breaks a tie on the pin stamp in favour of pinned, from either side', () => {
+        const pinned = entry({ pinned: true, pinnedUpdatedAt: 50 });
+        const unpinned = entry({ pinned: false, pinnedUpdatedAt: 50 });
+        expect(reconcile(pinned, unpinned)).toMatchObject({ repin: true });
+        expect(reconcile(unpinned, pinned)).toEqual({ kind: 'up-to-date' });
+    });
+
+    // A peer still on a build from before pins sends no pin at all, which has
+    // to read as "never pinned" rather than as unpinning everything.
+    it('changes no pin for a manifest that carries none', () => {
+        const old = entry();
+        delete old.pinned;
+        delete old.pinnedUpdatedAt;
+        expect(reconcile(old, entry({ pinned: true, pinnedUpdatedAt: 50 }))).toEqual({
+            kind: 'up-to-date',
+        });
     });
 });

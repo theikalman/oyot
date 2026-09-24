@@ -39,6 +39,11 @@ export function openTodos(): Promise<void> {
     return goto(resolve('/todos'));
 }
 
+// The notes index: every note, pinned or not.
+export function openNotes(): Promise<void> {
+    return goto(resolve('/notes'));
+}
+
 // The journal index: every day the user has a journal for.
 export function openJournals(): Promise<void> {
     return goto(resolve('/journals'));
