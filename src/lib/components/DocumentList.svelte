@@ -164,6 +164,10 @@
         color: var(--accent-color);
     }
 
+    /* Always shown. It used to appear only while the pointer was over the
+       row, and a touch screen has no pointer to hover with: on a phone the
+       menu was an empty strip at the end of each row that only a lucky tap
+       found. */
     .doc-menu-btn {
         flex-shrink: 0;
         display: flex;
@@ -177,14 +181,6 @@
         color: var(--text-secondary);
         border-radius: 4px;
         cursor: pointer;
-        opacity: 0;
-    }
-
-    /* Revealed on hover or keyboard focus. Without these the button is
-       permanently at opacity 0 and the row menu is unreachable. */
-    .doc-item:hover .doc-menu-btn,
-    .doc-menu-btn:focus-visible {
-        opacity: 1;
     }
 
     .doc-menu-btn:hover {
