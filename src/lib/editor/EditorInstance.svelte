@@ -172,7 +172,10 @@
             // it. Nothing runs in between that a reader could act on.
             editable: true,
         });
+        // Opened for editing, which only a note just created is: the caret
+        // goes straight in, so writing starts without a click.
         if (!editable) ed.setEditable(false);
+        else placeCaretIfOnScreen(ed);
 
         ed.view.dom.addEventListener('click', handleImageClick);
 
@@ -289,6 +292,10 @@
         const ed = editor;
         const on = editable;
         if (ed === null || ed.isDestroyed || ed.isEditable === on) return;
+        // The editor on screen is for a document being replaced, and the
+        // mode is the new document's. Its editor is built in that mode, and
+        // this one is about to go.
+        if (document?.id !== currentDocId) return;
 
         if (!on) {
             // A slash menu or picker left open would still insert when chosen,

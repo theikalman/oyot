@@ -4,6 +4,7 @@
     import { currentDocument, appStore } from '$lib/stores/app';
     import { loadDocument } from '$lib/services/documents';
     import { documentView } from '$lib/editor/documentView';
+    import { opensForEditing } from '$lib/editor/editorMode';
     import Editor from '$lib/editor/Editor.svelte';
     import EditToggle from '$lib/editor/EditToggle.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -34,12 +35,18 @@
     // has not arrived yet.
     let shownId = $state<string | null>(null);
 
-    // Whether the open document can be typed into. Every open starts out
+    // Which document, if any, is being edited. Every open starts out
     // reading, notes and journals alike, and Edit is a choice made each time,
-    // so looking something up cannot also change it by a stray tap. Held
-    // here, not in the editor, because this is what knows when a document is
+    // so looking something up cannot also change it by a stray tap. A note
+    // just created is the exception, see $lib/editor/editorMode. Held here,
+    // not in the editor, because this is what knows when a document is
     // opened, and opening is what sets it back.
-    let editing = $state(false);
+    //
+    // An id rather than a flag, so the choice belongs to one document. The
+    // one being left stays on screen until the next has loaded, and a flag
+    // set for a new note would have made that one editable in the meantime.
+    let editingId = $state<string | null>(null);
+    let editing = $derived(editingId !== null && editingId === activeDocument?.id);
 
     // Loads when the URL names a document that is not open. Only a change of
     // URL is a reason to, so the open document is read without subscribing to
@@ -50,7 +57,7 @@
         const id = routeId;
         loadFailed = false;
         if (!id) return;
-        editing = false;
+        editingId = opensForEditing(id) ? id : null;
         if (id === untrack(() => $currentDocument?.id)) {
             shownId = id;
             return;
@@ -91,7 +98,10 @@
     {/snippet}
     {#snippet tools()}
         {#if view === 'editor'}
-            <EditToggle {editing} onToggle={() => (editing = !editing)} />
+            <EditToggle
+                {editing}
+                onToggle={() => (editingId = editing ? null : (activeDocument?.id ?? null))}
+            />
         {/if}
     {/snippet}
     {#if view === 'editor'}
