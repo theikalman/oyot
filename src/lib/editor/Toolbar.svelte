@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Editor } from '@tiptap/core';
-    import { FORMATTING, HISTORY, type Tool } from './toolbarTools';
+    import { FORMATTING, HISTORY, TOOLS, pressedTools, type Tool } from './toolbarTools';
 
     interface Props {
         editor: Editor | null;
@@ -10,12 +10,53 @@
 
     // Undo and redo go last, as a group of their own.
     const groups = [...FORMATTING, HISTORY];
+
+    // Which tools the selection's formatting is using, shown pressed, and
+    // which could do nothing just now, shown disabled.
+    let pressed = $state.raw(new Set<string>());
+    let unavailable = $state.raw(new Set<string>());
+
+    // Read again after every change to the editor, the caret moving
+    // included, and a microtask late. Undo files what it undid on the redo
+    // stack only once the change has already been announced, so reading on
+    // the announcement would leave Redo disabled after an undo. It also
+    // makes one read of however many changes arrived together.
+    $effect(() => {
+        const ed = editor;
+        if (!ed) return;
+
+        let live = true;
+        let queued = false;
+        const read = () => {
+            queued = false;
+            if (!live || ed.isDestroyed) return;
+            pressed = pressedTools(ed.state);
+            unavailable = new Set(
+                TOOLS.filter((tool) => tool.canRun?.(ed) === false).map((tool) => tool.id),
+            );
+        };
+        const schedule = () => {
+            if (queued) return;
+            queued = true;
+            queueMicrotask(read);
+        };
+
+        read();
+        ed.on('transaction', schedule);
+        return () => {
+            live = false;
+            ed.off('transaction', schedule);
+        };
+    });
 </script>
 
 {#snippet button(tool: Tool)}
     <button
         type="button"
         class="tool"
+        class:pressed={pressed.has(tool.id)}
+        aria-pressed={tool.toggles ? pressed.has(tool.id) : undefined}
+        disabled={unavailable.has(tool.id)}
         title={tool.label}
         aria-label={tool.label}
         onclick={() => editor && tool.run(editor)}
@@ -88,9 +129,26 @@
             color 0.15s;
     }
 
-    .tool:hover {
+    .tool:hover:enabled {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    /* On where the caret is: tinted the way the sidebar marks the page that
+       is open. */
+    .tool.pressed {
+        background: var(--accent-bg);
+        color: var(--accent-color);
+    }
+
+    .tool.pressed:hover:enabled {
+        background: var(--accent-bg-hover);
+        color: var(--accent-color);
+    }
+
+    .tool:disabled {
+        cursor: default;
+        opacity: 0.35;
     }
 
     .tool:focus-visible {
