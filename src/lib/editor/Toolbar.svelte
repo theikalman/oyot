@@ -8,8 +8,30 @@
 
     let { editor }: Props = $props();
 
-    // Undo and redo go last, as a group of their own.
-    const groups = [...FORMATTING, HISTORY];
+    // Whether the formatting tools run on past either end of their strip,
+    // which is then faded on that side to say there is more to scroll to.
+    let strip = $state<HTMLDivElement | null>(null);
+    let moreBefore = $state(false);
+    let moreAfter = $state(false);
+
+    function measure() {
+        if (!strip) return;
+        const { scrollLeft, clientWidth, scrollWidth } = strip;
+        moreBefore = scrollLeft > 1;
+        moreAfter = scrollLeft + clientWidth < scrollWidth - 1;
+    }
+
+    // The strip changes size with the window, and its buttons with the
+    // kind of pointer, either of which can bring tools into view or put
+    // them out of it without a scroll.
+    $effect(() => {
+        const el = strip;
+        if (!el) return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(el);
+        for (const child of el.children) observer.observe(child);
+        return () => observer.disconnect();
+    });
 
     // Which tools the selection's formatting is using, shown pressed, and
     // which could do nothing just now, shown disabled.
@@ -73,44 +95,96 @@
     </button>
 {/snippet}
 
+<!-- Undo and redo stay at the end of the row whatever the width. Where
+     there is not room for everything, it is the formatting tools that
+     scroll, so going back a step never needs a scroll to reach. -->
 <div class="toolbar" role="toolbar" aria-label="Formatting">
-    {#each groups as group, i (i)}
-        {#if i > 0}
-            <span class="separator" aria-hidden="true"></span>
-        {/if}
-        {#each group as tool (tool.id)}
-            {@render button(tool)}
+    <div
+        class="formatting"
+        class:more-before={moreBefore}
+        class:more-after={moreAfter}
+        bind:this={strip}
+        onscroll={measure}
+    >
+        {#each FORMATTING as group, i (i)}
+            {#if i > 0}
+                <span class="separator" aria-hidden="true"></span>
+            {/if}
+            {#each group as tool (tool.id)}
+                {@render button(tool)}
+            {/each}
         {/each}
+    </div>
+    <span class="separator" aria-hidden="true"></span>
+    {#each HISTORY as tool (tool.id)}
+        {@render button(tool)}
     {/each}
 </div>
 
 <style>
     .toolbar {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         gap: 2px;
         padding: 4px 12px;
         background: var(--bg-primary);
         border-bottom: 1px solid var(--border-color);
-        /* Keep every control on a single row and scroll sideways when the
-           screen is too narrow (mobile / tablet) instead of wrapping. */
-        flex: 0 0 auto;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        overscroll-behavior-x: contain;
         /* A swipe that starts on a button pans the row rather than starting a
            text selection on the button's label. */
         -webkit-user-select: none;
         user-select: none;
+    }
+
+    /* Keep every control on a single row and scroll sideways when the
+       screen is too narrow (mobile / tablet) instead of wrapping. As wide
+       as its tools and no wider, so on a wide screen undo and redo sit
+       right after them rather than at the far edge. */
+    .formatting {
+        flex: 0 1 auto;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: inherit;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
         /* Hide the scrollbar so it never adds height to the toolbar row. */
         scrollbar-width: none;
         -ms-overflow-style: none;
+        --fade-before: 0px;
+        --fade-after: 0px;
     }
 
-    .toolbar::-webkit-scrollbar {
+    .formatting::-webkit-scrollbar {
         display: none;
+    }
+
+    .formatting.more-before {
+        --fade-before: 24px;
+    }
+
+    .formatting.more-after {
+        --fade-after: 24px;
+    }
+
+    .formatting.more-before,
+    .formatting.more-after {
+        -webkit-mask-image: linear-gradient(
+            to right,
+            transparent,
+            #000 var(--fade-before),
+            #000 calc(100% - var(--fade-after)),
+            transparent
+        );
+        mask-image: linear-gradient(
+            to right,
+            transparent,
+            #000 var(--fade-before),
+            #000 calc(100% - var(--fade-after)),
+            transparent
+        );
     }
 
     /* Only the icon shows until the pointer is on it, as the sidebar's own
