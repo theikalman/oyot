@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openNextForEditing, opensForEditing } from './editorMode';
+import {
+    editShortcutLabel,
+    isEditShortcut,
+    modIsCommand,
+    openNextForEditing,
+    opensForEditing,
+} from './editorMode';
 
 describe('opensForEditing', () => {
     // The request is module state; asking about anything clears it.
@@ -45,5 +51,74 @@ describe('opensForEditing', () => {
         openNextForEditing('b');
 
         expect(opensForEditing('b')).toBe(true);
+    });
+});
+
+describe('isEditShortcut', () => {
+    const press = (
+        key: string,
+        mods: Partial<Record<'meta' | 'ctrl' | 'shift' | 'alt', boolean>>,
+    ) => ({
+        key,
+        metaKey: !!mods.meta,
+        ctrlKey: !!mods.ctrl,
+        shiftKey: !!mods.shift,
+        altKey: !!mods.alt,
+    });
+
+    it('is Command-Shift-E on an Apple device', () => {
+        expect(isEditShortcut(press('E', { meta: true, shift: true }), true)).toBe(true);
+        expect(isEditShortcut(press('E', { ctrl: true, shift: true }), true)).toBe(false);
+    });
+
+    it('is Control-Shift-E everywhere else', () => {
+        expect(isEditShortcut(press('E', { ctrl: true, shift: true }), false)).toBe(true);
+        expect(isEditShortcut(press('E', { meta: true, shift: true }), false)).toBe(false);
+    });
+
+    // Some browsers report the letter in lower case with Command held.
+    it('takes the letter in either case', () => {
+        expect(isEditShortcut(press('e', { meta: true, shift: true }), true)).toBe(true);
+    });
+
+    // Mod-E is the editor's own, for inline code.
+    it('leaves Mod-E to the editor', () => {
+        expect(isEditShortcut(press('e', { meta: true }), true)).toBe(false);
+        expect(isEditShortcut(press('e', { ctrl: true }), false)).toBe(false);
+    });
+
+    it('is not some other chord on the same key', () => {
+        expect(isEditShortcut(press('E', { meta: true, shift: true, alt: true }), true)).toBe(
+            false,
+        );
+        expect(isEditShortcut(press('E', { meta: true, ctrl: true, shift: true }), true)).toBe(
+            false,
+        );
+        expect(isEditShortcut(press('E', { shift: true }), true)).toBe(false);
+    });
+
+    it('is not another key', () => {
+        expect(isEditShortcut(press('R', { meta: true, shift: true }), true)).toBe(false);
+    });
+});
+
+describe('modIsCommand', () => {
+    it('takes Mod to be Command on Apple devices', () => {
+        expect(modIsCommand('MacIntel')).toBe(true);
+        expect(modIsCommand('iPhone')).toBe(true);
+        expect(modIsCommand('iPad')).toBe(true);
+    });
+
+    it('takes Mod to be Control on everything else', () => {
+        expect(modIsCommand('Win32')).toBe(false);
+        expect(modIsCommand('Linux x86_64')).toBe(false);
+        expect(modIsCommand('Linux armv81')).toBe(false);
+    });
+});
+
+describe('editShortcutLabel', () => {
+    it('spells the shortcut the way the keyboard does', () => {
+        expect(editShortcutLabel(true)).toBe('⌘⇧E');
+        expect(editShortcutLabel(false)).toBe('Ctrl+Shift+E');
     });
 });

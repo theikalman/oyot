@@ -27,3 +27,32 @@ export function opensForEditing(docId: string): boolean {
     editOnNextOpen = null;
     return edit;
 }
+
+// The keyboard shortcut for the Edit button: Mod-Shift-E, from anywhere on a
+// document's page, both ways. Not Mod-E, which the editor already gives to
+// inline code.
+
+/**
+ * Whether "Mod" means Command here, as it does on Apple devices, rather than
+ * Control. The test prosemirror-keymap makes, so this shortcut and the
+ * editor's own agree about which key is meant.
+ */
+export function modIsCommand(
+    platform: string = typeof navigator !== 'undefined' ? navigator.platform : '',
+): boolean {
+    return /Mac|iP(hone|[oa]d)/.test(platform);
+}
+
+type Keys = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>;
+
+/** Whether a key press is the shortcut that switches between reading and editing. */
+export function isEditShortcut(event: Keys, command: boolean = modIsCommand()): boolean {
+    const mod = command ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    // Either case: with Shift held some browsers report the capital.
+    return mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'e';
+}
+
+/** The shortcut the way the keyboard in front of the user labels it. */
+export function editShortcutLabel(command: boolean = modIsCommand()): string {
+    return command ? '⌘⇧E' : 'Ctrl+Shift+E';
+}

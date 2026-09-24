@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { editShortcutLabel } from './editorMode';
+
     // Switches the open document between reading and editing. It reads
     // "Edit" while reading and "Done" while editing: what pressing it does,
     // in the words a phone's own apps use for the same switch. Done is in the
@@ -10,8 +12,11 @@
 
     let { editing, onToggle }: Props = $props();
 
+    const shortcut = editShortcutLabel();
     let label = $derived(editing ? 'Done' : 'Edit');
-    let hint = $derived(editing ? 'Stop editing and go back to reading' : 'Edit this page');
+    let hint = $derived(
+        `${editing ? 'Stop editing and go back to reading' : 'Edit this page'} (${shortcut})`,
+    );
 </script>
 
 <!-- Named by aria-label as well as by its text, because on a phone the text

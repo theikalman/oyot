@@ -4,7 +4,7 @@
     import { currentDocument, appStore } from '$lib/stores/app';
     import { loadDocument } from '$lib/services/documents';
     import { documentView } from '$lib/editor/documentView';
-    import { opensForEditing } from '$lib/editor/editorMode';
+    import { isEditShortcut, opensForEditing } from '$lib/editor/editorMode';
     import Editor from '$lib/editor/Editor.svelte';
     import EditToggle from '$lib/editor/EditToggle.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -84,7 +84,22 @@
     });
 
     let view = $derived(documentView({ routeId, openId: activeDocument?.id, shownId, loadFailed }));
+
+    function toggleEditing() {
+        editingId = editing ? null : (activeDocument?.id ?? null);
+    }
+
+    // The Edit button's shortcut, taken wherever focus is on the page, so it
+    // works from the document while editing and from nowhere in particular
+    // while reading, when the document cannot take focus.
+    function handleKeydown(event: KeyboardEvent) {
+        if (view !== 'editor' || !isEditShortcut(event)) return;
+        event.preventDefault();
+        toggleEditing();
+    }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <WorkspaceShell title={activeDocument?.title ?? null}>
     <!-- Reading a note is when deciding to keep it at hand usually happens.
@@ -98,10 +113,7 @@
     {/snippet}
     {#snippet tools()}
         {#if view === 'editor'}
-            <EditToggle
-                {editing}
-                onToggle={() => (editingId = editing ? null : (activeDocument?.id ?? null))}
-            />
+            <EditToggle {editing} onToggle={toggleEditing} />
         {/if}
     {/snippet}
     {#if view === 'editor'}
