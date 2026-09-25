@@ -121,6 +121,8 @@
 
         cancelFocus?.();
         if (editor) {
+            // A picker belongs to the editor it inserts into; see onDestroy.
+            closeAnyPicker();
             editor.destroy();
             editor = null;
         }
@@ -394,6 +396,13 @@
 
         if (editor) {
             editor.view.dom.removeEventListener('click', handleImageClick);
+            // The document-link and tag pickers are mounted on the page, not
+            // in the editor, so destroying the editor left one open. On the
+            // next page it still took every key typed there, into an editor
+            // that no longer existed. Leaving by the mouse closed it, since a
+            // click elsewhere does; leaving by the keyboard or the back button
+            // did not. The slash menu closes itself with the editor.
+            closeAnyPicker();
             editor.destroy();
         }
 
