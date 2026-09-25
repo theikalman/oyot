@@ -9,9 +9,10 @@
         monthGrid,
         monthLabel,
     } from '$lib/calendar/calendar';
+    import { dayMarks, type DayMark } from '$lib/calendar/dayMarks';
 
     interface Props {
-        /** Every journal, so a day can show whether it has an entry. */
+        /** Every journal, so a day can show whether it has an entry and a task still to do. */
         journals: DocumentSummary[];
         /** The title of the open journal, if one is open. */
         currentJournalTitle: string | null;
@@ -54,13 +55,12 @@
         return currentJournalTitle === journalTitleForDay(monthOf, day);
     }
 
-    // A dot marks a day that has something written in it, which is why this
-    // asks for content rather than merely for the row to exist: an empty
-    // journal is a day you have not written on.
-    function hasEntry(day: number | null): boolean {
-        if (day === null) return false;
-        const title = journalTitleForDay(monthOf, day);
-        return journals.some((d) => d.title === title && d.has_content);
+    // Worked out again whenever a journal changes, not for every cell drawn.
+    let marks = $derived(dayMarks(journals));
+
+    function markOf(day: number | null): DayMark | undefined {
+        if (day === null) return undefined;
+        return marks.get(journalTitleForDay(monthOf, day));
     }
 </script>
 
@@ -108,6 +108,7 @@
             <div class="cal-day-name">{d}</div>
         {/each}
         {#each monthGrid(monthOf) as day, i (i)}
+            {@const mark = markOf(day)}
             <button
                 class="cal-day"
                 class:empty={day === null}
@@ -116,8 +117,8 @@
                 onclick={() => pick(day)}
                 disabled={day === null}
             >
-                {#if hasEntry(day)}
-                    <span class="journal-dot"></span>
+                {#if mark}
+                    <span class="journal-dot" class:open-todos={mark === 'open-todos'}></span>
                 {/if}
                 {day ?? ''}
             </button>
@@ -227,6 +228,10 @@
         border-radius: 50%;
         background: #666;
         pointer-events: none;
+    }
+
+    .journal-dot.open-todos {
+        background: var(--todo-open);
     }
 
     .cal-day:hover:not(:disabled):not(.empty) {
