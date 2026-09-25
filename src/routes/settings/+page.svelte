@@ -14,6 +14,7 @@
     } from '$lib/backup';
     import { formatLastSync } from '$lib/stores/sync';
     import { toasts } from '$lib/services/toast';
+    import { openHelp } from '$lib/services/navigation';
     import { onMount } from 'svelte';
 
     let currentTheme = $derived($theme);
@@ -43,6 +44,10 @@
 
     function goToBackupSettings() {
         goto(resolve('/settings/backup'));
+    }
+
+    function goToHelp() {
+        void openHelp();
     }
 
     let backupStatus = $state<BackupStatus | null>(null);
@@ -211,6 +216,35 @@
                 </button>
             </div>
         </div>
+    </section>
+
+    <!-- Also at the bottom of the sidebar. Here as well because settings is
+         where people look for help, and on a phone the sidebar is hidden. -->
+    <section class="settings-section">
+        <h2 class="section-title">Help</h2>
+        <button class="section-card settings-link" onclick={goToHelp}>
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-label">Help & shortcuts</span>
+                    <span class="setting-desc">
+                        What the colors mean, every keyboard shortcut, and tips
+                    </span>
+                </div>
+                <svg
+                    class="chevron"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M9 18l6-6-6-6" />
+                </svg>
+            </div>
+        </button>
     </section>
 </div>
 

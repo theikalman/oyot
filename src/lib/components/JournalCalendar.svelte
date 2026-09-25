@@ -9,7 +9,8 @@
         monthGrid,
         monthLabel,
     } from '$lib/calendar/calendar';
-    import { dayMarks, type DayMark } from '$lib/calendar/dayMarks';
+    import { dayLabel, dayMarks, type DayMark } from '$lib/calendar/dayMarks';
+    import CalendarDay from './CalendarDay.svelte';
 
     interface Props {
         /** Every journal, so a day can show whether it has an entry and a task still to do. */
@@ -62,6 +63,14 @@
         if (day === null) return undefined;
         return marks.get(journalTitleForDay(monthOf, day));
     }
+
+    // What a screen reader hears for the day, which the number alone does
+    // not tell it: the date, whether it is today, and what the dot means.
+    function labelOf(day: number | null, mark: DayMark | undefined, isToday: boolean) {
+        if (day === null) return undefined;
+        const date = new Date(monthOf.getFullYear(), monthOf.getMonth(), day);
+        return dayLabel(date, { mark, today: isToday });
+    }
 </script>
 
 <div class="calendar">
@@ -104,24 +113,23 @@
         </button>
     </div>
     <div class="calendar-grid">
+        <!-- Hidden from screen readers, which hear each day's weekday in
+             its own label: read out, this row was seven letter pairs
+             before the first day. -->
         {#each DAY_NAMES as d (d)}
-            <div class="cal-day-name">{d}</div>
+            <div class="cal-day-name" aria-hidden="true">{d}</div>
         {/each}
         {#each monthGrid(monthOf) as day, i (i)}
             {@const mark = markOf(day)}
-            <button
-                class="cal-day"
-                class:empty={day === null}
-                class:today={isSameDay(monthOf, day, today)}
-                class:selected={isSelected(day)}
-                onclick={() => pick(day)}
-                disabled={day === null}
-            >
-                {#if mark}
-                    <span class="journal-dot" class:open-todos={mark === 'open-todos'}></span>
-                {/if}
-                {day ?? ''}
-            </button>
+            {@const isToday = isSameDay(monthOf, day, today)}
+            <CalendarDay
+                {day}
+                {mark}
+                today={isToday}
+                selected={isSelected(day)}
+                label={labelOf(day, mark, isToday)}
+                onPick={() => pick(day)}
+            />
         {/each}
     </div>
 </div>
@@ -202,64 +210,5 @@
         color: var(--text-muted);
         padding: 2px 0;
         font-weight: 600;
-    }
-
-    .cal-day {
-        aspect-ratio: 1;
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        color: var(--text-primary);
-        background: transparent;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background 0.1s;
-    }
-
-    /* The theme's secondary grey, which the sidebar's icons use too. A fixed
-       #666 stayed the same in dark mode, where it was too dark to find:
-       2.2:1 against today's cell, under the 3:1 a mark needs. */
-    .journal-dot {
-        position: absolute;
-        top: 3px;
-        left: 3px;
-        width: 4px;
-        height: 4px;
-        border-radius: 50%;
-        background: var(--text-secondary);
-        pointer-events: none;
-    }
-
-    .journal-dot.open-todos {
-        background: var(--todo-open);
-    }
-
-    .cal-day:hover:not(:disabled):not(.empty) {
-        background: var(--bg-hover);
-    }
-
-    .cal-day.today {
-        background: var(--accent-bg);
-        color: var(--accent-color);
-        font-weight: 700;
-    }
-
-    .cal-day.selected:not(.today) {
-        box-shadow: inset 0 0 0 1.5px var(--accent-color);
-    }
-
-    .cal-day.today.selected {
-        box-shadow: inset 0 0 0 2px var(--accent-color);
-    }
-
-    .cal-day.empty {
-        cursor: default;
-    }
-
-    .cal-day:disabled {
-        cursor: default;
     }
 </style>

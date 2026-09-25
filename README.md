@@ -37,6 +37,10 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Export.** Settings > Data writes every note out as a Markdown file, with
   the images they embed, in one zip. Nothing here is a format you can only
   read from inside Oyot.
+- **Help built in.** The ? at the bottom of the sidebar, Cmd/Ctrl+/ from
+  anywhere, or Settings > Help, says what the calendar's dots and the other
+  colors mean, lists every keyboard shortcut as your keyboard labels it, and
+  covers the rest worth knowing.
 - **Backup and restore.** Settings > Backup saves the whole library, images
   included, to one file wherever you choose, or to your Google Drive once you
   link an account (desktop), and imports one back. An import merges into what

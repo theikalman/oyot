@@ -137,6 +137,28 @@ describe('shortcutLabel', () => {
         expect(shortcutLabel('Mod-Alt-1', false)).toBe('Ctrl+Alt+1');
         expect(shortcutLabel('Mod-Shift-8', false)).toBe('Ctrl+Shift+8');
     });
+
+    it('names a key that is not a character by what is printed on it', () => {
+        expect(shortcutLabel('Tab', false)).toBe('Tab');
+        expect(shortcutLabel('Shift-Tab', false)).toBe('Shift+Tab');
+        expect(shortcutLabel('Shift-Tab', true)).toBe('⇧Tab');
+        expect(shortcutLabel('Escape', true)).toBe('Esc');
+        expect(shortcutLabel('ArrowUp', false)).toBe('↑');
+        expect(shortcutLabel('ArrowDown', true)).toBe('↓');
+    });
+
+    // An Apple keyboard's Return and Delete are everyone else's Enter and
+    // Backspace.
+    it('uses the Apple names for Enter and Backspace on an Apple device', () => {
+        expect(shortcutLabel('Shift-Enter', true)).toBe('⇧Return');
+        expect(shortcutLabel('Shift-Enter', false)).toBe('Shift+Enter');
+        expect(shortcutLabel('Backspace', true)).toBe('Delete');
+        expect(shortcutLabel('Backspace', false)).toBe('Backspace');
+    });
+
+    it('leaves a key that is a symbol as it is', () => {
+        expect(shortcutLabel('/', true)).toBe('/');
+    });
 });
 
 describe('editShortcutLabel', () => {

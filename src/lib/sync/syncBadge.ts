@@ -3,6 +3,17 @@ import type { RoomSyncPhase } from '$lib/stores/sync';
 /** What the badge is saying, which decides its colour. */
 export type SyncTone = 'synced' | 'syncing' | 'offline' | 'error';
 
+/**
+ * The colour of the badge's dot for each tone. Here rather than in the badge,
+ * so the help page's key to the colours uses the same ones.
+ */
+export const SYNC_TONE_COLORS: Record<SyncTone, string> = {
+    synced: 'var(--status-synced, #22c55e)',
+    syncing: 'var(--status-syncing, #eab308)',
+    error: 'var(--status-error, #ef4444)',
+    offline: 'var(--status-offline, #9ca3af)',
+};
+
 export interface BadgeInputs {
     /** How many peers are connected right now. */
     peers: number;

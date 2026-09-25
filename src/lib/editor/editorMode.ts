@@ -43,10 +43,11 @@ export function modIsCommand(
     return /Mac|iP(hone|[oa]d)/.test(platform);
 }
 
-type Keys = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>;
+/** The parts of a key press a shortcut is recognised by. */
+export type KeyPress = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>;
 
 /** Whether a key press is the shortcut that switches between reading and editing. */
-export function isEditShortcut(event: Keys, command: boolean = modIsCommand()): boolean {
+export function isEditShortcut(event: KeyPress, command: boolean = modIsCommand()): boolean {
     const mod = command ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     // Either case: with Shift held some browsers report the capital.
     return mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'e';
@@ -61,13 +62,36 @@ const APPLE_MODIFIERS: [name: string, symbol: string][] = [
 ];
 
 /**
+ * A key that is not a character, by the name printed on it. An Apple
+ * keyboard names two of them differently: its Enter says Return, and its
+ * Backspace says Delete.
+ */
+function keyName(key: string, command: boolean): string {
+    switch (key) {
+        case 'Enter':
+            return command ? 'Return' : 'Enter';
+        case 'Backspace':
+            return command ? 'Delete' : 'Backspace';
+        case 'Escape':
+            return 'Esc';
+        case 'ArrowUp':
+            return '↑';
+        case 'ArrowDown':
+            return '↓';
+        default:
+            // A letter is printed on its key as a capital.
+            return key.length === 1 ? key.toUpperCase() : key;
+    }
+}
+
+/**
  * A key binding in the editor's notation (`Mod-Shift-z`), the way the
  * keyboard in front of the user labels it: `⇧⌘Z` on an Apple device, in the
  * order its own menus use, and `Ctrl+Shift+Z` everywhere else.
  */
 export function shortcutLabel(keys: string, command: boolean = modIsCommand()): string {
     const parts = keys.split('-');
-    const key = parts.pop()!.toUpperCase();
+    const key = keyName(parts.pop()!, command);
     const held = new Set(parts);
     if (command) {
         const symbols = APPLE_MODIFIERS.filter(([name]) => held.has(name)).map(([, s]) => s);

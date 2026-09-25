@@ -9,6 +9,8 @@
     import { applyTheme } from '$lib/services/theme';
     import { startApp } from '$lib/services/startup';
     import { watchScheduledBackups } from '$lib/backup';
+    import { isHelpShortcut } from '$lib/help/helpShortcut';
+    import { openHelp } from '$lib/services/navigation';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import '../app.css';
 
@@ -52,6 +54,16 @@
         goto(resolve('/'));
     }
 
+    // The help page's shortcut, taken here because this layout is on screen
+    // whatever the route, settings included. Not while a dialog is open: it
+    // is something half done, and leaving the page would throw it away.
+    function handleKeydown(event: KeyboardEvent) {
+        if (!isHelpShortcut(event)) return;
+        event.preventDefault();
+        if (document.querySelector('[aria-modal="true"]')) return;
+        if (currentPath !== '/help') void openHelp();
+    }
+
     let pageTitle = $derived.by(() => {
         switch (currentPath) {
             case '/settings':
@@ -69,6 +81,8 @@
     let showHeader = $derived(currentPath.startsWith('/settings'));
     let canGoBack = $derived(currentPath !== '/settings');
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if showHeader}
     <header class="app-header">

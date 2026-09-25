@@ -10,8 +10,11 @@
 </script>
 
 <div class="modal-backdrop">
-    <div class="modal">
-        <h3>Pairing Request</h3>
+    <!-- Marked as a modal dialog like the app's others: a screen reader then
+         keeps to it, and the help shortcut leaves it be rather than leaving
+         the page, which would drop the request unanswered. -->
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pairing-request-title">
+        <h3 id="pairing-request-title">Pairing Request</h3>
         <p class="message">
             <strong>{displayName}</strong> wants to pair with this device.
         </p>

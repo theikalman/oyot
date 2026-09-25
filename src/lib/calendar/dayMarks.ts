@@ -8,6 +8,7 @@
 
 import { journalEntries, type JournalEntry } from '$lib/journals/journalIndex';
 import type { DocumentSummary } from '$lib/types';
+import { MONTH_NAMES, weekdayName } from './calendar';
 
 /**
  * What a day is marked with. A day with no mark has no journal, or one with
@@ -18,6 +19,31 @@ import type { DocumentSummary } from '$lib/types';
  *   `entry`, since it is the one that asks for the day to be opened again.
  */
 export type DayMark = 'entry' | 'open-todos';
+
+/**
+ * What each mark says about its day, in a few words: the tooltip on a marked
+ * day, and part of what a screen reader reads for it. The dot on its own
+ * says it only in colour.
+ */
+export const MARK_MEANINGS: Record<DayMark, string> = {
+    entry: 'Something written',
+    'open-todos': 'A task still to do',
+};
+
+/**
+ * A day of the calendar as a screen reader should read it: its date, whether
+ * it is today, and what its dot means, as in "Thursday 10 September, today,
+ * a task still to do". The number drawn on the day says none of that.
+ */
+export function dayLabel(date: Date, options: { mark?: DayMark; today?: boolean } = {}): string {
+    const parts = [`${weekdayName(date)} ${date.getDate()} ${MONTH_NAMES[date.getMonth()]}`];
+    if (options.today) parts.push('today');
+    if (options.mark) {
+        const meaning = MARK_MEANINGS[options.mark];
+        parts.push(meaning.charAt(0).toLowerCase() + meaning.slice(1));
+    }
+    return parts.join(', ');
+}
 
 function markFor(entry: JournalEntry): DayMark | null {
     // Asked first, and of the todos themselves rather than of `hasContent`:
