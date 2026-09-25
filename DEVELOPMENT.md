@@ -546,7 +546,8 @@ stops binding a listed key, when a toolbar shortcut is missing from the
 list or named differently, and when the slash menu's entries change. The
 calendar's key draws days with `CalendarDay`, so a new day mark shows up
 there without a second copy of its style, but it still needs a line saying
-what it means.
+what it means. It also needs its words in `MARK_MEANINGS`, the hover text and
+screen-reader label on a calendar day, which the type checker insists on.
 
 ## Tech Stack
 

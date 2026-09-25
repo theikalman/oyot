@@ -123,6 +123,10 @@
                 <CalendarLegend />
                 <ul class="points">
                     <li>
+                        Hold the pointer over a day with a dot, and it says what the dot means.
+                        Screen readers read out each day's date and what it holds.
+                    </li>
+                    <li>
                         Click any day to open its journal, which starts one if there is none yet.
                     </li>
                     <li>

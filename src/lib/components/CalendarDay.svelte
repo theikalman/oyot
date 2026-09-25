@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { DayMark } from '$lib/calendar/dayMarks';
+    import { MARK_MEANINGS, type DayMark } from '$lib/calendar/dayMarks';
 
     // One day of the journal calendar: its number, the dot that says what
     // the day holds, and whether it is today or the day open.
@@ -15,13 +15,18 @@
         /** The day whose journal is open. */
         selected?: boolean;
         /**
+         * What a screen reader calls the day, from `dayLabel`: its date and
+         * what it holds. Only for a day that can be pressed.
+         */
+        label?: string;
+        /**
          * Opens the day. Left out, the day is only a picture of one, the way
          * the help page shows it, with nothing about it to press.
          */
         onPick?: () => void;
     }
 
-    let { day, mark, today = false, selected = false, onPick }: Props = $props();
+    let { day, mark, today = false, selected = false, label, onPick }: Props = $props();
 </script>
 
 {#snippet face()}
@@ -32,6 +37,10 @@
 {/snippet}
 
 {#if onPick}
+    <!-- The dot says what the day holds only in colour. Hovering the day
+         says it in words, and a screen reader hears the date and the same
+         words rather than the bare number. The open journal's day is the
+         page on screen. A blank square is left out altogether. -->
     <button
         class="cal-day"
         class:empty={day === null}
@@ -39,6 +48,10 @@
         class:selected
         onclick={onPick}
         disabled={day === null}
+        title={mark ? MARK_MEANINGS[mark] : undefined}
+        aria-label={label}
+        aria-current={selected ? 'page' : undefined}
+        aria-hidden={day === null ? 'true' : undefined}
     >
         {@render face()}
     </button>

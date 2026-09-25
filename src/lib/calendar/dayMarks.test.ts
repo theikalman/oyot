@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dayMarks } from './dayMarks';
+import { dayLabel, dayMarks, MARK_MEANINGS } from './dayMarks';
 import type { DocumentSummary } from '$lib/types';
 
 function doc(
@@ -106,5 +106,35 @@ describe('dayMarks', () => {
 
         expect(dayMarks([open, done]).get('2026-09-14')).toBe('open-todos');
         expect(dayMarks([done, open]).get('2026-09-14')).toBe('open-todos');
+    });
+});
+
+describe('dayLabel', () => {
+    // 10 September 2026 is a Thursday.
+    const day = new Date(2026, 8, 10);
+
+    it('names the day by its date, not the bare number the calendar draws', () => {
+        expect(dayLabel(day)).toBe('Thursday 10 September');
+    });
+
+    it('says when the day is today', () => {
+        expect(dayLabel(day, { today: true })).toBe('Thursday 10 September, today');
+    });
+
+    it('says in words what the dot says in colour', () => {
+        expect(dayLabel(day, { mark: 'entry' })).toBe('Thursday 10 September, something written');
+        expect(dayLabel(day, { mark: 'open-todos', today: true })).toBe(
+            'Thursday 10 September, today, a task still to do',
+        );
+    });
+});
+
+describe('MARK_MEANINGS', () => {
+    // The hover text on a marked day, so it has to read as a label on its own.
+    it('puts every mark in words, starting with a capital', () => {
+        for (const meaning of Object.values(MARK_MEANINGS)) {
+            expect(meaning).toMatch(/^[A-Z]/);
+        }
+        expect(Object.keys(MARK_MEANINGS).sort()).toEqual(['entry', 'open-todos']);
     });
 });

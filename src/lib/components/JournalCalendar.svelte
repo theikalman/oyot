@@ -9,7 +9,7 @@
         monthGrid,
         monthLabel,
     } from '$lib/calendar/calendar';
-    import { dayMarks, type DayMark } from '$lib/calendar/dayMarks';
+    import { dayLabel, dayMarks, type DayMark } from '$lib/calendar/dayMarks';
     import CalendarDay from './CalendarDay.svelte';
 
     interface Props {
@@ -63,6 +63,14 @@
         if (day === null) return undefined;
         return marks.get(journalTitleForDay(monthOf, day));
     }
+
+    // What a screen reader hears for the day, which the number alone does
+    // not tell it: the date, whether it is today, and what the dot means.
+    function labelOf(day: number | null, mark: DayMark | undefined, isToday: boolean) {
+        if (day === null) return undefined;
+        const date = new Date(monthOf.getFullYear(), monthOf.getMonth(), day);
+        return dayLabel(date, { mark, today: isToday });
+    }
 </script>
 
 <div class="calendar">
@@ -105,15 +113,21 @@
         </button>
     </div>
     <div class="calendar-grid">
+        <!-- Hidden from screen readers, which hear each day's weekday in
+             its own label: read out, this row was seven letter pairs
+             before the first day. -->
         {#each DAY_NAMES as d (d)}
-            <div class="cal-day-name">{d}</div>
+            <div class="cal-day-name" aria-hidden="true">{d}</div>
         {/each}
         {#each monthGrid(monthOf) as day, i (i)}
+            {@const mark = markOf(day)}
+            {@const isToday = isSameDay(monthOf, day, today)}
             <CalendarDay
                 {day}
-                mark={markOf(day)}
-                today={isSameDay(monthOf, day, today)}
+                {mark}
+                today={isToday}
                 selected={isSelected(day)}
+                label={labelOf(day, mark, isToday)}
                 onPick={() => pick(day)}
             />
         {/each}
