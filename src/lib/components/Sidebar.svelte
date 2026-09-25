@@ -9,6 +9,7 @@
     } from '../services/documentActions';
     import {
         openDocument,
+        openHelp,
         openJournals,
         openNotes,
         openTags,
@@ -107,6 +108,7 @@
     // Both the index and any one tag's page, so the item stays lit while the
     // user is reading a tag rather than only on the list itself.
     let onTagsPage = $derived(page.url.pathname.startsWith('/tags'));
+    let onHelpPage = $derived(page.url.pathname === '/help');
 
     // Unlike the todo badge above, this cannot be derived from what is already
     // in memory: a tag belongs to no single document, so nothing in the
@@ -135,6 +137,11 @@
 
     function goToTags() {
         void openTags();
+        dismissOnSmallScreen();
+    }
+
+    function goToHelp() {
+        void openHelp();
         dismissOnSmallScreen();
     }
 
@@ -481,23 +488,50 @@
             >
                 v{APP_VERSION}
             </button>
-            <button class="settings-btn" onclick={goToSettings} title="Settings">
-                <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+            <div class="footer-actions">
+                <!-- Lit while open, like the pages under Index: the help
+                     page keeps the sidebar, so this is on screen with it. -->
+                <button
+                    class="footer-btn"
+                    class:active={onHelpPage}
+                    onclick={goToHelp}
+                    title="Help and keyboard shortcuts"
+                    aria-label="Help"
+                    aria-current={onHelpPage ? 'page' : undefined}
                 >
-                    <circle cx="12" cy="12" r="3" />
-                    <path
-                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                    />
-                </svg>
-            </button>
+                    <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                        <path d="M12 17h.01" />
+                    </svg>
+                </button>
+                <button class="footer-btn" onclick={goToSettings} title="Settings">
+                    <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                        />
+                    </svg>
+                </button>
+            </div>
         </div>
     {/if}
 </aside>
@@ -858,7 +892,13 @@
         color: var(--text-primary);
     }
 
-    .settings-btn {
+    .footer-actions {
+        flex-shrink: 0;
+        display: flex;
+        gap: 8px;
+    }
+
+    .footer-btn {
         flex-shrink: 0;
         width: 40px;
         height: 40px;
@@ -875,9 +915,14 @@
             color 0.15s;
     }
 
-    .settings-btn:hover {
+    .footer-btn:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    .footer-btn.active {
+        background: var(--accent-bg);
+        color: var(--accent-color);
     }
 
     /* ── Calendar ── */

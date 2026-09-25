@@ -54,6 +54,11 @@ export function openTags(): Promise<void> {
     return goto(resolve('/tags'));
 }
 
+// How to use the app: what its colours mean and every keyboard shortcut.
+export function openHelp(): Promise<void> {
+    return goto(resolve('/help'));
+}
+
 // One tag's page: the notes and journals that mention it.
 //
 // The name rides in the URL, so a tag is a link that survives a reload and the
