@@ -10,6 +10,7 @@
         SHORTCUT_GROUPS,
         SYMBOLS,
     } from '$lib/help/shortcuts';
+    import { HELP_KEYS } from '$lib/help/helpShortcut';
     import CalendarLegend from '$lib/help/CalendarLegend.svelte';
     import Keys from '$lib/help/Keys.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -72,7 +73,8 @@
     <div class="help">
         <div class="help-body">
             <p class="lead">
-                How Oyot works, what its colors mean, and every keyboard shortcut it has.
+                How Oyot works, what its colors mean, and every keyboard shortcut it has. Press
+                <Keys keys={[HELP_KEYS]} {command} /> from anywhere to come back here.
             </p>
 
             <nav class="toc" aria-label="On this page">

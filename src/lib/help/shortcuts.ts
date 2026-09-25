@@ -1,3 +1,5 @@
+import { HELP_KEYS } from './helpShortcut';
+
 // Every shortcut the help page lists: the keys, what they do, and where.
 //
 // Written out here rather than read off the editor, because most of these
@@ -28,6 +30,12 @@ export interface ShortcutGroup {
 }
 
 export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
+    {
+        id: 'anywhere',
+        title: 'Anywhere',
+        where: 'Wherever you are in Oyot, unless a dialog is open',
+        shortcuts: [{ action: 'Open this help page', keys: [HELP_KEYS] }],
+    },
     {
         id: 'document',
         title: 'Notes and journals',

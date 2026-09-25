@@ -27,6 +27,8 @@
     import SidebarDeviceList from './SidebarDeviceList.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
+    import { shortcutLabel } from '../editor/editorMode';
+    import { HELP_KEYS } from '../help/helpShortcut';
     import { indexRevision } from '../stores/derivedIndex';
     import { refreshTagCount, tagCount } from '../tags/tagCount';
     import { journalEntries } from '../journals/journalIndex';
@@ -144,6 +146,9 @@
         void openHelp();
         dismissOnSmallScreen();
     }
+
+    // Named in the tooltip, the way the Edit button names its own.
+    const helpHint = `Help and keyboard shortcuts (${shortcutLabel(HELP_KEYS)})`;
 
     let currentDocId = $derived($appStore.currentDocument?.id);
     let currentJournalTitle = $derived(
@@ -495,7 +500,7 @@
                     class="footer-btn"
                     class:active={onHelpPage}
                     onclick={goToHelp}
-                    title="Help and keyboard shortcuts"
+                    title={helpHint}
                     aria-label="Help"
                     aria-current={onHelpPage ? 'page' : undefined}
                 >

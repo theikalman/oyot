@@ -4,6 +4,7 @@ import { flattenExtensions, getExtensionField, type AnyExtension } from '@tiptap
 import { createContentExtensions } from '$lib/editor/extensions';
 import { createCollaborationExtension } from '$lib/editor/yjs';
 import { isEditShortcut } from '$lib/editor/editorMode';
+import { isHelpShortcut } from './helpShortcut';
 import { TOOLS } from '$lib/editor/toolbarTools';
 import {
     commandRegistry,
@@ -60,6 +61,21 @@ function editorBindings(): Set<string> {
     return keys;
 }
 
+// A binding in the editor's notation as a key press, the way the keyboard
+// in front of the user would send it.
+function pressFor(keys: string, command: boolean) {
+    const parts = keys.split('-');
+    const key = parts.pop()!;
+    const held = new Set(parts);
+    return {
+        key,
+        metaKey: command && held.has('Mod'),
+        ctrlKey: !command && held.has('Mod'),
+        shiftKey: held.has('Shift'),
+        altKey: held.has('Alt'),
+    };
+}
+
 function group(id: string): ShortcutGroup {
     const found = SHORTCUT_GROUPS.find((g) => g.id === id);
     if (!found) throw new Error(`no shortcut group "${id}"`);
@@ -91,16 +107,15 @@ describe('the shortcuts the help page lists', () => {
 
     it('give the Edit button the shortcut it answers to', () => {
         const [keys] = group('document').shortcuts[0].keys;
-        const held = new Set(keys.split('-'));
         for (const command of [true, false]) {
-            const press = {
-                key: keys.split('-').pop()!,
-                metaKey: command && held.has('Mod'),
-                ctrlKey: !command && held.has('Mod'),
-                shiftKey: held.has('Shift'),
-                altKey: held.has('Alt'),
-            };
-            expect(isEditShortcut(press, command)).toBe(true);
+            expect(isEditShortcut(pressFor(keys, command), command)).toBe(true);
+        }
+    });
+
+    it('give the help page the shortcut it answers to', () => {
+        const [keys] = group('anywhere').shortcuts[0].keys;
+        for (const command of [true, false]) {
+            expect(isHelpShortcut(pressFor(keys, command), command)).toBe(true);
         }
     });
 
