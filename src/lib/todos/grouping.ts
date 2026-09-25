@@ -1,3 +1,5 @@
+import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
+
 /** One task item, as `get_all_todos` returns it. */
 export interface TodoHit {
     document_id: string;
@@ -15,6 +17,11 @@ export interface TodoGroup {
     docId: string;
     title: string;
     docType: string;
+    /**
+     * The tags the document carries, which are what tell a chip in one of its
+     * todos from a hash typed by hand (see `todoSegments`).
+     */
+    tags: string[];
     todos: TodoHit[];
 }
 
@@ -38,7 +45,7 @@ export const EMPTY_SECTIONS: TodoSections = { journals: [], notes: [] };
  * Rows for one document are contiguous, which the query guarantees by making
  * its ordering total.
  */
-export function groupTodos(hits: TodoHit[]): TodoSections {
+export function groupTodos(hits: TodoHit[], tags: TagsByDocument = NO_TAGS): TodoSections {
     const sections: TodoSections = { journals: [], notes: [] };
 
     let current: TodoGroup | null = null;
@@ -48,6 +55,7 @@ export function groupTodos(hits: TodoHit[]): TodoSections {
                 docId: hit.document_id,
                 title: hit.document_title,
                 docType: hit.doc_type,
+                tags: tagsOf(tags, hit.document_id),
                 todos: [],
             };
             (hit.doc_type === 'journal' ? sections.journals : sections.notes).push(current);

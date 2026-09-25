@@ -70,6 +70,25 @@ describe('groupTodos', () => {
     it('has nothing to show for no rows', () => {
         expect(groupTodos([])).toEqual({ journals: [], notes: [] });
     });
+
+    // A group's tags are what its rows draw as chips, so they have to be
+    // that document's and nobody else's.
+    it("carries each document's own tags", () => {
+        const sections = groupTodos(
+            [
+                hit('j1', '2026-09-14', 'journal', 0, 'call mum #urgent'),
+                hit('n1', 'Groceries', 'note', 0, 'buy milk'),
+                hit('n2', 'House', 'note', 0, 'fix the #roof'),
+            ],
+            new Map([
+                ['j1', ['urgent']],
+                ['n2', ['home', 'roof']],
+            ]),
+        );
+
+        expect(sections.journals[0].tags).toEqual(['urgent']);
+        expect(sections.notes.map((g) => g.tags)).toEqual([[], ['home', 'roof']]);
+    });
 });
 
 describe('counting', () => {
