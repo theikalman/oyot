@@ -4,6 +4,7 @@
     import { formatJournalTitle } from '$lib/calendar/calendar';
     import { createTodoIndex } from '$lib/todos/todoStore.svelte';
     import type { TodoGroup, TodoHit } from '$lib/todos/grouping';
+    import { todoSegments } from '$lib/todos/todoText';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
 
     // Every task item in every note and journal, on one page.
@@ -124,7 +125,19 @@
                                                     {todo.checked ? '☑' : '☐'}
                                                 </span>
                                                 <span class="text" class:empty={!todo.text}>
-                                                    {todo.text || 'Empty item'}
+                                                    {#if todo.text}
+                                                        {#each todoSegments(todo.text, group.tags) as segment, i (i)}
+                                                            {#if segment.kind === 'tag'}
+                                                                <span class="tag-chip"
+                                                                    >#{segment.name}</span
+                                                                >
+                                                            {:else}
+                                                                {segment.text}
+                                                            {/if}
+                                                        {/each}
+                                                    {:else}
+                                                        Empty item
+                                                    {/if}
                                                 </span>
                                             </button>
                                         </li>
@@ -258,5 +271,29 @@
     .todo .text.empty {
         color: var(--text-muted);
         font-style: italic;
+    }
+
+    /* The editor's tag chip (EditorInstance.svelte), so a tag reads here the
+       way it does in the note it came from. */
+    .tag-chip {
+        background-color: var(--bg-hover);
+        color: var(--text-secondary);
+        padding: 1px 8px;
+        border-radius: 10px;
+        border: 1px solid var(--border-light);
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    /* A hovered row is the chip's own grey, which would leave only its
+       outline. */
+    .todo:hover .tag-chip {
+        background-color: var(--bg-primary);
+    }
+
+    /* Finished with the rest of the line. */
+    .todo.done .tag-chip {
+        color: var(--text-muted);
     }
 </style>

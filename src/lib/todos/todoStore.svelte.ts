@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { loadTagsByDocument } from '$lib/services/tags';
 import {
     groupTodos,
     countAll,
@@ -31,11 +32,19 @@ export function createTodoIndex() {
         const mine = ++seq;
         loading = true;
         try {
-            const hits = await invoke<TodoHit[]>('get_all_todos');
+            // The tags are what let a row draw its chips, so they are asked
+            // for alongside the todos and land with them: a tag added a
+            // moment ago does not show as plain text while its row waits for
+            // a second answer. Failing to read them costs the chips and not
+            // the list (see `loadTagsByDocument`).
+            const [hits, tags] = await Promise.all([
+                invoke<TodoHit[]>('get_all_todos'),
+                loadTagsByDocument(),
+            ]);
             // Drop a response something newer has already superseded. Edits
             // arrive while this is in flight, and each one triggers a reload.
             if (mine !== seq) return;
-            sections = groupTodos(hits);
+            sections = groupTodos(hits, tags);
             failed = false;
         } catch (err) {
             if (mine !== seq) return;

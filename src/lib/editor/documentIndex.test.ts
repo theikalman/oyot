@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Schema, type Node as PMNode } from '@tiptap/pm/model';
 import { extractDocumentIndex } from './documentIndex';
+import { todoSegments } from '$lib/todos/todoText';
 
 // A minimal schema with the node types the extractor cares about, so these
 // tests do not need a live Tiptap editor.
@@ -251,5 +252,27 @@ describe('extractDocumentIndex', () => {
     it('still collects a tag that is inside a todo', () => {
         const d = doc(taskList(taskOf(false, t('call mum '), tag('urgent'))));
         expect(extractDocumentIndex(d).tags).toEqual(['urgent']);
+    });
+
+    // The todo index draws the chips in a row by finding them again in its
+    // text, so what is written here has to be what it looks for.
+    it('writes a todo so the todo index can find its chips again', () => {
+        const d = doc(
+            taskList(
+                taskOf(false, t('ask '), tag('Big Plans'), t(', then '), tag('urgent')),
+                taskOf(false, t('fix issue #42')),
+            ),
+        );
+        const index = extractDocumentIndex(d);
+
+        expect(index.todos.map((todo) => todoSegments(todo.text, index.tags))).toEqual([
+            [
+                { kind: 'text', text: 'ask ' },
+                { kind: 'tag', name: 'big plans' },
+                { kind: 'text', text: ', then ' },
+                { kind: 'tag', name: 'urgent' },
+            ],
+            [{ kind: 'text', text: 'fix issue #42' }],
+        ]);
     });
 });
