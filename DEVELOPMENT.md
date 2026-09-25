@@ -503,6 +503,7 @@ oyot/
 │   ├── lib/
 │   │   ├── components/      # Sidebar, toasts, sync status
 │   │   ├── editor/          # Tiptap editor, save service, Yjs helpers
+│   │   ├── help/            # The help page's shortcut list and colour key
 │   │   ├── settings/        # Pairing, addresses and sync settings UI
 │   │   ├── services/        # Document actions, theme, toasts
 │   │   ├── stores/          # Svelte stores (app state, sync state)
@@ -535,6 +536,17 @@ It does not participate in the peer connection itself, with one exception it is
 worth knowing about: it answers which of this device's addresses a given peer
 would reach it at, because only the operating system knows, and the frontend
 needs it to make a host ICE candidate usable off this network (ADR 0023).
+
+### Keeping the help page current
+
+The help page (`src/routes/help`) lists every keyboard shortcut and says
+what the app's colours mean. A new shortcut, toolbar tool or slash command
+belongs in `src/lib/help/shortcuts.ts` too. Its tests fail when the editor
+stops binding a listed key, when a toolbar shortcut is missing from the
+list or named differently, and when the slash menu's entries change. The
+calendar's key draws days with `CalendarDay`, so a new day mark shows up
+there without a second copy of its style, but it still needs a line saying
+what it means.
 
 ## Tech Stack
 
