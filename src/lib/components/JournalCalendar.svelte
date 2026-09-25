@@ -219,6 +219,9 @@
         transition: background 0.1s;
     }
 
+    /* The theme's secondary grey, which the sidebar's icons use too. A fixed
+       #666 stayed the same in dark mode, where it was too dark to find:
+       2.2:1 against today's cell, under the 3:1 a mark needs. */
     .journal-dot {
         position: absolute;
         top: 3px;
@@ -226,7 +229,7 @@
         width: 4px;
         height: 4px;
         border-radius: 50%;
-        background: #666;
+        background: var(--text-secondary);
         pointer-events: none;
     }
 
