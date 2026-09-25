@@ -12,7 +12,7 @@
     import { dayMarks, type DayMark } from '$lib/calendar/dayMarks';
 
     interface Props {
-        /** Every journal, so a day can show whether it has an entry. */
+        /** Every journal, so a day can show whether it has an entry and a task still to do. */
         journals: DocumentSummary[];
         /** The title of the open journal, if one is open. */
         currentJournalTitle: string | null;
@@ -118,7 +118,7 @@
                 disabled={day === null}
             >
                 {#if mark}
-                    <span class="journal-dot"></span>
+                    <span class="journal-dot" class:open-todos={mark === 'open-todos'}></span>
                 {/if}
                 {day ?? ''}
             </button>
@@ -228,6 +228,10 @@
         border-radius: 50%;
         background: #666;
         pointer-events: none;
+    }
+
+    .journal-dot.open-todos {
+        background: var(--todo-open);
     }
 
     .cal-day:hover:not(:disabled):not(.empty) {

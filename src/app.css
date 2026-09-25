@@ -41,6 +41,11 @@
     --status-pending: #f59e0b;
     --status-idle: #9ca3af;
     --status-error: #ef4444;
+
+    /* A task still to do, which the calendar marks a day with. Deeper than
+     * --status-pending's amber, which is too pale to find as a 4px dot on
+     * white: this keeps 3:1 against every background a calendar day has. */
+    --todo-open: #ea580c;
 }
 
 /* Set on the root element rather than the body, so the bootstrap script in
@@ -69,6 +74,8 @@
     --status-pending: #f59e0b;
     --status-idle: #6b7280;
     --status-error: #f87171;
+
+    --todo-open: #f97316;
 }
 
 * {

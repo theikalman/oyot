@@ -12,9 +12,10 @@ and move between paired devices over an encrypted peer-to-peer connection.
 
 - **Open and write.** A journal entry for today is always there, so there is
   nowhere to file anything before you start.
-- **Every day, in one list.** The sidebar calendar covers a month; the Journals
-  index lists every day you have an entry for, newest first. Opening one from
-  there moves the calendar to it.
+- **Every day, in one list.** The sidebar calendar covers a month, with a dot
+  on each day you have written on, orange while a task on it is still to do;
+  the Journals index lists every day you have an entry for, newest first.
+  Opening one from there moves the calendar to it.
 - **Pinned notes.** The sidebar holds only the notes you pin, from a note's own
   page or from the Notes index, which lists every note with a filter. Pins
   follow you to your other devices, and into your backups.

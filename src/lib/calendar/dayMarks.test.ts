@@ -56,4 +56,55 @@ describe('dayMarks', () => {
         ]);
         expect(marks.get('2026-09-14')).toBe('entry');
     });
+
+    it('marks a day with a task still to do', () => {
+        const marks = dayMarks([
+            doc('j1', '2026-09-14', 'journal', { todo_count: 3, completed_todo_count: 2 }),
+        ]);
+        expect(marks.get('2026-09-14')).toBe('open-todos');
+    });
+
+    it('marks a day whose tasks are all done as an ordinary entry', () => {
+        const marks = dayMarks([
+            doc('j1', '2026-09-14', 'journal', { todo_count: 3, completed_todo_count: 3 }),
+        ]);
+        expect(marks.get('2026-09-14')).toBe('entry');
+    });
+
+    // The counts come from two places updated separately, so a stale pair can
+    // say more were done than exist. That is nothing left to do, not a task.
+    it('takes more done than exist to mean nothing is left', () => {
+        const marks = dayMarks([
+            doc('j1', '2026-09-14', 'journal', { todo_count: 1, completed_todo_count: 3 }),
+        ]);
+        expect(marks.get('2026-09-14')).toBe('entry');
+    });
+
+    // The todo index lists the task whatever the content flag says, so the
+    // calendar should not be the one place that hides it.
+    it('marks a task still to do even if the day reads as empty', () => {
+        const marks = dayMarks([
+            doc('j1', '2026-09-14', 'journal', {
+                todo_count: 1,
+                completed_todo_count: 0,
+                has_content: false,
+            }),
+        ]);
+        expect(marks.get('2026-09-14')).toBe('open-todos');
+    });
+
+    it('takes no mark from a note named like a date with tasks in it', () => {
+        const marks = dayMarks([
+            doc('n1', '2026-09-14', 'note', { todo_count: 2, completed_todo_count: 0 }),
+        ]);
+        expect(marks.size).toBe(0);
+    });
+
+    it('lets a task still to do win whichever journal for the day comes first', () => {
+        const open = doc('j1', '2026-09-14', 'journal', { todo_count: 1 });
+        const done = doc('j2', '2026-09-14', 'journal');
+
+        expect(dayMarks([open, done]).get('2026-09-14')).toBe('open-todos');
+        expect(dayMarks([done, open]).get('2026-09-14')).toBe('open-todos');
+    });
 });
