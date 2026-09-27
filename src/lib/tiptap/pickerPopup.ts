@@ -71,7 +71,6 @@ export function openPickerPopup(options: PickerOptions): PickerPopup {
     const host = document.createElement('div');
     host.className = options.className;
     host.style.position = 'fixed';
-    host.style.left = `${options.rect.left}px`;
     placePopup(host, options.rect);
     host.style.zIndex = '1001';
     document.body.appendChild(host);

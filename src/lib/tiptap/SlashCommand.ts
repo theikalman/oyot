@@ -78,7 +78,6 @@ export const SlashCommand = Extension.create({
                     function place(props: SuggestionProps<CommandSuggestion>): void {
                         const rect = props.clientRect?.();
                         if (!rect || !popup) return;
-                        popup.style.left = `${rect.left}px`;
                         placePopup(popup, rect);
                     }
 
