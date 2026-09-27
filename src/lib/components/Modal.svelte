@@ -104,6 +104,11 @@
         max-width: 420px;
         width: 90%;
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+        /* Scrolls when the screen is shorter than the dialog, as a phone in
+           landscape is once the keyboard is up. Centred and left to overflow,
+           it lost its top and bottom off the screen, beyond reach. */
+        max-height: 100%;
+        overflow-y: auto;
     }
 
     .modal-content h3 {
