@@ -1,3 +1,13 @@
+<script lang="ts" module>
+    // Tablets and phones start with the sidebar hidden so the editor gets the
+    // full width; the » before the page's title brings it back.
+    const SMALL_SCREEN_QUERY = '(max-width: 768px)';
+
+    export function isSmallScreen(): boolean {
+        return typeof window !== 'undefined' && window.matchMedia(SMALL_SCREEN_QUERY).matches;
+    }
+</script>
+
 <script lang="ts">
     import { appStore, documents } from '../stores/app';
     import type { DocumentSummary } from '../types';
@@ -34,6 +44,16 @@
     import { journalEntries } from '../journals/journalIndex';
     import { pinnedNotes } from '../notes/noteIndex';
 
+    interface Props {
+        /**
+         * Hidden. Bound by the workspace, whose header has the button that
+         * brings the sidebar back.
+         */
+        collapsed: boolean;
+    }
+
+    let { collapsed = $bindable() }: Props = $props();
+
     // Navigate; the document route loads it. Fetching and assigning the store
     // here meant the URL never changed, so there was nothing to go back to.
     function handleDocClick(doc: DocumentSummary) {
@@ -43,15 +63,6 @@
 
     let searchInput = $state('');
     let showModal = $state(false);
-    // Tablets and phones start with the sidebar hidden so the editor gets the full
-    // width; the floating toggle button is still there to bring it back.
-    const SMALL_SCREEN_QUERY = '(max-width: 768px)';
-
-    function isSmallScreen(): boolean {
-        return typeof window !== 'undefined' && window.matchMedia(SMALL_SCREEN_QUERY).matches;
-    }
-
-    let collapsed = $state(isSmallScreen());
     let small = $state(isSmallScreen());
 
     // Follow the viewport rather than sampling it once at startup. Rotating a
@@ -547,27 +558,6 @@
     <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
 {/if}
 
-<!-- The only control outside the sidebar, and only when there is no sidebar
-     to put it in. Collapsing happens from the header, beside the search box. -->
-{#if collapsed}
-    <button class="expand-btn" onclick={() => (collapsed = false)} title="Expand">
-        <svg
-            width="20"
-            height="20"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            ><path
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="m13 17 5-5-5-5M6 17l5-5-5-5"
-            /></svg
-        >
-    </button>
-{/if}
-
 {#if showModal}
     <!-- Started from the pinned list, so it starts pinned: what is added
          to a list lands in it. The dialog shows the choice, and it can be
@@ -642,34 +632,6 @@
     .collapse-btn:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
-    }
-
-    /* Floating, because with the sidebar hidden there is nothing to sit in. */
-    .expand-btn {
-        position: fixed;
-        left: calc(20px + var(--safe-left));
-        bottom: calc(48px + var(--safe-bottom));
-        z-index: 100;
-        width: 40px;
-        height: 40px;
-        padding: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--text-secondary);
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        cursor: pointer;
-        transition:
-            box-shadow 0.2s ease,
-            transform 0.2s ease;
-    }
-
-    .expand-btn:hover {
-        color: var(--text-primary);
-        box-shadow: 0 0 16px 4px rgba(59, 130, 246, 0.4);
     }
 
     .sidebar-header {

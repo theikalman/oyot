@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Snippet } from 'svelte';
     import { isLoading } from '$lib/stores/app';
-    import Sidebar from './Sidebar.svelte';
+    import Sidebar, { isSmallScreen } from './Sidebar.svelte';
     import SyncStatus from './SyncStatus.svelte';
 
     // The chrome every workspace route shares: the sidebar beside a titled
@@ -18,19 +18,51 @@
     }
 
     let { title = null, actions, tools, children }: Props = $props();
+
+    // Held here rather than in the sidebar, so the button that brings the
+    // sidebar back can sit in this header. It used to float over the bottom
+    // left of the page, on top of the start of whatever lines were there,
+    // which on a phone with the keyboard up are the ones being typed.
+    let sidebarCollapsed = $state(isSmallScreen());
 </script>
 
 <main class="app">
     <div class="workspace">
-        <Sidebar />
+        <Sidebar bind:collapsed={sidebarCollapsed} />
         <div class="main-content">
             <div class="sync-status-container">
-                {#if title}
-                    <div class="page-heading">
-                        <h1 class="page-title">{title}</h1>
-                        {@render actions?.()}
-                    </div>
-                {/if}
+                <div class="page-start">
+                    {#if sidebarCollapsed}
+                        <button
+                            class="show-sidebar-btn"
+                            onclick={() => (sidebarCollapsed = false)}
+                            title="Show sidebar"
+                            aria-label="Show sidebar"
+                        >
+                            <svg
+                                width="20"
+                                height="20"
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                aria-hidden="true"
+                                ><path
+                                    stroke="currentColor"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="m13 17 5-5-5-5M6 17l5-5-5-5"
+                                /></svg
+                            >
+                        </button>
+                    {/if}
+                    {#if title}
+                        <div class="page-heading">
+                            <h1 class="page-title">{title}</h1>
+                            {@render actions?.()}
+                        </div>
+                    {/if}
+                </div>
                 <div class="page-tools">
                     {@render tools?.()}
                     <SyncStatus />
@@ -79,11 +111,58 @@
         min-height: 57px;
     }
 
+    .page-start {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
     .page-heading {
         display: flex;
         align-items: center;
         gap: 8px;
         min-width: 0;
+    }
+
+    /* The same size as the « beside the sidebar's search box, which puts the
+       sidebar away again. */
+    .show-sidebar-btn {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        background: none;
+        border: none;
+        border-radius: 4px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    @media (hover: hover) {
+        .show-sidebar-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+    }
+
+    /* Sized for a finger: what a tap can land on is 44px square, the least
+       Apple's guidelines allow, reaching into the header's padding and the
+       gap before the title without the button looking any bigger. */
+    @media (pointer: coarse) {
+        .show-sidebar-btn {
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .show-sidebar-btn::after {
+            content: '';
+            position: absolute;
+            inset: -6px;
+        }
     }
 
     .page-title {

@@ -370,8 +370,8 @@
                     </li>
                     <li>
                         <strong>More room to write.</strong> The « beside the search box hides the sidebar,
-                        and » at the bottom left brings it back. On a small screen the sidebar gets out
-                        of the way by itself once you pick something.
+                        and the » before the page's title brings it back. On a small screen the sidebar
+                        gets out of the way by itself once you pick something.
                     </li>
                     <li>
                         <strong>Days with nothing in them.</strong> Clicking a day in the calendar starts
