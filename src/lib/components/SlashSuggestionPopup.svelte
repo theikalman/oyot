@@ -102,14 +102,15 @@
 
     /* Not positioned itself: the host it is mounted in is, and this sits in
        that host's flow, so a popup placed above the caret grows upwards from
-       it. The host also says how tall it can be (see popupPlacement.ts). */
+       it. The host also says how tall and how wide it can be (see
+       popupPlacement.ts). */
     .suggestion-popup {
         background: var(--bg-primary);
         border: 1px solid var(--border-color);
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-        min-width: 280px;
-        max-width: 400px;
+        min-width: min(280px, var(--popup-max-width, 280px));
+        max-width: var(--popup-max-width, 400px);
         max-height: var(--popup-max-height, 320px);
         overflow-y: auto;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
