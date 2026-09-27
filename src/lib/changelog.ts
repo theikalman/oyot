@@ -36,6 +36,54 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.21-alpha',
+        date: '2026-09-27',
+        summary:
+            "The calendar marks the days that still have a task to do, and a new Help page says what Oyot's colors mean and lists every keyboard shortcut. On Android, the keyboard no longer covers what you are typing.",
+        changes: [
+            {
+                kind: 'added',
+                text: 'On the calendar, a day whose journal still has a task to do gets an orange dot instead of the grey one, so it no longer looks like a day you are finished with. It turns grey again once its last task is ticked, here or on a paired device.',
+            },
+            {
+                kind: 'added',
+                text: 'Holding the pointer over a day with a dot says what the dot means, "Something written" or "A task still to do". A screen reader reads each day as its date and what it holds, such as "Tuesday 8 September, a task still to do", where it used to read only the number.',
+            },
+            {
+                kind: 'added',
+                text: "A Help page says what Oyot's colors mean, on the calendar, in the sync indicator, beside your devices and in a note's links and tags, and lists every keyboard shortcut. It also covers what typing things like # or [ ] turns into, the insert menu, search, sync and backups. Open it with the ? beside the settings gear at the bottom of the sidebar, with Help & shortcuts at the end of Settings, or with ⌘/ on Apple devices and Ctrl+/ elsewhere, from any page.",
+            },
+            {
+                kind: 'fixed',
+                text: 'On Android, the keyboard no longer covers what you are typing. The page went on underneath it, so whatever you typed low on the screen, in a note or in a dialog, was out of sight. The page now ends where the keyboard begins, and the line you are on is kept above it.',
+            },
+            {
+                kind: 'fixed',
+                text: 'The insert menu that / opens, and the lists that Link Document and Insert Tag bring up, stay on the screen. Near the bottom of the screen they open above the line you are on, where they used to open below it and out of sight, along with what you were typing into them. Near the right edge they move left, where on a phone they ran off the screen with only their icons showing.',
+            },
+            {
+                kind: 'fixed',
+                text: 'A dialog taller than the screen now scrolls, where its title and buttons used to run off the top and bottom with no way to reach them. On a phone turned on its side with the keyboard up, even the dialog for a new note is that tall.',
+            },
+            {
+                kind: 'fixed',
+                text: "With the sidebar hidden, the button that brings it back is the » in the header, before the page's title. It used to float over the bottom left of the page, on top of the start of whatever lines were there.",
+            },
+            {
+                kind: 'fixed',
+                text: "In dark mode, the calendar's grey dot for a day with something written on it is lighter, and easy to find. It was the same dark grey as in light mode, which barely showed against the dark calendar.",
+            },
+            {
+                kind: 'fixed',
+                text: 'On the Todos page, a tag in a task is drawn as the same grey chip as in its note, where it used to be plain text such as "#urgent".',
+            },
+            {
+                kind: 'fixed',
+                text: 'The list that Link Document or Insert Tag opens now closes when you leave the note. Going back, or following a sidebar link from the keyboard, used to leave it open on the next page, taking every letter typed there.',
+            },
+        ],
+    },
+    {
         version: '0.0.20-alpha',
         date: '2026-09-24',
         summary:
