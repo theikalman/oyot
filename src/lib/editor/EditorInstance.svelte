@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onDestroy } from 'svelte';
     import type * as Y from 'yjs';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Editor } from '@tiptap/core';
@@ -27,18 +27,6 @@
     import { TickWhileReading } from './tickWhileReading';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
-
-    const ScrollOnFocus = Extension.create({
-        name: 'scrollOnFocus',
-        onSelectionUpdate() {
-            const vp = window.visualViewport;
-            if (vp && vp.height < initialViewportHeight - 100) {
-                requestAnimationFrame(() => {
-                    this.editor.commands.scrollIntoView();
-                });
-            }
-        },
-    });
 
     // A document being read is still announced as a text box, which is what
     // the editor is, so a screen reader is also told it cannot be typed into.
@@ -94,10 +82,6 @@
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
     let isLoadingEditor = $state.raw(false);
-
-    let initialViewportHeight = 0;
-    let keyboardOpen = $state(false);
-    let keyboardHeight = $state(0);
 
     async function initializeEditor() {
         const docId: string | null = document?.id ?? null;
@@ -159,7 +143,6 @@
                             : 'Nothing here yet. Press Edit to start writing.',
                 }),
                 SlashCommand,
-                ScrollOnFocus,
                 ReadOnlyState,
                 JumpTarget,
                 TickWhileReading,
@@ -348,11 +331,13 @@
         }
     }
 
-    function handleViewportChange() {
-        const vp = window.visualViewport;
-        if (!vp) return;
-        keyboardOpen = vp.height < initialViewportHeight - 100;
-        keyboardHeight = keyboardOpen ? initialViewportHeight - vp.height : 0;
+    // A phone's keyboard coming up makes the viewport shorter: on Android the
+    // WebView is ended where the keyboard begins (see MainActivity). The caret
+    // can then be below the new bottom edge, out of sight until something is
+    // typed, so it is brought back into view. Any other resize while writing
+    // keeps it in view the same way.
+    function keepCaretInView() {
+        if (editor?.isFocused) editor.commands.scrollIntoView();
     }
 
     $effect(() => {
@@ -378,16 +363,8 @@
         }
     });
 
-    onMount(() => {
-        initialViewportHeight = window.innerHeight;
-        window.visualViewport?.addEventListener('resize', handleViewportChange);
-        window.visualViewport?.addEventListener('scroll', handleViewportChange);
-    });
-
     onDestroy(() => {
         cancelFocus?.();
-        window.visualViewport?.removeEventListener('resize', handleViewportChange);
-        window.visualViewport?.removeEventListener('scroll', handleViewportChange);
 
         if (ydoc && currentDocId) {
             onBeforeTeardown?.(currentDocId, ydoc);
@@ -410,7 +387,9 @@
     });
 </script>
 
-<div class="editor-instance" style="padding-bottom: {keyboardOpen ? keyboardHeight : 0}px;">
+<svelte:window onresize={keepCaretInView} />
+
+<div class="editor-instance">
     {#if isLoadingEditor}
         <div class="loading-editor">
             <p>Loading editor...</p>

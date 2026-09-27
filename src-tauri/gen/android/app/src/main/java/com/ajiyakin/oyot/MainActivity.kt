@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -47,9 +49,16 @@ class MainActivity : TauriActivity() {
       val bars = insets.getInsets(
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
       )
+      val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+      fitAboveKeyboard(view, keyboard)
+
       val density = view.resources.displayMetrics.density
+      // With the keyboard up, the WebView ends where the keyboard begins, and
+      // the keyboard covers the gesture bar, so nothing reaches into the page
+      // from below.
+      val bottom = (bars.bottom - keyboard).coerceAtLeast(0)
       val json = "{\"top\":${bars.top / density},\"right\":${bars.right / density}," +
-        "\"bottom\":${bars.bottom / density},\"left\":${bars.left / density}}"
+        "\"bottom\":${bottom / density},\"left\":${bars.left / density}}"
       if (json != safeAreaJson) {
         safeAreaJson = json
         // Pushed for changes after load, rotation and the like. Harmless if
@@ -60,6 +69,22 @@ class MainActivity : TauriActivity() {
       insets
     }
     ViewCompat.requestApplyInsets(webView)
+  }
+
+  // Edge to edge, the system no longer makes room for the on-screen keyboard:
+  // adjustResize in the manifest only has it report how tall the keyboard is.
+  // The WebView went on filling the screen with the keyboard drawn over its
+  // bottom, and whatever was being typed there, in a note or a field low on the
+  // page, was hidden behind it. Ending the WebView where the keyboard begins
+  // does what adjustResize did before edge to edge: the page gets a shorter
+  // viewport and lays itself out in the space above the keyboard.
+  private fun fitAboveKeyboard(webView: View, keyboard: Int) {
+    // setContentView put the WebView in a FrameLayout, whose layout params
+    // take a margin.
+    val params = webView.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+    if (params.bottomMargin == keyboard) return
+    params.bottomMargin = keyboard
+    webView.layoutParams = params
   }
 
   private inner class SafeAreaBridge {
