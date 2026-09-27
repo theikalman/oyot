@@ -6,6 +6,7 @@ import Suggestion, {
 } from '@tiptap/suggestion';
 import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type CommandSuggestion } from './CommandRegistry';
+import { placePopup } from './popupPlacement';
 import SlashSuggestionPopup, { type PopupItem } from '../components/SlashSuggestionPopup.svelte';
 import { mount, unmount } from 'svelte';
 import { get, writable } from 'svelte/store';
@@ -78,7 +79,7 @@ export const SlashCommand = Extension.create({
                         const rect = props.clientRect?.();
                         if (!rect || !popup) return;
                         popup.style.left = `${rect.left}px`;
-                        popup.style.top = `${rect.bottom + 8}px`;
+                        placePopup(popup, rect);
                     }
 
                     function sync(props: SuggestionProps<CommandSuggestion>): void {

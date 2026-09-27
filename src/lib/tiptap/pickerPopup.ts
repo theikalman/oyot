@@ -2,6 +2,7 @@ import type { Editor, Range } from '@tiptap/core';
 import { mount, unmount } from 'svelte';
 import { get, writable } from 'svelte/store';
 import SlashSuggestionPopup, { type PopupItem } from '../components/SlashSuggestionPopup.svelte';
+import { placePopup } from './popupPlacement';
 
 /**
  * The popup a slash command opens when choosing the thing to insert takes a
@@ -71,7 +72,7 @@ export function openPickerPopup(options: PickerOptions): PickerPopup {
     host.className = options.className;
     host.style.position = 'fixed';
     host.style.left = `${options.rect.left}px`;
-    host.style.top = `${options.rect.bottom + 8}px`;
+    placePopup(host, options.rect);
     host.style.zIndex = '1001';
     document.body.appendChild(host);
 

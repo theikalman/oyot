@@ -14,8 +14,13 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.oyot"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!-- Edge to edge, adjustResize no longer resizes anything itself, but
+             Android 10 and older only report the on-screen keyboard's height
+             with it, and MainActivity needs that height to keep the page above
+             the keyboard. -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
