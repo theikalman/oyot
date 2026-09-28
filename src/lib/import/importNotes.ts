@@ -57,34 +57,25 @@ function appTarget(): ImportTarget {
     };
 }
 
-let running = false;
-
 /**
  * Let the user pick Markdown files, and make a note of each.
  *
  * Resolves to null when the dialog is closed. Rejects only when the files
  * could not be picked or read at all; a file that could not become a note is
- * in the result.
+ * in the result. One import runs at a time, which `markdownImport` in
+ * ./importState.svelte.ts sees to.
  */
 export async function importMarkdownFiles(
     onProgress?: (done: number, total: number) => void,
 ): Promise<ImportResult | null> {
-    // One at a time: a second import started from the other page while the
-    // first runs would only race it for the same notes list.
-    if (running) throw new Error('an import is already running');
-    running = true;
-    try {
-        const picked = await invoke<RawPicked | null>('pick_markdown_files');
-        if (!picked) return null;
+    const picked = await invoke<RawPicked | null>('pick_markdown_files');
+    if (!picked) return null;
 
-        // Loaded here rather than with the page: the converter carries a
-        // Markdown parser, and most sessions never import anything.
-        const { importFiles } = await import('./importFiles');
-        const result = await importFiles(picked.files, appTarget(), onProgress);
-        return { ...result, skipped: [...picked.unread, ...result.skipped] };
-    } finally {
-        running = false;
-    }
+    // Loaded here rather than with the page: the converter carries a
+    // Markdown parser, and most sessions never import anything.
+    const { importFiles } = await import('./importFiles');
+    const result = await importFiles(picked.files, appTarget(), onProgress);
+    return { ...result, skipped: [...picked.unread, ...result.skipped] };
 }
 
 /**
@@ -106,11 +97,13 @@ export async function runMarkdownImport(
     if (!result) return null;
 
     const report = describeImport(result);
-    if (report.success) toasts.success(report.success);
-    if (report.failure) toasts.error(report.failure);
     // Longer than a warning's usual four seconds: these name files, and
     // the user may want to find them.
     for (const warning of report.warnings) toasts.warning(warning, 8000);
+    // Last, so it is the newest toast: shown first, and the last to make way
+    // when there are more than fit.
+    if (report.imported) toasts.success(report.headline);
+    else toasts.error(report.headline);
     return result;
 }
 

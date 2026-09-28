@@ -9,15 +9,22 @@ import type { ImportResult, SkippedFile, SkipReason } from './importFiles';
  * picked is worse than one that says so.
  */
 export interface ImportReport {
-    /** What was imported, when anything was. */
-    success: string | null;
-    /** Said when nothing was imported at all. */
-    failure: string | null;
-    /** What came in partly, or not at all. */
+    /** What came in, or that nothing did. */
+    headline: string;
+    /** Whether anything came in, which decides how the headline is shown. */
+    imported: boolean;
+    /**
+     * What came in partly, or not at all: one line for the files skipped and
+     * one for each way an image did not come in as a picture. Never more than
+     * three, so with the headline they fit among the toasts shown at once.
+     */
     warnings: string[];
 }
 
-/** Why a file was skipped, after "it" or "they". */
+/**
+ * Why a file was skipped, after "it" or "they". The size is Rust's
+ * `MAX_FILE_BYTES` in `commands/import.rs`, which decides it.
+ */
 const REASONS: Record<SkipReason, { one: string; many: string }> = {
     'not-text': { one: 'it is not text', many: 'they are not text' },
     'too-large': { one: 'it is larger than 8 MB', many: 'they are larger than 8 MB' },
@@ -29,12 +36,14 @@ export function describeImport(result: ImportResult): ImportReport {
     const { notes, skipped, imagesKeptAsText, missingImages } = result;
     const warnings: string[] = [];
 
+    const skips: string[] = [];
     for (const reason of Object.keys(REASONS) as SkipReason[]) {
         const files = skipped.filter((file) => file.reason === reason);
         if (files.length === 0) continue;
         const why = files.length === 1 ? REASONS[reason].one : REASONS[reason].many;
-        warnings.push(`Could not import ${fileList(files)}: ${why}.`);
+        skips.push(`Could not import ${fileList(files)}: ${why}.`);
     }
+    if (skips.length > 0) warnings.push(skips.join(' '));
 
     if (imagesKeptAsText > 0) {
         const were = imagesKeptAsText === 1 ? 'was' : 'were';
@@ -52,13 +61,13 @@ export function describeImport(result: ImportResult): ImportReport {
     }
 
     if (notes.length === 0) {
-        return { success: null, failure: 'No notes were imported.', warnings };
+        return { headline: 'No notes were imported.', imported: false, warnings };
     }
-    const success =
+    const headline =
         notes.length === 1
             ? `Imported ${notes[0].title}`
             : `Imported ${count(notes.length, 'note')}`;
-    return { success, failure: null, warnings };
+    return { headline, imported: true, warnings };
 }
 
 /** Up to three files by name, and how many more. */

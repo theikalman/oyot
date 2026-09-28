@@ -3,7 +3,8 @@
     import { indexRevision } from '$lib/stores/derivedIndex';
     import { openDocument, openTag } from '$lib/services/navigation';
     import { loadTagsByDocument } from '$lib/services/tags';
-    import { runMarkdownImport } from '$lib/import';
+    import { markdownImport } from '$lib/import';
+    import { onDestroy } from 'svelte';
     import { filterNotes, notesOf, noteStatus } from '$lib/notes/noteIndex';
     import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
     import type { DocumentSummary } from '$lib/types';
@@ -80,29 +81,15 @@
 
     // Markdown files in, a note each. The notes land at the top of this list
     // as they are made; one on its own opens, as a new note does, since that
-    // is what there is to look at.
-    let importing = $state(false);
-    let importProgress = $state<{ done: number; total: number } | null>(null);
-    let importLabel = $derived(
-        !importing
-            ? 'Import'
-            : importProgress && importProgress.total > 1
-              ? `Importing ${importProgress.done} of ${importProgress.total}…`
-              : 'Importing…',
-    );
+    // is what there is to look at, unless the user has gone elsewhere since.
+    // Whether an import is running, and how far it has got, is shared with
+    // Settings, which can start one too.
+    let here = true;
+    onDestroy(() => (here = false));
 
     async function handleImport() {
-        if (importing) return;
-        importing = true;
-        try {
-            const result = await runMarkdownImport((done, total) => {
-                importProgress = { done, total };
-            });
-            if (result?.notes.length === 1) await openDocument(result.notes[0].id);
-        } finally {
-            importing = false;
-            importProgress = null;
-        }
+        const result = await markdownImport.start();
+        if (here && result?.notes.length === 1) await openDocument(result.notes[0].id);
     }
 </script>
 
@@ -128,10 +115,10 @@
                 <button
                     class="action-btn"
                     onclick={handleImport}
-                    disabled={importing}
+                    disabled={markdownImport.running}
                     title="Make a note of each Markdown file you pick"
                 >
-                    {importLabel}
+                    {markdownImport.label}
                 </button>
                 <button class="action-btn" onclick={() => (creating = true)}>New note</button>
             </div>
