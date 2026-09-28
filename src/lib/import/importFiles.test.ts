@@ -117,7 +117,7 @@ describe('importFiles', () => {
             {
                 type: 'paragraph',
                 content: [
-                    { type: 'text', text: 'See ' },
+                    { type: 'text', text: 'See what to pack ' },
                     { type: 'documentLink', attrs: { targetId: packing, title: 'Packing list' } },
                     { type: 'text', text: '.' },
                 ],

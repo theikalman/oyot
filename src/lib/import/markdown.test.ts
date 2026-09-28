@@ -138,6 +138,54 @@ describe('readMarkdown: lists', () => {
         ]);
     });
 
+    // The exporter writes a bullet whose words begin with brackets escaped,
+    // and GitHub reads an escaped box as words too.
+    it('leaves an escaped box as the words of a bullet', () => {
+        expect(read('- \\[ ] literal\n- \\[x\\] done')).toEqual([
+            {
+                type: 'bulletList',
+                content: [
+                    { type: 'listItem', content: [para(text('[ ] literal'))] },
+                    { type: 'listItem', content: [para(text('[x] done'))] },
+                ],
+            },
+        ]);
+    });
+
+    it('starts an ordered list at 0 when the file does', () => {
+        expect(read('0. zero\n1. one')[0].attrs.start).toBe(0);
+    });
+
+    // What the exporter wrote under a task before it was fixed: indented as
+    // far as the task's words, which a reader takes for a code block.
+    it('reads what an older export nested under a task', () => {
+        expect(read('-   [ ] pack\n\n        -   [x] passport\n\n        more words')).toEqual([
+            {
+                type: 'taskList',
+                content: [
+                    {
+                        type: 'taskItem',
+                        attrs: { checked: false },
+                        content: [
+                            para(text('pack')),
+                            {
+                                type: 'taskList',
+                                content: [
+                                    {
+                                        type: 'taskItem',
+                                        attrs: { checked: true },
+                                        content: [para(text('passport'))],
+                                    },
+                                ],
+                            },
+                            para(text('more words')),
+                        ],
+                    },
+                ],
+            },
+        ]);
+    });
+
     it('needs a space after the box before an item is a task', () => {
         expect(read('- [x]not a task')).toEqual([
             {
@@ -298,6 +346,34 @@ describe('readMarkdown: tags', () => {
         expect(read('**#urgent**')).toEqual([para({ ...tag('urgent'), marks: [bold] })]);
     });
 
+    it('keeps underscore emphasis around a tag as emphasis', () => {
+        expect(read('__#urgent__ now')).toEqual([
+            para({ ...tag('urgent'), marks: [bold] }, text(' now')),
+        ]);
+    });
+
+    it('reads a tag inside the brackets and quotes of any script', () => {
+        expect(read('「#日記」 （#home） «#trip»')).toEqual([
+            para(
+                text('「'),
+                tag('日記'),
+                text('」 （'),
+                tag('home'),
+                text('） «'),
+                tag('trip'),
+                text('»'),
+            ),
+        ]);
+    });
+
+    // Lower-casing `İ` makes it two code units, so the name is matched a
+    // character at a time.
+    it('reads a known tag whose lower case is longer than it is', () => {
+        expect(read('plan the #İstanbul trip soon', { knownTags: ['i̇stanbul trip'] })).toEqual([
+            para(text('plan the '), tag('i̇stanbul trip'), text(' soon')),
+        ]);
+    });
+
     it('reads a tag inside brackets', () => {
         expect(read('(#home)')).toEqual([para(text('('), tag('home'), text(')'))]);
     });
@@ -327,23 +403,44 @@ describe('readMarkdown: links between notes', () => {
     };
     const noteLink = (href: string) => notes[decodeURIComponent(href.split('#')[0])] ?? null;
 
+    const chip = (targetId: string, title: string) => ({
+        type: 'documentLink',
+        attrs: { targetId, title },
+    });
+
+    // The exporter writes a link to another note as its title, which the chip
+    // says already.
     it('reads a link to a note being imported as a link to that note', () => {
-        expect(read('see [the other one](other-note.md)', { noteLink })).toEqual([
-            para(text('see '), {
-                type: 'documentLink',
-                attrs: { targetId: 'other', title: 'Other note' },
-            }),
+        expect(read('see [Other note](other-note.md)', { noteLink })).toEqual([
+            para(text('see '), chip('other', 'Other note')),
+        ]);
+    });
+
+    // Words of the writer's own are kept, with the link to the note after them.
+    it('keeps the words of a link ahead of the link to the note', () => {
+        expect(read('see [what to *pack*](other-note.md) first', { noteLink })).toEqual([
+            para(
+                text('see what to '),
+                text('pack', [{ type: 'italic' }]),
+                text(' '),
+                chip('other', 'Other note'),
+                text(' first'),
+            ),
+        ]);
+    });
+
+    it('keeps an image inside a link to a note', () => {
+        const doc = readMarkdown('[![map](maps/kyoto.png)](other-note.md)', schema, { noteLink });
+        expect(doc.imagesKeptAsText).toBe(1);
+        expect(doc.doc.toJSON().content).toEqual([
+            para(text('![map](maps/kyoto.png) '), chip('other', 'Other note')),
         ]);
     });
 
     it('asks about the address as markdown-it normalized it', () => {
-        expect(read('[x](<café notes.md>) [y](other-note.md#part)', { noteLink })).toEqual([
-            para(
-                { type: 'documentLink', attrs: { targetId: 'cafe', title: 'Café notes' } },
-                text(' '),
-                { type: 'documentLink', attrs: { targetId: 'other', title: 'Other note' } },
-            ),
-        ]);
+        expect(
+            read('[café notes](<café notes.md>) [other note](other-note.md#part)', { noteLink }),
+        ).toEqual([para(chip('cafe', 'Café notes'), text(' '), chip('other', 'Other note'))]);
     });
 
     it('leaves a link to anything else a link', () => {
@@ -399,6 +496,29 @@ describe('readMarkdown: images', () => {
         ]);
         expect(count('![a](a.png) ![b](https://example.com/b.png)')).toBe(2);
         expect(count(`![](oyot-attachment://${HASH})`)).toBe(0);
+    });
+
+    it('keeps an attachment address that names no content hash as text', () => {
+        expect(read('![a](oyot-attachment://notes.png)')).toEqual([
+            para(text('![a](oyot-attachment://notes.png)')),
+        ]);
+    });
+
+    // What the exporter writes in place of a description for an image whose
+    // bytes it did not have. It is not the image's description.
+    it('does not take the missing-image words of the exporter for a description', () => {
+        expect(read(`![missing attachment](oyot-attachment://${HASH})`)).toEqual([
+            {
+                type: 'image',
+                attrs: expect.objectContaining({ alt: `oyot:${HASH}` }),
+            },
+        ]);
+    });
+
+    it('keeps an image as text with its address as it was written', () => {
+        expect(read('![写真](写真.png) ![a map](<maps/my map.png>)')).toEqual([
+            para(text('![写真](写真.png) ![a map](<maps/my map.png>)')),
+        ]);
     });
 
     it('splits a line around an image, since an image is a block of its own', () => {
@@ -494,6 +614,10 @@ describe('readMarkdown: tables and HTML', () => {
         expect(read('a <u>b</u> <!-- note -->')).toEqual([para(text('a <u>b</u> <!-- note -->'))]);
     });
 
+    it('reads a <br> on a line of its own as an empty line', () => {
+        expect(read('one\n\n<br>\n\ntwo')).toEqual([para(text('one')), para(), para(text('two'))]);
+    });
+
     it('keeps a block of HTML as text, a line for a line', () => {
         expect(read('<aside>\n💡 water the plants\n</aside>')).toEqual([
             para(
@@ -509,12 +633,28 @@ describe('readMarkdown: tables and HTML', () => {
 
 describe('leadingHeading', () => {
     it('finds a top-level heading that opens the file, and the lines it spans', () => {
-        expect(leadingHeading('# Groceries\n\nmilk')).toEqual({ text: 'Groceries', lines: [0, 1] });
-        expect(leadingHeading('Groceries\n=========\n\nmilk')).toEqual({
+        expect(leadingHeading('# Groceries\n\nmilk')).toEqual({
             text: 'Groceries',
-            lines: [0, 2],
+            source: 'Groceries',
+            tags: [],
+            lines: [0, 1],
         });
-        expect(leadingHeading('\n\n# Late start')).toEqual({ text: 'Late start', lines: [2, 3] });
+        expect(leadingHeading('Groceries\n=========\n\nmilk')?.lines).toEqual([0, 2]);
+        expect(leadingHeading('\n\n# Late start')?.lines).toEqual([2, 3]);
+    });
+
+    it('says what the heading holds as written, and the tags in it', () => {
+        expect(leadingHeading('# Plan *draft* #work\n')).toEqual({
+            text: 'Plan draft #work',
+            source: 'Plan *draft* #work',
+            tags: ['work'],
+            lines: [0, 1],
+        });
+    });
+
+    // Definitions are collected on the way, as a full parse collects them.
+    it('reads a heading past the link definitions before it', () => {
+        expect(leadingHeading('[r]: https://example.com\n\n# [Title][r]\n')?.text).toBe('Title');
     });
 
     it('reads the heading as plain words', () => {
@@ -682,5 +822,16 @@ describe('the round trip through the exporter', () => {
         const markdown = serializeDocument(words, exportOptions);
         const { doc } = readMarkdown(markdown, schema, importOptions);
         expect(doc.toJSON()).toEqual(words.toJSON());
+    });
+});
+
+// The file is written by anyone, and the reader must not freeze on one.
+describe('reading HTML in linear time', () => {
+    it('reads a tag or a comment with a long run of space in it quickly', () => {
+        const run = 200_000;
+        const started = performance.now();
+        read(`text <span${' '.repeat(run)}> more`);
+        read(`<!--${'\n'.repeat(run)}-->x`);
+        expect(performance.now() - started).toBeLessThan(1000);
     });
 });

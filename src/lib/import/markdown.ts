@@ -7,6 +7,7 @@ import {
     type Schema,
 } from '@tiptap/pm/model';
 import { ATTACHMENT_SCHEME, attachmentHash } from '$lib/tiptap/attachmentRef';
+import { MISSING_ATTACHMENT_ALT } from '$lib/export/markdown';
 import { MAX_TAG_LENGTH, normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 
 /**
@@ -57,11 +58,6 @@ export interface MarkdownReadOptions {
      * alongside this one. Null leaves the link a link.
      */
     noteLink?: (href: string) => NoteLinkTarget | null;
-    /**
-     * What to store for an image, or null to keep it as the Markdown it was
-     * written as. Defaults to `storedImage`.
-     */
-    imageSource?: (src: string, alt: string) => StoredImage | null;
 }
 
 export interface MarkdownDocument {
@@ -74,6 +70,13 @@ export interface MarkdownDocument {
 export interface LeadingHeading {
     /** Its words, as plain text on one line. */
     text: string;
+    /**
+     * Its words as written, Markdown and all, on one line. What an older
+     * export's heading holds, since the exporter wrote a title unescaped.
+     */
+    source: string;
+    /** The tags written in it, normalized. */
+    tags: string[];
     /** The source lines it spans, `[first, last + 1)`. */
     lines: [number, number];
 }
@@ -108,10 +111,13 @@ function markdownParser(): MarkdownIt {
     return md;
 }
 
-function parse(markdown: string, knownTags: readonly string[]): Token[] {
+function tagEnv(knownTags: readonly string[]): TagEnv {
     // Longest first, so `#house move` is not taken for `#house`.
-    const env: TagEnv = { oyotKnownTags: [...knownTags].sort((a, b) => b.length - a.length) };
-    return markdownParser().parse(markdown, env);
+    return { oyotKnownTags: [...knownTags].sort((a, b) => b.length - a.length) };
+}
+
+function parse(markdown: string, knownTags: readonly string[]): Token[] {
+    return markdownParser().parse(markdown, tagEnv(knownTags));
 }
 
 // --- tags ---------------------------------------------------------------------
@@ -125,10 +131,11 @@ const TAG_CHAR = /^[\p{L}\p{M}\p{N}_\-/]$/u;
 const LETTER = /\p{L}/u;
 
 /**
- * What may stand before a tag's `#`: a space, or what opens emphasis, a
- * bracket or a quote, so `**#urgent**` and `(#home)` are tags.
+ * What may stand before a tag's `#`: a space, what opens emphasis, or an
+ * opening bracket or quote in any script, so `**#urgent**`, `(#home)` and
+ * `「#日記」` are tags.
  */
-const BEFORE_TAG = /^[\s*_~([{"'“‘]$/u;
+const BEFORE_TAG = /^[\s\p{Ps}\p{Pi}*_~"']$/u;
 
 /**
  * `#name` as a tag, when the `#` begins a word.
@@ -166,9 +173,8 @@ function tagAt(src: string, from: number, max: number, known: readonly string[])
     // A name the front matter gave, followed by something that cannot
     // continue it: how a tag with a space in it is recognised.
     for (const name of known) {
-        const end = from + name.length;
-        if (end > max || src.slice(from, end).toLowerCase() !== name) continue;
-        if (end < max && isTagChar(src, end)) continue;
+        const end = spelledAt(src, from, max, name);
+        if (end < 0 || (end < max && isTagChar(src, end))) continue;
         return src.slice(from, end);
     }
 
@@ -176,9 +182,29 @@ function tagAt(src: string, from: number, max: number, known: readonly string[])
     while (end < max && isTagChar(src, end)) {
         end += String.fromCodePoint(src.codePointAt(end) ?? 0).length;
     }
-    const word = src.slice(from, end);
+    // Trailing underscores close emphasis around the tag, `__#urgent__`,
+    // rather than end its name.
+    const word = src.slice(from, end).replace(/_+$/, '');
     if (!word || word.length > MAX_TAG_LENGTH || !LETTER.test(word)) return null;
     return word;
+}
+
+/**
+ * Where `name` ends if it is written at `from`, ignoring case, or -1.
+ *
+ * Lower-cased a character at a time rather than as a slice of the name's
+ * length, because lower-casing can change a character's length: `İ` becomes
+ * two code units.
+ */
+function spelledAt(src: string, from: number, max: number, name: string): number {
+    let end = from;
+    let lowered = '';
+    while (end < max && lowered.length < name.length) {
+        const ch = String.fromCodePoint(src.codePointAt(end) ?? 0);
+        lowered += ch.toLowerCase();
+        end += ch.length;
+    }
+    return lowered === name ? end : -1;
 }
 
 function isTagChar(src: string, at: number): boolean {
@@ -208,17 +234,30 @@ const RASTER_DATA_URI = /^data:image\/(png|jpeg|gif|webp);/i;
 export function storedImage(src: string, alt: string): StoredImage | null {
     if (RASTER_DATA_URI.test(src)) return { src, alt: alt || null };
     const hash = attachmentHash(src, alt);
-    if (!hash) return null;
-    // `oyot:<hash>` is the alt the editor gives an image it inserts; a real
-    // description is kept instead when the file has one.
-    const described = alt && !alt.startsWith('oyot:');
+    // A content hash, or no attachment at all: `oyot-attachment://notes.png`
+    // names nothing a device could ever hold.
+    if (!hash || !CONTENT_HASH.test(hash)) return null;
+    // `oyot:<hash>` is the alt the editor gives an image it inserts. A real
+    // description is kept instead, but not the words the exporter writes in
+    // place of one for an image it did not have.
+    const described = alt && !alt.startsWith('oyot:') && alt !== MISSING_ATTACHMENT_ALT;
     return { src: `${ATTACHMENT_SCHEME}${hash}`, alt: described ? alt : `oyot:${hash}` };
 }
 
-/** An image as Markdown writes it, for one kept as text. */
+const CONTENT_HASH = /^[a-f0-9]{64}$/;
+
+/**
+ * An image as Markdown writes it, for one kept as text.
+ *
+ * The address as the writer would have typed it rather than as markdown-it
+ * encodes it, so `写真.png` reads as that and not as `%E5%86%99...`; in angle
+ * brackets when it has a space or a parenthesis, which a bare one cannot.
+ */
 function imageMarkdown(src: string, alt: string, title: string): string {
+    const shown = markdownParser().normalizeLinkText(src);
+    const address = /[\s()]/.test(shown) ? `<${shown}>` : shown;
     const titled = title ? ` "${title.replace(/(["\\])/g, '\\$1')}"` : '';
-    return `![${alt}](${src}${titled})`;
+    return `![${alt}](${address}${titled})`;
 }
 
 // --- reading --------------------------------------------------------------------
@@ -234,11 +273,9 @@ export function readMarkdown(
     schema: Schema,
     options: MarkdownReadOptions = {},
 ): MarkdownDocument {
-    const reader = new DocumentReader(schema, {
-        noteLink: options.noteLink ?? (() => null),
-        imageSource: options.imageSource ?? storedImage,
-    });
-    const doc = reader.document(parse(markdown, options.knownTags ?? []));
+    const knownTags = options.knownTags ?? [];
+    const reader = new DocumentReader(schema, options.noteLink ?? (() => null), knownTags);
+    const doc = reader.document(parse(markdown, knownTags));
     doc.check();
     return { doc, imagesKeptAsText: reader.imagesKeptAsText };
 }
@@ -249,15 +286,38 @@ export function readMarkdown(
  * A note's title is not part of its content in Oyot, and a Markdown file
  * usually says what it is called in a heading at the top. The exporter writes
  * one there for that reason.
+ *
+ * Only the blocks are parsed, and then only the heading's words: this runs on
+ * every file before any is imported, and the words in a file are most of what
+ * parsing it costs. Link reference definitions are gathered into the same
+ * environment on the way, so `# [Title][ref]` reads as a full parse reads it.
  */
 export function leadingHeading(
     markdown: string,
     knownTags: readonly string[] = [],
 ): LeadingHeading | null {
-    const [open, inline] = parse(markdown, knownTags);
+    const md = markdownParser();
+    const env = tagEnv(knownTags);
+    const blocks: Token[] = [];
+    md.block.parse(markdown, md, env, blocks);
+
+    // markdown-it leaves the reference definitions in until a later step
+    // takes them out; they come before the first block without being one.
+    const at = blocks.findIndex((token) => token.type !== 'reference_definition');
+    const [open, inline] = at < 0 ? [] : [blocks[at], blocks[at + 1]];
     if (open?.type !== 'heading_open' || open.tag !== 'h1' || !open.map) return null;
     if (inline?.type !== 'inline') return null;
-    return { text: oneLine(plainText(inline.children ?? [])), lines: open.map };
+
+    const words = md.parseInline(inline.content, env)[0]?.children ?? [];
+    return {
+        text: oneLine(plainText(words)),
+        source: oneLine(inline.content),
+        tags: words
+            .filter((token) => token.type === 'oyot_tag')
+            .map((token) => String(token.meta?.name ?? ''))
+            .filter((name) => name.length > 0),
+        lines: open.map,
+    };
 }
 
 /** Inline tokens as the words they say. */
@@ -272,7 +332,8 @@ function plainText(tokens: Token[]): string {
     return out;
 }
 
-function oneLine(text: string): string {
+/** Text on one line, its runs of whitespace one space each. */
+export function oneLine(text: string): string {
     return text.replace(/\s+/g, ' ').trim();
 }
 
@@ -313,7 +374,8 @@ class DocumentReader {
 
     constructor(
         private readonly schema: Schema,
-        private readonly options: Required<Omit<MarkdownReadOptions, 'knownTags'>>,
+        private readonly noteLink: (href: string) => NoteLinkTarget | null,
+        private readonly knownTags: readonly string[],
     ) {}
 
     document(tokens: Token[]): ProseMirrorNode {
@@ -427,6 +489,15 @@ class DocumentReader {
         const text = (content: string, marks: readonly Mark[] = markSet(active)) => {
             if (content) out.push(schema.text(content, marks));
         };
+        const chip = (target: NoteLinkTarget) =>
+            schema.nodes.documentLink.create(
+                { targetId: target.id, title: target.title },
+                null,
+                markSet(active),
+            );
+        // The note a link being read points at, whose chip goes after the
+        // link's own words once they are read.
+        let pendingChip: NoteLinkTarget | null = null;
 
         for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i];
@@ -466,28 +537,41 @@ class DocumentReader {
                     break;
                 case 'link_open': {
                     const href = String(token.attrGet('href') ?? '');
-                    const target = href ? this.options.noteLink(href) : null;
-                    if (target) {
-                        // A link to another note being imported is a link to
-                        // that note, the chip the editor inserts. Its words
-                        // give way to the note's title, which is what the
-                        // exporter wrote there.
-                        out.push(
-                            schema.nodes.documentLink.create(
-                                { targetId: target.id, title: target.title },
-                                null,
-                                markSet(active),
-                            ),
-                        );
-                        i = closingLink(tokens, i);
-                    } else {
+                    const target = href ? this.noteLink(href) : null;
+                    if (!target) {
                         const title = String(token.attrGet('title') ?? '');
                         active.push(schema.marks.link.create({ href, title: title || null }));
+                        break;
+                    }
+                    // A link to another note being imported is a link to that
+                    // note, the chip the editor inserts. When its words are
+                    // only the note's title, which is what the exporter writes
+                    // there, the chip says them already. Otherwise they are
+                    // the writer's own and stay, with the chip after them.
+                    const close = closingLink(tokens, i);
+                    const label = tokens.slice(i + 1, close);
+                    const words = oneLine(plainText(label));
+                    const onlyTitle =
+                        !label.some((part) => part.type === 'image') &&
+                        (!words ||
+                            words.toLocaleLowerCase() ===
+                                oneLine(target.title).toLocaleLowerCase());
+                    if (onlyTitle) {
+                        out.push(chip(target));
+                        i = close;
+                    } else {
+                        pendingChip = target;
                     }
                     break;
                 }
                 case 'link_close':
-                    dropLast(active, 'link');
+                    if (pendingChip) {
+                        text(' ');
+                        out.push(chip(pendingChip));
+                        pendingChip = null;
+                    } else {
+                        dropLast(active, 'link');
+                    }
                     break;
                 case 'image':
                     out.push(this.image(token, active));
@@ -496,7 +580,15 @@ class DocumentReader {
                     if (BREAK_TAG.test(token.content)) {
                         out.push(schema.nodes.hardBreak.create());
                     } else {
-                        text(token.content.replace(/\s*\n\s*/g, ' '));
+                        // A tag written across lines, on one. Split rather
+                        // than matched, which runs in linear time however much
+                        // space a line holds.
+                        text(
+                            token.content
+                                .split('\n')
+                                .map((part) => part.trim())
+                                .join(' '),
+                        );
                     }
                     break;
                 case 'oyot_tag': {
@@ -522,7 +614,7 @@ class DocumentReader {
         const src = String(token.attrGet('src') ?? '');
         const alt = plainText(token.children ?? []).trim();
         const title = String(token.attrGet('title') ?? '');
-        const stored = src ? this.options.imageSource(src, alt) : null;
+        const stored = src ? storedImage(src, alt) : null;
         if (stored) {
             return this.schema.nodes.image.create({ ...stored, title: title || null });
         }
@@ -541,7 +633,9 @@ class DocumentReader {
     private list(open: Token, items: Branch[]): ProseMirrorNode[] {
         const { nodes } = this.schema;
         const ordered = open.type === 'ordered_list_open';
-        let number = ordered ? Number(open.attrGet('start') ?? 1) || 1 : 1;
+        // Checked for a number rather than for truth: a list can start at 0.
+        const first = Number(open.attrGet('start') ?? 1);
+        let number = ordered && Number.isFinite(first) ? first : 1;
 
         const out: ProseMirrorNode[] = [];
         let task = false;
@@ -563,7 +657,9 @@ class DocumentReader {
                 task = checked !== null;
                 start = number;
             }
-            const content = this.itemContent(this.blocks(item.children));
+            const blocks =
+                checked !== null ? this.taskBlocks(item.children) : this.blocks(item.children);
+            const content = this.itemContent(blocks);
             run.push(
                 checked !== null
                     ? nodes.taskItem.create({ checked }, content)
@@ -573,6 +669,25 @@ class DocumentReader {
         }
         endRun();
         return out;
+    }
+
+    /**
+     * A task item's blocks, reading what older exports nested in one.
+     *
+     * The exporter used to indent everything under a task's first paragraph
+     * as far as the words after its checkbox, four spaces deeper than a
+     * Markdown reader starts the task's content, which every reader takes
+     * for an indented code block. Those exports are out there, and the code
+     * block holds exactly the Markdown that was nested, so it is read as
+     * that. The exporter only ever wrote fenced code, so an indented code
+     * block under a task is one of these.
+     */
+    private taskBlocks(children: Branch[]): ProseMirrorNode[] {
+        return children.flatMap((child) =>
+            child.token.type === 'code_block'
+                ? this.blocks(nest(parse(child.token.content, this.knownTags)))
+                : this.block(child),
+        );
     }
 
     /**
@@ -598,17 +713,23 @@ class DocumentReader {
      * A block of HTML, kept as the text it is, a line for a line. A note has
      * no HTML, and rendering it would be turning it into something the note
      * cannot keep.
+     *
+     * The exception is a block of nothing but `<br>`, which is a writer
+     * making space between paragraphs, and becomes the empty line that makes
+     * it in a note.
      */
     private htmlBlock(token: Token): ProseMirrorNode {
         const { schema } = this;
+        if (!token.content.replace(/<br\s*\/?>/gi, '').trim()) {
+            return schema.nodes.paragraph.create();
+        }
+        const lines = token.content.split('\n');
+        while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
         const content: ProseMirrorNode[] = [];
-        token.content
-            .replace(/\n+$/, '')
-            .split('\n')
-            .forEach((line, index) => {
-                if (index > 0) content.push(schema.nodes.hardBreak.create());
-                if (line) content.push(schema.text(line));
-            });
+        lines.forEach((line, index) => {
+            if (index > 0) content.push(schema.nodes.hardBreak.create());
+            if (line) content.push(schema.text(line));
+        });
         return schema.nodes.paragraph.create(null, content);
     }
 
@@ -653,15 +774,19 @@ function closingLink(tokens: Token[], open: number): number {
 /**
  * GitHub's task list rule: an item is a task when its first paragraph begins
  * `[ ]` or `[x]`. The marker comes off the words, since the checkbox says it.
+ *
+ * Judged on the paragraph's source, where an escaped `\[ \]` still has its
+ * backslash: that is a bullet whose words begin with brackets, which is how
+ * the exporter writes one. By the time the words are text, the escape is gone.
  */
 function takeTaskMarker(children: Branch[]): boolean | null {
     const [first] = children;
     if (first?.token.type !== 'paragraph_open') return null;
-    const lead = inlineOf(first.children)[0];
-    if (lead?.type !== 'text') return null;
-    const marker = /^\[([ xX])\](?:[ \t]+|$)/.exec(lead.content);
-    if (!marker) return null;
-    lead.content = lead.content.slice(marker[0].length);
+    const inline = first.children.find((child) => child.token.type === 'inline')?.token;
+    const marker = /^\[([ xX])\](?=\s|$)/.exec(inline?.content ?? '');
+    const lead = inline?.children?.[0];
+    if (!marker || lead?.type !== 'text' || !lead.content.startsWith(marker[0])) return null;
+    lead.content = lead.content.slice(marker[0].length).replace(/^[ \t]+/, '');
     return marker[1] !== ' ';
 }
 

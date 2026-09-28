@@ -32,6 +32,12 @@ export interface MarkdownOptions {
     notePath: (docId: string) => string | null;
 }
 
+/**
+ * The words written in place of an image's description when its bytes are not
+ * on this device. Exported so the importer can tell them from a description.
+ */
+export const MISSING_ATTACHMENT_ALT = 'missing attachment';
+
 /** Three spaces after the marker, so a nested list indents to four. */
 const BULLET_MARKER = '-   ';
 
@@ -103,7 +109,9 @@ function codeBlock(node: ProseMirrorNode): string {
 
 function list(node: ProseMirrorNode, options: MarkdownOptions): string {
     const ordered = node.type.name === 'orderedList';
-    const start = ordered ? Number(node.attrs.start) || 1 : 1;
+    // Checked for a number rather than for truth: a list can start at 0.
+    const first = Number(node.attrs.start);
+    const start = ordered && Number.isFinite(first) ? first : 1;
     const items: string[] = [];
 
     node.forEach((item, _offset, index) => {
@@ -171,7 +179,7 @@ function image(node: ProseMirrorNode, options: MarkdownOptions): string {
         return src ? `![${alt}](${src})` : '';
     }
     const path = options.attachmentPath(hash);
-    if (!path) return `![${alt || 'missing attachment'}](oyot-attachment://${hash})`;
+    if (!path) return `![${alt || MISSING_ATTACHMENT_ALT}](oyot-attachment://${hash})`;
     return `![${alt}](${encodeLinkTarget(path)})`;
 }
 
