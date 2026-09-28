@@ -580,8 +580,14 @@
         flex-shrink: 0;
     }
 
+    /* No minimum width, so a task keeps to the width of the note as a
+       paragraph does: a long link breaks onto the next line, and a wide
+       table scrolls sideways by itself. A flex item is otherwise never
+       narrower than its longest word or its table, so the task widened the
+       note instead, and the whole note scrolled sideways. */
     .editor-content :global(ul[data-type='taskList'] > li > div) {
         flex: 1;
+        min-width: 0;
     }
 
     .editor-content :global(ul[data-type='taskList'] > li > div > p) {
