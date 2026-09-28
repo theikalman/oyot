@@ -36,6 +36,34 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.24-alpha',
+        date: '2026-09-28',
+        summary:
+            'Markdown files can come in as notes, whether Oyot exported them or another app wrote them. Tables take less room, and on a phone a wide one scrolls by itself instead of the whole note.',
+        changes: [
+            {
+                kind: 'added',
+                text: "Import, on the Notes page beside New note and in Settings under Data, makes a note of each Markdown file you pick, whether Oyot exported it or another app wrote it. A note's title comes from the file's front matter, from a heading at the top of the file, or else from the file's name, and a #word becomes a tag, as do the tags in its front matter. It reads Markdown as GitHub does, tables, task lists and strikethrough included, and a link from one file to another picked with it becomes a link between their notes.",
+            },
+            {
+                kind: 'added',
+                text: 'When an import is done, it says how many notes came in, names the files it could not read and why, and counts the pictures it could not bring in. A picture from an Oyot export shows again when this device has it, or once a paired device sends it. Any other picture, in a file beside the note or on the web, stays in the note as its Markdown text, where it stood, and so does HTML. Imported notes are dated the day they come in and are not pinned, and a journal in an Oyot export comes back as a note.',
+            },
+            {
+                kind: 'improved',
+                text: "A table's rows are only as tall as their text. They used to be almost twice that, so a table of seven short rows filled more than half of a phone's screen. A table inside a list already looked like this, and now a table looks the same wherever it is. Enter in a cell starts the next line right under the one before, where it used to leave a gap.",
+            },
+            {
+                kind: 'fixed',
+                text: 'A table wider than the note scrolls sideways by itself, and the rest of the note stays where it is. On a phone, the whole note used to scroll with it, so swiping to see the end of a table took the start of every line above and below it off the left edge of the screen. A long link in a task breaks onto the next line, as it does anywhere else in a note, where it used to widen the note the same way.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Export, in Settings under Data, writes Markdown that reads as it was written, in Oyot and in other Markdown readers such as GitHub. Anything nested under a task used to come out as a block of code, a list that started at 0 started at 1, a line of dashes could turn the line above it into a heading, and words such as #word, _x_ or &amp; typed into a note read back as a tag, as italics and as &.',
+            },
+        ],
+    },
+    {
         version: '0.0.23-alpha',
         date: '2026-09-28',
         summary:
