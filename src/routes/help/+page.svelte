@@ -329,7 +329,9 @@
                     </li>
                     <li>
                         <strong>Todos</strong> lists every task still to do, and can show the
-                        finished ones too. <strong>Tags</strong> lists every tag.
+                        finished ones too. Its search finds the tasks with every word you type in
+                        them, in any order, and marks the words it found. <strong>Tags</strong> lists
+                        every tag.
                     </li>
                 </ul>
             </section>

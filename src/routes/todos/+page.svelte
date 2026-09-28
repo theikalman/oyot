@@ -3,9 +3,11 @@
     import { openDocumentAtTodo } from '$lib/services/navigation';
     import { formatJournalTitle } from '$lib/calendar/calendar';
     import { createTodoIndex } from '$lib/todos/todoStore.svelte';
-    import type { TodoGroup, TodoHit } from '$lib/todos/grouping';
-    import { todoSegments } from '$lib/todos/todoText';
+    import { countAll, countOpen, type TodoGroup, type TodoHit } from '$lib/todos/grouping';
+    import { findTerms, searchSections, searchTerms } from '$lib/todos/todoSearch';
+    import { markSegments, todoSegments, type MarkedRun } from '$lib/todos/todoText';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
+    import type { Snapshot } from './$types';
 
     // Every task item in every note and journal, on one page.
     //
@@ -29,6 +31,36 @@
     // box would bury it under everything already finished. The checkbox is
     // right there for anyone who wants the full history back.
     let hideCompleted = $state(true);
+
+    // Finds a todo by the words in it (see $lib/todos/todoSearch). Filtered
+    // here rather than queried, as the Notes and Tags pages filter theirs:
+    // every todo is already in hand.
+    let query = $state('');
+    let terms = $derived(searchTerms(query));
+    let searching = $derived(terms.length > 0);
+
+    // What the search finds, finished todos included, which Hide completed
+    // then takes out. Everything, while nothing is being searched for.
+    let found = $derived(searchSections(todos.sections, terms));
+    let foundCount = $derived(countAll(found));
+
+    // Escape empties the box, as it does the sidebar's search.
+    function handleSearchKeydown(event: KeyboardEvent) {
+        if (event.key === 'Escape') query = '';
+    }
+
+    // Back from a todo this page opened, it is as it was left: the same
+    // search over the same rows, rather than the whole list again and the
+    // words to type a second time. SvelteKit keeps this for each entry in
+    // the history, so opening the page from the sidebar, which is a new
+    // entry, starts afresh.
+    export const snapshot: Snapshot<{ query: string; hideCompleted: boolean }> = {
+        capture: () => ({ query, hideCompleted }),
+        restore: (saved) => {
+            query = saved.query;
+            hideCompleted = saved.hideCompleted;
+        },
+    };
 
     // Held in state rather than read at render time, so a page left open
     // overnight stops calling yesterday's journal "Today".
@@ -61,31 +93,58 @@
         return group.docType === 'journal' ? formatJournalTitle(group.title, today) : group.title;
     }
 
+    // A row's text as it is drawn: its chips, with what the search found
+    // marked, so a todo found by part of a word shows which part.
+    function drawn(todo: TodoHit, group: TodoGroup) {
+        return markSegments(todoSegments(todo.text, group.tags), findTerms(todo.text, terms) ?? []);
+    }
+
     function open(todo: TodoHit) {
         void openDocumentAtTodo(todo.document_id, todo.ordinal);
     }
 
-    let journals = $derived(shown(todos.sections.journals));
-    let notes = $derived(shown(todos.sections.notes));
+    let journals = $derived(shown(found.journals));
+    let notes = $derived(shown(found.notes));
     let nothingToShow = $derived(journals.length === 0 && notes.length === 0);
 </script>
+
+<!-- Some of a todo's words, with the ones the search found marked. All on
+     one line: a space between two runs would land inside a word. -->
+{#snippet marked(runs: MarkedRun[])}{#each runs as run, r (r)}{#if run.match}<mark>{run.text}</mark
+            >{:else}{run.text}{/if}{/each}{/snippet}
 
 <WorkspaceShell title="Todos">
     <div class="todos">
         <div class="todos-bar">
-            <p class="summary">
+            <!-- Read out as it changes, so a search says how much it found
+                 to someone who cannot see the rows come and go. -->
+            <p class="summary" aria-live="polite">
                 {#if todos.loading && todos.isEmpty}
                     Collecting your todos...
                 {:else if todos.failed}
                     &nbsp;
+                {:else if searching}
+                    {countOpen(found)} open of {foundCount} matching
                 {:else}
                     {todos.openCount} open of {todos.totalCount}
                 {/if}
             </p>
-            <label class="filter">
-                <input type="checkbox" bind:checked={hideCompleted} />
-                Hide completed
-            </label>
+            <div class="bar-actions">
+                {#if !todos.isEmpty}
+                    <input
+                        class="search"
+                        type="search"
+                        placeholder="Search todos"
+                        bind:value={query}
+                        onkeydown={handleSearchKeydown}
+                        aria-label="Search todos"
+                    />
+                {/if}
+                <label class="filter">
+                    <input type="checkbox" bind:checked={hideCompleted} />
+                    Hide completed
+                </label>
+            </div>
         </div>
 
         {#if todos.failed}
@@ -97,6 +156,19 @@
         {:else if todos.isEmpty}
             <p class="note">
                 Nothing yet. Type <code>/todo</code> in any note or journal and it will show up here.
+            </p>
+        {:else if searching && nothingToShow}
+            <!-- Everything the search found can be finished and hidden, and
+                 "no match" would then send someone looking for a todo that
+                 is right there behind the checkbox. -->
+            <p class="note">
+                {#if foundCount === 0}
+                    No todo matches "{query.trim()}".
+                {:else if foundCount === 1}
+                    Only a completed todo matches "{query.trim()}". Untick Hide completed to see it.
+                {:else}
+                    Only completed todos match "{query.trim()}". Untick Hide completed to see them.
+                {/if}
             </p>
         {:else if nothingToShow}
             <p class="note">Everything here is done.</p>
@@ -126,13 +198,15 @@
                                                 </span>
                                                 <span class="text" class:empty={!todo.text}>
                                                     {#if todo.text}
-                                                        {#each todoSegments(todo.text, group.tags) as segment, i (i)}
+                                                        {#each drawn(todo, group) as segment, i (i)}
                                                             {#if segment.kind === 'tag'}
                                                                 <span class="tag-chip"
-                                                                    >#{segment.name}</span
+                                                                    >{@render marked(
+                                                                        segment.runs,
+                                                                    )}</span
                                                                 >
                                                             {:else}
-                                                                {segment.text}
+                                                                {@render marked(segment.runs)}
                                                             {/if}
                                                         {/each}
                                                     {:else}
@@ -172,6 +246,30 @@
         margin: 0;
         font-size: 13px;
         color: var(--text-secondary);
+    }
+
+    .bar-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    /* The Notes and Tags pages' filter box. */
+    .search {
+        padding: 5px 10px;
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--text-primary);
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        min-width: 160px;
+    }
+
+    .search:focus {
+        outline: none;
+        border-color: var(--accent-color);
     }
 
     .filter {
@@ -295,5 +393,15 @@
     /* Finished with the rest of the line. */
     .todo.done .tag-chip {
         color: var(--text-muted);
+    }
+
+    /* What the search found, in the sidebar search's highlight, and in the
+       colour of the words around it, which is muted on a finished row. No
+       padding, which would nudge the letters sideways as marks come and go
+       with each key pressed. */
+    mark {
+        background: var(--accent-bg-hover);
+        color: inherit;
+        border-radius: 2px;
     }
 </style>

@@ -1,3 +1,5 @@
+import type { TextRange } from './todoSearch';
+
 /** One run of a todo's text, as the todo index draws it: words, or a tag. */
 export type TodoSegment = { kind: 'text'; text: string } | { kind: 'tag'; name: string };
 
@@ -63,4 +65,56 @@ export function todoSegments(text: string, tags: readonly string[]): TodoSegment
 function continuesWord(text: string, index: number): boolean {
     const code = text.codePointAt(index);
     return code !== undefined && CONTINUES_WORD.test(String.fromCodePoint(code));
+}
+
+/** A piece of a segment, marked when it is part of what a search found. */
+export interface MarkedRun {
+    text: string;
+    match: boolean;
+}
+
+/**
+ * A segment cut into runs where a search's finds begin and end. A chip's
+ * runs spell it the way the text does, `#name`, so a find is marked inside
+ * a chip as well as around one.
+ */
+export type MarkedSegment =
+    { kind: 'text'; runs: MarkedRun[] } | { kind: 'tag'; name: string; runs: MarkedRun[] };
+
+/**
+ * Mark what a search found in a todo, segment by segment.
+ *
+ * `found` is in order and does not overlap, as `findTerms` gives it, and its
+ * offsets are into the text the segments were cut from, which they spell out
+ * character for character. Nothing is marked for no finds.
+ */
+export function markSegments(
+    segments: TodoSegment[],
+    found: readonly TextRange[],
+): MarkedSegment[] {
+    let offset = 0;
+    return segments.map((segment) => {
+        const spelled = segment.kind === 'tag' ? `#${segment.name}` : segment.text;
+        const runs = markRuns(spelled, offset, found);
+        offset += spelled.length;
+        return segment.kind === 'tag'
+            ? { kind: 'tag', name: segment.name, runs }
+            : { kind: 'text', runs };
+    });
+}
+
+/** `text`, found at `offset` in its todo, cut where the finds begin and end. */
+function markRuns(text: string, offset: number, found: readonly TextRange[]): MarkedRun[] {
+    const runs: MarkedRun[] = [];
+    let from = 0;
+    for (const range of found) {
+        const start = Math.max(range.start - offset, from);
+        const end = Math.min(range.end - offset, text.length);
+        if (start >= end) continue;
+        if (start > from) runs.push({ text: text.slice(from, start), match: false });
+        runs.push({ text: text.slice(start, end), match: true });
+        from = end;
+    }
+    if (from < text.length) runs.push({ text: text.slice(from), match: false });
+    return runs;
 }
