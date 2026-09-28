@@ -140,8 +140,11 @@ hands the webview its text and its name; no path crosses IPC. A path written
 inside a file, an image beside a note for one, is never followed: that would
 let a file's content, or the webview, choose what is read from disk and sent
 to every paired device. Such an image stays in the note as its Markdown text.
-The webview builds each note against the editor's schema and saves it through
-the editor's own save path. See
+The webview builds each note against the editor's schema and merges it in as
+a peer's edit is merged. It chooses each imported note's id first, so links
+between the files can be written; `create_document` accepts only a UUID that
+no document has ever had, live or deleted, so a chosen id cannot revive or
+overwrite a note. See
 [ADR 0029](docs/decisions/0029-import-markdown-files-as-notes.md).
 
 **Backups are written and read in Rust, and a backup being imported is
