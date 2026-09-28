@@ -4,8 +4,8 @@
     import { formatJournalTitle } from '$lib/calendar/calendar';
     import { createTodoIndex } from '$lib/todos/todoStore.svelte';
     import { countAll, countOpen, type TodoGroup, type TodoHit } from '$lib/todos/grouping';
-    import { searchSections, searchTerms } from '$lib/todos/todoSearch';
-    import { todoSegments } from '$lib/todos/todoText';
+    import { findTerms, searchSections, searchTerms } from '$lib/todos/todoSearch';
+    import { markSegments, todoSegments, type MarkedRun } from '$lib/todos/todoText';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
 
     // Every task item in every note and journal, on one page.
@@ -79,6 +79,12 @@
         return group.docType === 'journal' ? formatJournalTitle(group.title, today) : group.title;
     }
 
+    // A row's text as it is drawn: its chips, with what the search found
+    // marked, so a todo found by part of a word shows which part.
+    function drawn(todo: TodoHit, group: TodoGroup) {
+        return markSegments(todoSegments(todo.text, group.tags), findTerms(todo.text, terms) ?? []);
+    }
+
     function open(todo: TodoHit) {
         void openDocumentAtTodo(todo.document_id, todo.ordinal);
     }
@@ -87,6 +93,11 @@
     let notes = $derived(shown(found.notes));
     let nothingToShow = $derived(journals.length === 0 && notes.length === 0);
 </script>
+
+<!-- Some of a todo's words, with the ones the search found marked. All on
+     one line: a space between two runs would land inside a word. -->
+{#snippet marked(runs: MarkedRun[])}{#each runs as run, r (r)}{#if run.match}<mark>{run.text}</mark
+            >{:else}{run.text}{/if}{/each}{/snippet}
 
 <WorkspaceShell title="Todos">
     <div class="todos">
@@ -173,13 +184,15 @@
                                                 </span>
                                                 <span class="text" class:empty={!todo.text}>
                                                     {#if todo.text}
-                                                        {#each todoSegments(todo.text, group.tags) as segment, i (i)}
+                                                        {#each drawn(todo, group) as segment, i (i)}
                                                             {#if segment.kind === 'tag'}
                                                                 <span class="tag-chip"
-                                                                    >#{segment.name}</span
+                                                                    >{@render marked(
+                                                                        segment.runs,
+                                                                    )}</span
                                                                 >
                                                             {:else}
-                                                                {segment.text}
+                                                                {@render marked(segment.runs)}
                                                             {/if}
                                                         {/each}
                                                     {:else}
@@ -366,5 +379,15 @@
     /* Finished with the rest of the line. */
     .todo.done .tag-chip {
         color: var(--text-muted);
+    }
+
+    /* What the search found, in the sidebar search's highlight, and in the
+       colour of the words around it, which is muted on a finished row. No
+       padding, which would nudge the letters sideways as marks come and go
+       with each key pressed. */
+    mark {
+        background: var(--accent-bg-hover);
+        color: inherit;
+        border-radius: 2px;
     }
 </style>

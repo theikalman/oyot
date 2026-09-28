@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { todoSegments, type TodoSegment } from './todoText';
+import {
+    markSegments,
+    todoSegments,
+    type MarkedRun,
+    type MarkedSegment,
+    type TodoSegment,
+} from './todoText';
+import { findTerms, searchTerms } from './todoSearch';
 
 const text = (value: string): TodoSegment => ({ kind: 'text', text: value });
 const tag = (name: string): TodoSegment => ({ kind: 'tag', name });
@@ -80,6 +87,70 @@ describe('todoSegments', () => {
             'emoji #urgent🎉 #work𝒳',
         ]) {
             expect(spoken(todoSegments(todo, tags))).toBe(todo);
+        }
+    });
+});
+
+describe('markSegments', () => {
+    const plain = (value: string): MarkedRun => ({ text: value, match: false });
+    const found = (value: string): MarkedRun => ({ text: value, match: true });
+
+    /** A todo drawn as the page draws it while `query` is searched for. */
+    function marked(todo: string, tags: string[], query: string): MarkedSegment[] {
+        const finds = findTerms(todo, searchTerms(query)) ?? [];
+        return markSegments(todoSegments(todo, tags), finds);
+    }
+
+    it('marks nothing when nothing is searched for', () => {
+        expect(marked('call mum #urgent', ['urgent'], '')).toEqual([
+            { kind: 'text', runs: [plain('call mum ')] },
+            { kind: 'tag', name: 'urgent', runs: [plain('#urgent')] },
+        ]);
+    });
+
+    it('marks each find in the words', () => {
+        expect(marked('call the bank, then the bank again', [], 'bank')).toEqual([
+            {
+                kind: 'text',
+                runs: [
+                    plain('call the '),
+                    found('bank'),
+                    plain(', then the '),
+                    found('bank'),
+                    plain(' again'),
+                ],
+            },
+        ]);
+    });
+
+    it('marks a find inside a chip, which is spelled with its hash', () => {
+        expect(marked('call mum #urgent', ['urgent'], 'urg')).toEqual([
+            { kind: 'text', runs: [plain('call mum ')] },
+            { kind: 'tag', name: 'urgent', runs: [plain('#'), found('urg'), plain('ent')] },
+        ]);
+    });
+
+    // A chip can come straight after a word, and one find can cover both.
+    it('marks a find that runs from the words into a chip', () => {
+        expect(marked('call mum#urgent', ['urgent'], 'mum#urg')).toEqual([
+            { kind: 'text', runs: [plain('call '), found('mum')] },
+            { kind: 'tag', name: 'urgent', runs: [found('#urg'), plain('ent')] },
+        ]);
+    });
+
+    // Marking changes how a todo looks, never what it says.
+    it('keeps every character of the text', () => {
+        const tags = ['project x', 'urgent'];
+        for (const [todo, query] of [
+            ['#project x#urgent and more', 'ect x#u more'],
+            ['Café latte'.normalize('NFD'), 'cafe'],
+            ['🎉 party #urgent', 'art urg'],
+        ]) {
+            const text = marked(todo, tags, query)
+                .flatMap((segment) => segment.runs)
+                .map((run) => run.text)
+                .join('');
+            expect(text).toBe(todo);
         }
     });
 });
