@@ -3,7 +3,8 @@
     import { openDocumentAtTodo } from '$lib/services/navigation';
     import { formatJournalTitle } from '$lib/calendar/calendar';
     import { createTodoIndex } from '$lib/todos/todoStore.svelte';
-    import type { TodoGroup, TodoHit } from '$lib/todos/grouping';
+    import { countAll, countOpen, type TodoGroup, type TodoHit } from '$lib/todos/grouping';
+    import { searchSections, searchTerms } from '$lib/todos/todoSearch';
     import { todoSegments } from '$lib/todos/todoText';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
 
@@ -29,6 +30,23 @@
     // box would bury it under everything already finished. The checkbox is
     // right there for anyone who wants the full history back.
     let hideCompleted = $state(true);
+
+    // Finds a todo by the words in it (see $lib/todos/todoSearch). Filtered
+    // here rather than queried, as the Notes and Tags pages filter theirs:
+    // every todo is already in hand.
+    let query = $state('');
+    let terms = $derived(searchTerms(query));
+    let searching = $derived(terms.length > 0);
+
+    // What the search finds, finished todos included, which Hide completed
+    // then takes out. Everything, while nothing is being searched for.
+    let found = $derived(searchSections(todos.sections, terms));
+    let foundCount = $derived(countAll(found));
+
+    // Escape empties the box, as it does the sidebar's search.
+    function handleSearchKeydown(event: KeyboardEvent) {
+        if (event.key === 'Escape') query = '';
+    }
 
     // Held in state rather than read at render time, so a page left open
     // overnight stops calling yesterday's journal "Today".
@@ -65,27 +83,43 @@
         void openDocumentAtTodo(todo.document_id, todo.ordinal);
     }
 
-    let journals = $derived(shown(todos.sections.journals));
-    let notes = $derived(shown(todos.sections.notes));
+    let journals = $derived(shown(found.journals));
+    let notes = $derived(shown(found.notes));
     let nothingToShow = $derived(journals.length === 0 && notes.length === 0);
 </script>
 
 <WorkspaceShell title="Todos">
     <div class="todos">
         <div class="todos-bar">
-            <p class="summary">
+            <!-- Read out as it changes, so a search says how much it found
+                 to someone who cannot see the rows come and go. -->
+            <p class="summary" aria-live="polite">
                 {#if todos.loading && todos.isEmpty}
                     Collecting your todos...
                 {:else if todos.failed}
                     &nbsp;
+                {:else if searching}
+                    {countOpen(found)} open of {foundCount} matching
                 {:else}
                     {todos.openCount} open of {todos.totalCount}
                 {/if}
             </p>
-            <label class="filter">
-                <input type="checkbox" bind:checked={hideCompleted} />
-                Hide completed
-            </label>
+            <div class="bar-actions">
+                {#if !todos.isEmpty}
+                    <input
+                        class="search"
+                        type="search"
+                        placeholder="Search todos"
+                        bind:value={query}
+                        onkeydown={handleSearchKeydown}
+                        aria-label="Search todos"
+                    />
+                {/if}
+                <label class="filter">
+                    <input type="checkbox" bind:checked={hideCompleted} />
+                    Hide completed
+                </label>
+            </div>
         </div>
 
         {#if todos.failed}
@@ -97,6 +131,19 @@
         {:else if todos.isEmpty}
             <p class="note">
                 Nothing yet. Type <code>/todo</code> in any note or journal and it will show up here.
+            </p>
+        {:else if searching && nothingToShow}
+            <!-- Everything the search found can be finished and hidden, and
+                 "no match" would then send someone looking for a todo that
+                 is right there behind the checkbox. -->
+            <p class="note">
+                {#if foundCount === 0}
+                    No todo matches "{query.trim()}".
+                {:else if foundCount === 1}
+                    Only a completed todo matches "{query.trim()}". Untick Hide completed to see it.
+                {:else}
+                    Only completed todos match "{query.trim()}". Untick Hide completed to see them.
+                {/if}
             </p>
         {:else if nothingToShow}
             <p class="note">Everything here is done.</p>
@@ -172,6 +219,30 @@
         margin: 0;
         font-size: 13px;
         color: var(--text-secondary);
+    }
+
+    .bar-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    /* The Notes and Tags pages' filter box. */
+    .search {
+        padding: 5px 10px;
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--text-primary);
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        min-width: 160px;
+    }
+
+    .search:focus {
+        outline: none;
+        border-color: var(--accent-color);
     }
 
     .filter {
