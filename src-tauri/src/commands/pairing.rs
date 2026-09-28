@@ -69,6 +69,8 @@ pub fn remove_pair(state: tauri::State<'_, AppState>, peer_node_id: String) -> R
     state
         .peers
         .forget(&peer_node_id, crate::network::peers::PeerSource::Address);
+    #[cfg(mobile)]
+    crate::mobile::reschedule(&state.app_handle);
     Ok(())
 }
 

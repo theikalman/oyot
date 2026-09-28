@@ -31,7 +31,9 @@ pub struct NetworkStatus {
     pub discovery_error: Option<String>,
 }
 
-/// Start listening, finding and syncing. Called once, at launch.
+/// Start listening, finding and syncing: at launch on a desktop, and each
+/// time a phone comes on screen (ADR 0034, decision 1). Starting what is
+/// already running does nothing.
 ///
 /// The listener comes up before the advertisement, so there is no moment when
 /// a peer is invited to a port that is not accepting yet, and the engine
@@ -39,6 +41,9 @@ pub struct NetworkStatus {
 pub async fn start_network(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let sync = app.state::<SyncManager>();
+    if state.network.lock().is_some() {
+        return Ok(());
+    }
     let node_id = state.signaling_manager.get_node_id();
     if node_id.is_empty() {
         return Err("cannot start sync before the identity is loaded".to_string());
@@ -80,19 +85,27 @@ pub async fn start_network(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Stop advertising, probing, listening and syncing, as the process exits.
+pub fn stop_network(app: &AppHandle) {
+    stop_listening(app);
+    if let Some(sync) = app.try_state::<SyncManager>() {
+        sync.stop();
+    }
+}
+
+/// Stop advertising, probing and listening, and leave the connections to
+/// whoever holds them: a phone leaving the screen lets a sync in progress
+/// finish first (ADR 0034, decision 6).
 ///
 /// Advertising stops first: a peer that acts on a stale advertisement should
 /// find a closed port rather than an open one that no longer means anything.
-pub fn stop_network(app: &AppHandle) {
+pub fn stop_listening(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         state.lan.stop();
         state.remote.stop();
         if let Some(listener) = state.lan_listener.lock().take() {
             listener.stop();
         }
-    }
-    if let Some(sync) = app.try_state::<SyncManager>() {
-        sync.stop();
+        *state.network.lock() = None;
     }
 }
 

@@ -2918,6 +2918,7 @@ dependencies = [
  "hex",
  "hostname",
  "if-addrs",
+ "jni 0.21.1",
  "keyring",
  "keyring-core",
  "mdns-sd",
@@ -2935,6 +2936,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
+ "tauri-plugin-background-sync",
  "tauri-plugin-barcode-scanner",
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
@@ -4405,6 +4407,15 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "tauri-plugin-background-sync"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

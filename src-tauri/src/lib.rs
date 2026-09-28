@@ -11,6 +11,8 @@ mod desktop;
 mod endpoints;
 mod identity;
 mod indexer;
+#[cfg(mobile)]
+mod mobile;
 mod network;
 mod pairing;
 mod sync;
@@ -733,7 +735,10 @@ pub fn run() {
         .plugin(tauri_plugin_barcode_scanner::init())
         // Signing in to Google Drive on a phone (ADR 0025, decision 7).
         // Rust calls it; no capability lets the webview.
-        .plugin(tauri_plugin_sign_in::init());
+        .plugin(tauri_plugin_sign_in::init())
+        // Background runs and the screen (ADR 0034). Registered before the
+        // app finishes launching, which iOS needs of its background tasks.
+        .plugin(tauri_plugin_background_sync::init());
 
     // Starting at login, opt-in and in the tray (ADR 0030, decision 7). Rust
     // calls it; no capability lets the webview. A LaunchAgent rather than an
@@ -804,13 +809,20 @@ pub fn run() {
             });
 
             // Listening, discovery and sync, on the async runtime: the engine
-            // spawns its connections there.
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::commands::signaling::start_network(&handle).await {
-                    warn_log!("[sync] could not start: {e}");
-                }
-            });
+            // spawns its connections there. A desktop runs them for as long
+            // as it runs; a phone only while it is on screen, which its
+            // platform reports (ADR 0034, decision 1).
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::signaling::start_network(&handle).await {
+                        warn_log!("[sync] could not start: {e}");
+                    }
+                });
+            }
+            #[cfg(mobile)]
+            mobile::keep(app.handle());
 
             #[cfg(desktop)]
             {

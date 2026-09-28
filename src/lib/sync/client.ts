@@ -307,6 +307,9 @@ async function setupEventListeners(): Promise<void> {
 
         listen<PeerState>('sync-peer-state', (event) => applyPeerState(event.payload)),
 
+        // Recorded on either side of a pairing, by Rust.
+        listen('sync-pair-recorded', () => void refreshPairedDevices()),
+
         listen<PendingPairRequest>('signaling-pair-request-received', (event) => {
             log.debug(`[sync] event: pair-request from=${event.payload.from}`);
             syncStore.setPendingPairRequest(event.payload);

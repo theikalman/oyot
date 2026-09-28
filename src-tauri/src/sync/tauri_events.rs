@@ -72,6 +72,14 @@ impl Events for TauriEvents {
         );
     }
 
+    fn pair_recorded(&self, node_id: &str) {
+        self.emit("sync-pair-recorded", json!({ "nodeId": node_id }));
+        // A phone schedules background runs only while it has a device to
+        // run them with (ADR 0034, decision 4).
+        #[cfg(mobile)]
+        crate::mobile::reschedule(&self.app);
+    }
+
     fn pair_answered(&self, from: &str, user_id: &str, display_name: &str, accepted: bool) {
         self.emit(
             "signaling-pair-response-received",

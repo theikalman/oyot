@@ -53,6 +53,13 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
+        # Background sync (ADR 0034, decision 6).
+        NSLocalNetworkUsageDescription: Oyot syncs your notes with your other devices on this network.
+        NSBonjourServices: [_oyot._tcp]
+        UIBackgroundModes: [fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.ajiyakin.oyot.sync.refresh
+          - com.ajiyakin.oyot.sync.catch-up
     entitlements:
       path: oyot_iOS/oyot_iOS.entitlements
     scheme:

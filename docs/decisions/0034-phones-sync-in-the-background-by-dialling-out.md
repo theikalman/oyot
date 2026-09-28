@@ -93,11 +93,14 @@ happens. The settings page says so, in plain words, for each platform.
 
 **5. Android: a periodic WorkManager job.**
 
-- **The job.** A unique periodic `CoroutineWorker`, requested every 30
-  minutes. It needs an unmetered network (any network, when mobile data is
-  allowed) and a battery that is not low. It is enqueued so as to keep an
-  existing job, so opening the app does not reset its clock, and a change to
-  either setting updates the job's constraints in place.
+- **The job.** A unique periodic `Worker`, requested every 30 minutes. It
+  needs an unmetered network (any network, when mobile data is allowed) and a
+  battery that is not low. It is enqueued so as to keep an existing job, so
+  opening the app does not reset its clock, and a change to either setting
+  updates the job's constraints in place. Not a `CoroutineWorker`: the run is
+  one blocking call into Rust, and ending it early when WorkManager stops the
+  job needs `onStopped`, which a `CoroutineWorker` does not let a subclass
+  override.
 - **What it runs.** It loads `oyot_lib` and calls a JNI function (`jni` is
   already in the tree) with the app's data directory and a budget of five
   minutes, half of what WorkManager allows. Tauri is not started, since it

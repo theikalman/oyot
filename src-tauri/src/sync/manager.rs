@@ -423,8 +423,6 @@ impl SyncManager {
     #[cfg_attr(desktop, allow(dead_code))]
     pub async fn run_until(&self, budget: Duration, stop: impl Future<Output = ()>) -> RunReport {
         let deadline = tokio::time::Instant::now() + budget;
-        let moved_before = *self.inner.moved.lock();
-        let mut stop = std::pin::pin!(stop);
         let targets: Vec<String> = self
             .inner
             .pairs()
@@ -435,7 +433,49 @@ impl SyncManager {
         for node_id in &targets {
             self.dial(node_id);
         }
+        self.wait_for(&targets, deadline, stop).await
+    }
 
+    /// Stop reaching out, and give the syncs in progress until `budget` to
+    /// finish, as a phone leaving the screen does (ADR 0034, decision 6).
+    /// Then close everything. `None` when nothing was in progress.
+    #[cfg_attr(desktop, allow(dead_code))]
+    pub async fn finish(
+        &self,
+        budget: Duration,
+        stop: impl Future<Output = ()>,
+    ) -> Option<RunReport> {
+        let deadline = tokio::time::Instant::now() + budget;
+        let (targets, busy) = {
+            let mut state = self.inner.state.lock();
+            // Nothing new is dialled, and nothing that drops is redialled.
+            state.running = false;
+            if let Some(task) = state.found_task.take() {
+                task.abort();
+            }
+            let busy = state.conns.values().any(|c| !c.synced || c.images_pending);
+            (state.conns.keys().cloned().collect::<Vec<_>>(), busy)
+        };
+        let report = if busy {
+            Some(self.wait_for(&targets, deadline, stop).await)
+        } else {
+            None
+        };
+        self.stop();
+        report
+    }
+
+    /// Wait until every connection to `targets` that comes up is synced both
+    /// ways with no images left to fetch, and nothing is still being
+    /// dialled, or until the deadline or `stop`. Then close them.
+    async fn wait_for(
+        &self,
+        targets: &[String],
+        deadline: tokio::time::Instant,
+        stop: impl Future<Output = ()>,
+    ) -> RunReport {
+        let moved_before = *self.inner.moved.lock();
+        let mut stop = std::pin::pin!(stop);
         let mut report = RunReport::default();
         loop {
             let notified = self.inner.changed.notified();
@@ -486,7 +526,7 @@ impl SyncManager {
                 }
             }
         }
-        for node_id in &targets {
+        for node_id in targets {
             self.close(node_id);
         }
         report.moved = self.inner.moved.lock().since(moved_before);
@@ -835,6 +875,7 @@ where
             return;
         }
     }
+    inner.events.pair_recorded(&node_id);
     let peer = PeerInfo {
         node_id: node_id.clone(),
         room_id,
@@ -872,6 +913,7 @@ async fn request_pair(inner: Arc<Inner>, node_id: String) -> Result<(), String> 
                         return;
                     }
                 }
+                inner.events.pair_recorded(&node_id);
                 inner
                     .events
                     .pair_answered(&node_id, &user_id, &display_name, true);

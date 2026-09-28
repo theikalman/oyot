@@ -457,6 +457,71 @@ async fn a_bounded_run_ends_once_both_sides_are_synced() {
     .await;
 }
 
+// ADR 0034, decision 6: a phone leaving the screen stops reaching out, lets a
+// sync in progress finish, then closes and stays closed.
+#[tokio::test(flavor = "multi_thread")]
+async fn leaving_lets_a_sync_in_progress_finish_then_goes_quiet() {
+    let (phone, desktop) = (device("phone").await, device("desktop").await);
+    pair(&phone, &desktop);
+    route(&phone, &desktop);
+    for i in 0..60 {
+        write_note(&desktop, &format!("note {i}"), "from the desktop");
+    }
+    desktop.manager.start();
+    phone.manager.start();
+    eventually("a connection", || {
+        phone.manager.is_connected(&desktop.node_id)
+    })
+    .await;
+
+    let report = phone
+        .manager
+        .finish(Duration::from_secs(20), std::future::pending())
+        .await;
+
+    // Already finished by the time it was asked is fine too; what matters is
+    // that nothing was cut off.
+    if let Some(report) = report {
+        assert_eq!(report.synced, vec![desktop.node_id.clone()], "{report:?}");
+    }
+    for i in 0..60 {
+        assert_eq!(text_of(&phone, &format!("note {i}")), "from the desktop");
+    }
+    eventually("the connection closing", || {
+        !phone.manager.is_connected(&desktop.node_id)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(
+        !phone.manager.is_connected(&desktop.node_id),
+        "nothing redials a phone that left the screen"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn leaving_with_nothing_in_progress_just_closes() {
+    let (phone, desktop) = (device("phone").await, device("desktop").await);
+    pair(&phone, &desktop);
+    route(&phone, &desktop);
+    desktop.manager.start();
+    phone.manager.start();
+    eventually("both synced", || {
+        phone.manager.status().iter().any(|s| s.phase == "synced")
+    })
+    .await;
+
+    let report = phone
+        .manager
+        .finish(Duration::from_secs(20), std::future::pending())
+        .await;
+
+    assert_eq!(report, None);
+    eventually("the connection closing", || {
+        !phone.manager.is_connected(&desktop.node_id)
+    })
+    .await;
+}
+
 // ADR 0034, decision 6: when the system takes the time back, the run stops
 // and says so; what it finished stands.
 #[tokio::test(flavor = "multi_thread")]

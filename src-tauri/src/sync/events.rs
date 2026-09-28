@@ -23,6 +23,8 @@ pub trait Events: Send + Sync {
     fn pair_requested(&self, _from: &str, _user_id: &str, _display_name: &str) {}
     /// The device this one asked to pair with answered.
     fn pair_answered(&self, _from: &str, _user_id: &str, _display_name: &str, _accepted: bool) {}
+    /// A pairing was recorded, on either side of it.
+    fn pair_recorded(&self, _node_id: &str) {}
 }
 
 /// One paired device's connection, as the page shows it.

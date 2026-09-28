@@ -60,7 +60,8 @@ impl Trigger {
         }
     }
 
-    #[cfg_attr(desktop, allow(dead_code))]
+    /// iOS names the trigger when it calls in; the others know their own.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub fn from_name(name: &str) -> Option<Trigger> {
         [
             Trigger::WorkManager,
@@ -110,6 +111,23 @@ pub fn stop() {
     }
 }
 
+/// A signal `stop` ends, for work it should end: a run, or letting a sync
+/// finish as the app leaves the screen. Handed back with `release`.
+#[cfg_attr(desktop, allow(dead_code))]
+pub(crate) fn stoppable() -> Arc<Notify> {
+    let signal = Arc::new(Notify::new());
+    *STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(signal.clone());
+    signal
+}
+
+#[cfg_attr(desktop, allow(dead_code))]
+pub(crate) fn release(signal: &Arc<Notify>) {
+    let mut current = STOP.lock().unwrap_or_else(|e| e.into_inner());
+    if current.as_ref().is_some_and(|c| Arc::ptr_eq(c, signal)) {
+        *current = None;
+    }
+}
+
 /// Run once, on a runtime of its own, for a caller outside any: the Android
 /// and iOS entry points. Returns the run's record as JSON, for the caller to
 /// log, or what kept it from running.
@@ -123,10 +141,9 @@ pub fn run_blocking(data_dir: &Path, options: Options) -> String {
         Ok(runtime) => runtime,
         Err(e) => return serde_json::json!({ "error": e.to_string() }).to_string(),
     };
-    let stop = Arc::new(Notify::new());
-    *STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(stop.clone());
+    let stop = stoppable();
     let result = runtime.block_on(run(data_dir, options, stop.notified()));
-    *STOP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    release(&stop);
     // The run's connections close as the runtime goes; give them a moment
     // to say so to the other side.
     runtime.shutdown_timeout(Duration::from_secs(1));
@@ -227,20 +244,32 @@ pub async fn run(
         report
     };
 
+    let record = record(&db.lock(), options.trigger, started_at, &report, &pairs)?;
+    Ok(Some(record))
+}
+
+/// Write a run's record, and hand it back.
+pub(crate) fn record(
+    db: &Connection,
+    trigger: Trigger,
+    started_at: i64,
+    report: &RunReport,
+    pairs: &[DevicePair],
+) -> Result<RunRecord, String> {
     let record = RunRecord {
-        trigger: options.trigger.name().to_string(),
+        trigger: trigger.name().to_string(),
         started_at,
         ended_at: now_ms(),
-        reached: names(&pairs, &report.reached),
+        reached: names(pairs, &report.reached),
         docs_received: report.moved.docs_received,
         docs_sent: report.moved.docs_sent,
         images_received: report.moved.images_received,
         images_sent: report.moved.images_sent,
-        outcome: outcome(&report).to_string(),
+        outcome: outcome(report).to_string(),
         error: None,
     };
-    runs::record(&db.lock(), &record)?;
-    Ok(Some(record))
+    runs::record(db, &record)?;
+    Ok(record)
 }
 
 /// Put every paired device this run can reach into `peers`: the addresses

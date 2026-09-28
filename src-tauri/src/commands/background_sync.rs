@@ -42,13 +42,19 @@ pub fn get_background_sync(app: AppHandle, state: State<'_, AppState>) -> Backgr
 #[tauri::command]
 pub fn set_background_sync(app: AppHandle, enabled: bool) -> Result<(), String> {
     only_on_a_phone()?;
-    write_flag(&app, ENABLED_KEY, enabled)
+    write_flag(&app, ENABLED_KEY, enabled)?;
+    #[cfg(mobile)]
+    crate::mobile::reschedule(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_background_sync_mobile_data(app: AppHandle, allowed: bool) -> Result<(), String> {
     only_on_a_phone()?;
-    write_flag(&app, MOBILE_DATA_KEY, allowed)
+    write_flag(&app, MOBILE_DATA_KEY, allowed)?;
+    #[cfg(mobile)]
+    crate::mobile::reschedule(&app);
+    Ok(())
 }
 
 fn only_on_a_phone() -> Result<(), String> {
