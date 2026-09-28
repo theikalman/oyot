@@ -580,8 +580,14 @@
         flex-shrink: 0;
     }
 
+    /* No minimum width, so a task keeps to the width of the note as a
+       paragraph does: a long link breaks onto the next line, and a wide
+       table scrolls sideways by itself. A flex item is otherwise never
+       narrower than its longest word or its table, so the task widened the
+       note instead, and the whole note scrolled sideways. */
     .editor-content :global(ul[data-type='taskList'] > li > div) {
         flex: 1;
+        min-width: 0;
     }
 
     .editor-content :global(ul[data-type='taskList'] > li > div > p) {
@@ -598,9 +604,22 @@
         cursor: pointer;
     }
 
+    /* A table wider than the note scrolls sideways by itself, and the rest
+       of the note stays put. On a phone, a table of long words is easily
+       wider than the screen, and it used to widen the note instead, so the
+       whole note scrolled sideways with it and the start of every line went
+       off the left edge. The editor puts every table in a .tableWrapper
+       (TipTap's TableView). The margin is on the wrapper: a box that scrolls
+       keeps its content's margins inside it, so on the table they would add
+       to the margins of the paragraphs around it rather than collapse with
+       them. */
+    .editor-content :global(.tableWrapper) {
+        margin: 1em 0;
+        overflow-x: auto;
+    }
+
     .editor-content :global(table) {
         border-collapse: collapse;
-        margin: 1em 0;
         width: 100%;
     }
 
