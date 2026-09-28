@@ -13,6 +13,10 @@ mod identity;
 mod indexer;
 mod network;
 mod pairing;
+// Built up piece by piece and switched on in one step, when the webview's
+// engine goes (ADR 0031).
+#[allow(dead_code)]
+mod sync;
 
 use crate::commands::*;
 use crate::db::AppState;
