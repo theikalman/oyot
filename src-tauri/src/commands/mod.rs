@@ -6,6 +6,7 @@ pub mod config;
 pub mod documents;
 pub mod export;
 pub mod pairing;
+pub(crate) mod picked;
 pub mod signaling;
 pub mod sync;
 

@@ -21,6 +21,7 @@ use crate::commands::attachments::{
     held_attachments, store_checked_attachment, AttachmentDownloadedEvent,
 };
 use crate::commands::documents::DocSyncEntry;
+use crate::commands::picked;
 use crate::db::{AppState, DB_FILE};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -468,24 +469,10 @@ fn deliver_to_url(app: &AppHandle, staged: &Path, destination: &FilePath) -> Res
 }
 
 /// What to call a chosen file in the history and the confirmation: its name,
-/// when one can be read out of what the dialog returned.
-///
-/// A content URI names a document by id, and for the common providers the id
-/// ends in the path the user saw, percent-encoded. When it does not, the
-/// caller falls back to the name the dialog suggested.
+/// when one can be read out of what the dialog returned and it is a zip's.
+/// Otherwise the caller falls back to the name the dialog suggested.
 fn file_label(path: &FilePath) -> Option<String> {
-    let name = match path {
-        FilePath::Path(path) => path.file_name()?.to_string_lossy().into_owned(),
-        FilePath::Url(url) => {
-            let last = url.path_segments()?.next_back()?;
-            let decoded = percent_encoding::percent_decode_str(last)
-                .decode_utf8_lossy()
-                .into_owned();
-            decoded.rsplit(['/', ':']).next()?.to_string()
-        }
-    };
-    let name = name.trim().to_string();
-    (!name.is_empty() && name.to_ascii_lowercase().ends_with(".zip")).then_some(name)
+    picked::file_name(path).filter(|name| name.to_ascii_lowercase().ends_with(".zip"))
 }
 
 // --- importing -------------------------------------------------------------
@@ -581,16 +568,8 @@ pub(super) fn start_session(
 /// Copy the picked file into staging, so the import reads a file nothing
 /// else can change or remove while it runs.
 fn copy_in(app: &AppHandle, source: &FilePath, staged: &Path) -> Result<(), String> {
-    let mut input = match source {
-        FilePath::Path(path) => File::open(path),
-        FilePath::Url(_) => {
-            use tauri_plugin_fs::{FsExt, OpenOptions};
-            let mut options = OpenOptions::new();
-            options.read(true);
-            app.fs().open(source.clone(), options)
-        }
-    }
-    .map_err(|e| format!("could not open the backup: {e}"))?;
+    let mut input =
+        picked::open(app, source).map_err(|e| format!("could not open the backup: {e}"))?;
 
     let mut output =
         File::create(staged).map_err(|e| format!("could not copy the backup in: {e}"))?;
