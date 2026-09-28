@@ -36,6 +36,22 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.22-alpha',
+        date: '2026-09-28',
+        summary:
+            'On Android, the Insert Tag and Link Document lists narrow to what you type, so a new tag can be made from a phone.',
+        changes: [
+            {
+                kind: 'fixed',
+                text: 'On Android, typing a name after Insert Tag narrows the list to the tags that match and offers to add the name as a new tag. The list used to go on showing every tag, with no row for a new one, so a phone could only pick a tag that already existed, and typing after Link Document did not narrow its list either. Both lists now keep up with a word however it is entered: a letter at a time, swiped, autocorrected or dictated.',
+            },
+            {
+                kind: 'improved',
+                text: 'While the Insert Tag or Link Document list is open, what you type appears in the note, as it does with the insert menu, where it used to show only in a "Filtering:" line above the list. What you choose from the list takes its place. Escape closes the list and leaves what you typed in the note, and Backspace with nothing typed closes the list, where it used to do nothing.',
+            },
+        ],
+    },
+    {
         version: '0.0.21-alpha',
         date: '2026-09-27',
         summary:
