@@ -75,7 +75,9 @@ export async function importFiles(
 
     // In the order of their names, as a folder lists them. The Notes page
     // lists the newest first, so the notes are made last to first and the
-    // first file's note is the newest.
+    // first file's note is the newest. Two made within the same millisecond
+    // tie, and the page breaks a tie by id, so this is the order a batch
+    // usually lands in rather than one it always does.
     const ordered = [...files].sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
     );
