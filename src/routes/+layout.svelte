@@ -4,10 +4,11 @@
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import type { Snippet } from 'svelte';
-    import { initSync, shutdownSync } from '$lib/sync';
+    import { initSync, shutdownSync, refreshSyncStatus } from '$lib/sync';
     import { appStore } from '$lib/stores/app';
     import { applyTheme } from '$lib/services/theme';
     import { startApp } from '$lib/services/startup';
+    import { catchUpIndex } from '$lib/services/documents';
     import { watchScheduledBackups } from '$lib/backup';
     import { isHelpShortcut } from '$lib/help/helpShortcut';
     import { openHelp } from '$lib/services/navigation';
@@ -31,9 +32,17 @@
     // with.
     let answerCloseNotice = $state<((keepRunning: boolean) => void) | null>(null);
 
+    // Sync carries on while the page is away (ADR 0031): catch up with it.
+    function handleVisibilityChange() {
+        if (document.visibilityState !== 'visible') return;
+        void catchUpIndex();
+        void refreshSyncStatus().catch((e) => console.warn('[sync] could not read status:', e));
+    }
+
     onMount(() => {
         initSync();
         void startApp();
+        document.addEventListener('visibilitychange', handleVisibilityChange);
         // Here for the same reason: a failing backup schedule should be
         // heard of wherever the user is, not only on the settings page.
         stopWatchingBackups = watchScheduledBackups();
@@ -54,6 +63,7 @@
         shutdownSync();
         stopWatchingBackups?.();
         stopWatchingCloses?.();
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
     });
 
     // Every route, so the toggle on the settings page has a visible effect.

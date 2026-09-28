@@ -27,7 +27,6 @@ use super::session::{Out, Phase, Session};
 use super::tls;
 use crate::crypto::now_ms;
 use crate::network::peers::Peers;
-use crate::network::signaling_manager::allow_pair_prompt;
 use crate::pairing;
 use ed25519_dalek::SigningKey;
 use parking_lot::Mutex;
@@ -57,6 +56,18 @@ const PAIR_REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a pair request waits for the user to answer it. The page gives
 /// up on its own request after 90 seconds; this side waits a little longer.
 const PAIR_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
+/// How often one device may raise a pairing prompt.
+///
+/// Anyone who can reach the listener can complete a handshake and ask, and
+/// every request puts a prompt in front of the user, so an unpaired device
+/// could make the app unusable by asking repeatedly. Declining is still the
+/// answer to a request you did not expect; this only stops it being asked
+/// faster than a person can read it.
+const PAIR_REQUEST_COOLDOWN_MS: i64 = 30_000;
+/// Distinct devices whose last request time is remembered. Bounded, or asking
+/// from many keys would grow it; the oldest entry is dropped, which at worst
+/// lets that device ask once more.
+const MAX_PAIR_REQUEST_SENDERS: usize = 64;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 30_000;
 /// How often a connection wakes when nothing else wakes it.
@@ -85,6 +96,23 @@ pub fn keep_new_connection(
     // Both dialled at once. Keep the one the lower node_id dialled, which
     // both sides work out the same way.
     new_dialled_by == lower_node_id && existing_dialled_by != lower_node_id
+}
+
+/// Whether a pairing prompt from `from` should be shown, given when that
+/// device last raised one. Records the time when it allows.
+fn allow_pair_prompt(seen: &mut Vec<(String, i64)>, from: &str, now: i64) -> bool {
+    if let Some(entry) = seen.iter_mut().find(|(id, _)| id == from) {
+        if now - entry.1 < PAIR_REQUEST_COOLDOWN_MS {
+            return false;
+        }
+        entry.1 = now;
+        return true;
+    }
+    if seen.len() >= MAX_PAIR_REQUEST_SENDERS {
+        seen.remove(0);
+    }
+    seen.push((from.to_string(), now));
+    true
 }
 
 /// This device, as the engine needs it.
@@ -143,7 +171,6 @@ struct Inner {
 #[derive(Clone)]
 struct PeerInfo {
     node_id: String,
-    display_name: String,
     room_id: String,
 }
 
@@ -152,7 +179,9 @@ pub struct SyncManager {
     inner: Arc<Inner>,
 }
 
-/// What a bounded run did (ADR 0034, decision 7).
+/// What a bounded run did (ADR 0034, decision 7). Only a phone runs one; a
+/// desktop keeps its connections for as long as it runs.
+#[cfg_attr(desktop, allow(dead_code))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RunReport {
     /// Devices a connection was made with.
@@ -182,10 +211,6 @@ impl SyncManager {
                 changed: Notify::new(),
             }),
         }
-    }
-
-    pub fn node_id(&self) -> &str {
-        &self.inner.me.node_id
     }
 
     pub fn set_display_name(&self, name: &str) {
@@ -356,6 +381,7 @@ impl SyncManager {
     }
 
     /// Whether a connection to `node_id` is up.
+    #[cfg(test)]
     pub fn is_connected(&self, node_id: &str) -> bool {
         self.inner.state.lock().conns.contains_key(node_id)
     }
@@ -364,6 +390,7 @@ impl SyncManager {
     /// dial every paired device there is a route to, wait until each is
     /// synced both ways and has no images left to fetch, or until `budget`
     /// runs out, then close them all. Never listens.
+    #[cfg_attr(desktop, allow(dead_code))]
     pub async fn run_once(&self, budget: Duration) -> RunReport {
         let deadline = tokio::time::Instant::now() + budget;
         let targets: Vec<String> = self
@@ -564,7 +591,6 @@ async fn dial(inner: Arc<Inner>, node_id: String, pair: pairing::DevicePair) {
         Ok(stream) => {
             let peer = PeerInfo {
                 node_id: node_id.clone(),
-                display_name: pair.peer_display_name,
                 room_id: pair.room_id,
             };
             let dialled_by = inner.me.node_id.clone();
@@ -597,8 +623,18 @@ fn schedule_redial(inner: Arc<Inner>, node_id: String) {
     inner.set_status(&node_id, |s| s.reconnecting = true);
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(delay)).await;
-        if inner.should_redial(&node_id) {
+        if !inner.should_redial(&node_id) {
+            return;
+        }
+        if inner.peers.best(&node_id).is_some() {
             start_dial(&inner, &node_id);
+        } else {
+            // Nowhere left to dial: the device reads as offline, and being
+            // found again dials it (`start`).
+            inner.set_status(&node_id, |s| {
+                s.reconnecting = false;
+                s.phase = "idle".to_string();
+            });
         }
     });
 }
@@ -633,7 +669,6 @@ async fn accept(inner: Arc<Inner>, stream: TcpStream) {
             }
             let peer = PeerInfo {
                 node_id: node_id.clone(),
-                display_name: pair.peer_display_name,
                 room_id: pair.room_id,
             };
             // Read before the session starts: a device that forgot this one
@@ -725,7 +760,6 @@ where
     }
     let peer = PeerInfo {
         node_id: node_id.clone(),
-        display_name,
         room_id,
     };
     run(inner.clone(), stream, peer, node_id.clone(), None).await;
@@ -766,7 +800,6 @@ async fn request_pair(inner: Arc<Inner>, node_id: String) -> Result<(), String> 
                     .pair_answered(&node_id, &user_id, &display_name, true);
                 let peer = PeerInfo {
                     node_id: node_id.clone(),
-                    display_name,
                     room_id,
                 };
                 let dialled_by = inner.me.node_id.clone();

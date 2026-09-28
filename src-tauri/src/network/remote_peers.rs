@@ -19,10 +19,9 @@ use crate::endpoints::{self, DeviceEndpoint};
 use crate::network::lan_signaling;
 use crate::network::message::SignalingMessage;
 use crate::network::peers::{normalize_addrs, Peer, PeerSource, Peers};
-use crate::network::signaling_manager::SignalingManager;
+use crate::network::signaling_manager::{ProbePayload, SignalingManager};
 use parking_lot::Mutex as ParkingMutex;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,14 +33,6 @@ use tokio::sync::Notify;
 /// one successful probe out of two. Short enough that closing a laptop and
 /// opening another is noticed while the user is still looking at the screen.
 const PROBE_INTERVAL: Duration = Duration::from_secs(45);
-
-/// What a probe and its answer carry.
-#[derive(Debug, Serialize, Deserialize)]
-struct ProbePayload {
-    /// The sender's id for this run of its process, so a device that restarted
-    /// reads as a change rather than as the same peer still sitting there.
-    boot_id: String,
-}
 
 /// Probes every stored address on a timer, and on demand.
 pub struct RemoteProbe {
@@ -218,7 +209,7 @@ async fn probe_one(
     node_id: &str,
     endpoint: &DeviceEndpoint,
 ) -> Result<Peer, String> {
-    let payload = serde_json::json!({ "boot_id": boot_id }).to_string();
+    let payload = serde_json::to_string(&ProbePayload::new(boot_id)).map_err(|e| e.to_string())?;
     let ping = manager.seal_for(node_id, "ping", payload)?;
 
     let resolved: Vec<std::net::SocketAddr> =
@@ -255,6 +246,9 @@ async fn probe_one(
 /// valid signature, recent, unseen nonce - and then for being from the node we
 /// addressed. Without that last check, anything that can occupy an address
 /// could answer for any device the user has an address for.
+///
+/// A device on another sync protocol is not a route: dialling it would fail
+/// halfway into a handshake (ADR 0032, decision 9).
 fn admit_pong(
     manager: &Arc<SignalingManager>,
     node_id: &str,
@@ -275,9 +269,10 @@ fn admit_pong(
     if !manager.admit_reply(reply) {
         return Err("the answer did not verify".to_string());
     }
-    Ok(serde_json::from_str::<ProbePayload>(&reply.payload)
-        .ok()
-        .map(|p| p.boot_id))
+    match serde_json::from_str::<ProbePayload>(&reply.payload) {
+        Ok(payload) if payload.speaks_ours() => Ok(Some(payload.boot_id)),
+        _ => Err("that device speaks another protocol".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -291,7 +286,7 @@ mod tests {
         for (user, name) in [("u1", "Laptop"), ("u2", "Phone")] {
             let signing_key = crypto::generate_signing_key();
             let node_id = crypto::encode_node_id(&signing_key.verifying_key());
-            let mgr = Arc::new(SignalingManager::new(Arc::new(Peers::new(None))));
+            let mgr = Arc::new(SignalingManager::new());
             mgr.set_identity(LocalIdentity {
                 public: UserIdentity {
                     user_id: user.to_string(),
@@ -337,11 +332,14 @@ mod tests {
         assert!(by_peer(vec![]).is_empty());
     }
 
+    fn pong_payload() -> String {
+        serde_json::to_string(&ProbePayload::new("boot-7")).unwrap()
+    }
+
     #[test]
     fn a_pong_from_the_device_we_asked_is_admitted() {
         let (us, them, our_id, their_id) = two_devices();
-        let payload = serde_json::json!({ "boot_id": "boot-7" }).to_string();
-        let pong = them.seal_for(&our_id, "pong", payload).unwrap();
+        let pong = them.seal_for(&our_id, "pong", pong_payload()).unwrap();
 
         let got = admit_pong(&us, &their_id, &pong).unwrap();
 
@@ -353,8 +351,7 @@ mod tests {
     #[test]
     fn a_pong_from_a_different_device_is_refused() {
         let (us, them, our_id, _) = two_devices();
-        let payload = serde_json::json!({ "boot_id": "boot-7" }).to_string();
-        let pong = them.seal_for(&our_id, "pong", payload).unwrap();
+        let pong = them.seal_for(&our_id, "pong", pong_payload()).unwrap();
 
         let err = admit_pong(&us, "some-other-node", &pong).unwrap_err();
 
@@ -381,7 +378,7 @@ mod tests {
             from: their_id.clone(),
             to: Some(our_id),
             msg_type: "pong".to_string(),
-            payload: serde_json::json!({ "boot_id": "boot-7" }).to_string(),
+            payload: pong_payload(),
             ts: crypto::now_ms(),
             nonce: crypto::random_nonce(),
             sig: "not-a-signature".to_string(),
@@ -392,13 +389,16 @@ mod tests {
         assert!(err.contains("did not verify"), "got: {err}");
     }
 
-    // A device that answers a probe without saying which run of the process it
-    // is, is still reachable. Losing the restart signal is not losing the peer.
+    // A build before ADR 0032 answers without saying which protocol it
+    // speaks, and speaks another. It is there, and of no use.
     #[test]
-    fn a_pong_with_nothing_readable_in_it_is_still_a_pong() {
+    fn a_pong_from_a_build_on_another_protocol_is_refused() {
         let (us, them, our_id, their_id) = two_devices();
-        let pong = them.seal_for(&our_id, "pong", "{}".to_string()).unwrap();
+        let old = serde_json::json!({ "boot_id": "boot-7" }).to_string();
+        let pong = them.seal_for(&our_id, "pong", old).unwrap();
 
-        assert_eq!(admit_pong(&us, &their_id, &pong).unwrap(), None);
+        let err = admit_pong(&us, &their_id, &pong).unwrap_err();
+
+        assert!(err.contains("another protocol"), "got: {err}");
     }
 }

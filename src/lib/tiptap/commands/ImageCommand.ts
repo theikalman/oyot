@@ -4,7 +4,6 @@ import '@tiptap/extension-image';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 import { exitSuggestion } from '@tiptap/suggestion';
 import { ATTACHMENT_SCHEME } from '../attachments';
-import { broadcastAttachmentAvailable } from '$lib/sync';
 import { toasts } from '$lib/services/toast';
 
 // Mirrors MAX_IMAGE_BYTES in src-tauri/src/commands/attachments.rs, which is
@@ -45,13 +44,11 @@ export async function insertImageFromFile(editor: Editor): Promise<void> {
         // Rust opens the dialog, reads the file and stores it. The picked path
         // never crosses IPC, so a script in the webview cannot name a file for
         // this to copy into the attachment store, and the frontend needs no
-        // filesystem permission at all. Rust also enforces the size cap and
-        // decides the image type from the bytes.
-        const stored = await invoke<{ hash: string; mime_type: string; size: number } | null>(
-            'pick_and_import_image',
-        );
+        // filesystem permission at all. Rust also enforces the size cap,
+        // decides the image type from the bytes, and tells connected devices.
+        const stored = await invoke<{ hash: string } | null>('pick_and_import_image');
         if (!stored) return; // cancelled
-        insertImageNode(editor, stored.hash, stored.mime_type, stored.size);
+        insertImageNode(editor, stored.hash);
     } catch (error) {
         console.error('Failed to insert image:', error);
         toasts.error(typeof error === 'string' ? error : 'Failed to insert image');
@@ -75,7 +72,7 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
             mimeType: blob.type,
         });
 
-        insertImageNode(editor, hash, blob.type, blob.size);
+        insertImageNode(editor, hash);
     } catch (error) {
         console.error('Failed to insert image:', error);
         toasts.error(typeof error === 'string' ? error : 'Failed to insert image');
@@ -84,8 +81,8 @@ export async function insertImageFromBlob(editor: Editor, blob: Blob): Promise<v
 
 // Store only a portable reference in the document. The node view
 // (ResizableImage) resolves it to a local URL at render time, and the sync
-// layer moves the bytes between devices.
-function insertImageNode(editor: Editor, hash: string, mimeType: string, size: number): void {
+// engine moves the bytes between devices.
+function insertImageNode(editor: Editor, hash: string): void {
     editor
         .chain()
         .focus()
@@ -94,12 +91,6 @@ function insertImageNode(editor: Editor, hash: string, mimeType: string, size: n
             alt: `oyot:${hash}`,
         })
         .run();
-
-    try {
-        broadcastAttachmentAvailable(hash, mimeType, size);
-    } catch {
-        /* sync layer not initialised */
-    }
 }
 
 function validateFileSize(blob: Blob): boolean {

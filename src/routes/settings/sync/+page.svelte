@@ -122,7 +122,7 @@
         } catch (e) {
             // Sending the request can fail outright: the device may have left
             // the network between rendering the form and pressing the button.
-            // The transport knows why, so say what it said.
+            // Rust knows why, so say what it said.
             console.error('Failed to send pair request:', e);
             toasts.error(
                 e instanceof Error && e.message ? e.message : 'Could not send that pairing request',

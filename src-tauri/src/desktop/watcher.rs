@@ -1,7 +1,7 @@
 //! Noticing a wake from sleep or a change of network (ADR 0030, decision 9).
 //!
-//! Tauri reports neither on a desktop, and both leave sync stale: a WebRTC
-//! connection that went quiet for 30 seconds is gone by the time the machine
+//! Tauri reports neither on a desktop, and both leave sync stale: a
+//! connection that went quiet through a sleep is gone by the time the machine
 //! wakes, and a new network can mean new routes to every peer. So a task
 //! looks every `TICK`:
 //!
@@ -12,17 +12,16 @@
 //!   changing, which `if-addrs` (already in the tree through mdns-sd) lists
 //!   without anything to subscribe to on each OS.
 //!
-//! Either one probes the stored addresses at once and tells the page, which
-//! runs its reconnect sweep. A clock moved by hand looks like a wake, which
-//! costs one needless reconnect sweep.
+//! Either one probes the stored addresses at once and has the sync engine
+//! dial every paired device it is not connected to. A connection that died
+//! in the meantime is dropped within a minute of silence, and redialled then.
+//! A clock moved by hand looks like a wake, which costs one needless sweep.
 
 use crate::db::AppState;
+use crate::sync::manager::SyncManager;
 use std::net::IpAddr;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
-
-/// The event the page is sent, with "wake" or "network" as its payload.
-pub const NETWORK_CHANGED_EVENT: &str = "network-changed";
+use tauri::{AppHandle, Manager};
 
 const TICK: Duration = Duration::from_secs(10);
 
@@ -48,7 +47,9 @@ pub fn start(app: AppHandle) {
             if let Some(reason) = reason {
                 trace!("[desktop] {reason}: probing stored addresses and reconnecting");
                 app.state::<AppState>().remote.probe_now();
-                let _ = app.emit(NETWORK_CHANGED_EVENT, reason);
+                if let Some(sync) = app.try_state::<SyncManager>() {
+                    sync.sweep();
+                }
             }
         }
     });

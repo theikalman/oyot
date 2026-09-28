@@ -13,9 +13,6 @@ mod identity;
 mod indexer;
 mod network;
 mod pairing;
-// Built up piece by piece and switched on in one step, when the webview's
-// engine goes (ADR 0031).
-#[allow(dead_code)]
 mod sync;
 
 use crate::commands::*;
@@ -648,13 +645,6 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     #[cfg(desktop)]
     let builder = builder.visible(!desktop::launched_hidden());
 
-    // Keep a hidden page running on macOS 14 and later, where WebKit would
-    // otherwise suspend it. Needed until sync moves out of the page (ADR 0030,
-    // decision 8, and ADR 0031).
-    #[cfg(target_os = "macos")]
-    let builder =
-        builder.background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
-
     builder.build()?;
     Ok(())
 }
@@ -715,13 +705,29 @@ pub fn run() {
             }
             clear_staging(app.handle());
 
-            {
+            let me = {
                 let db = state.db.lock();
                 let identity = crate::identity::get_or_create_identity(&db)
                     .map_err(|e| format!("Failed to create identity: {}", e))?;
+                let me = sync::manager::Me {
+                    node_id: identity.public.node_id.clone(),
+                    user_id: identity.public.user_id.clone(),
+                    display_name: parking_lot::Mutex::new(identity.public.display_name.clone()),
+                    signing: identity.signing_key.clone(),
+                };
                 state.signaling_manager.set_identity(identity);
-            }
+                me
+            };
 
+            // The sync engine, for the life of the process (ADR 0031,
+            // decision 1). It starts once the listener is up, below.
+            app.manage(sync::manager::SyncManager::new(
+                state.db.clone(),
+                state.data_dir.clone(),
+                std::sync::Arc::new(sync::tauri_events::TauriEvents::new(app.handle().clone())),
+                me,
+                state.peers.clone(),
+            ));
             app.manage(state);
             app.manage(BackupState::default());
             // Whatever remote destinations this build has credentials for
@@ -737,6 +743,15 @@ pub fn run() {
             let db = app.state::<AppState>().db.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 crate::commands::sync::rehash_documents(&db)
+            });
+
+            // Listening, discovery and sync, on the async runtime: the engine
+            // spawns its connections there.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::commands::signaling::start_network(&handle).await {
+                    warn_log!("[sync] could not start: {e}");
+                }
             });
 
             #[cfg(desktop)]
@@ -782,11 +797,10 @@ pub fn run() {
             list_unindexed_documents,
             get_attachment_info,
             get_local_blob_url,
-            list_attachment_manifest,
-            get_attachment_bytes,
-            save_attachment_bytes,
             get_yjs_state,
             save_yjs_update,
+            save_document_index,
+            announce_documents,
             get_identity,
             set_display_name,
             list_paired_devices,
@@ -794,18 +808,14 @@ pub fn run() {
             forget_peer_endpoint,
             list_peer_endpoints,
             remove_pair,
-            save_pair,
-            update_pair_sync_time,
-            signaling_publish_pair_request,
-            signaling_accept_pair_request,
-            signaling_decline_pair_request,
-            signaling_publish_offer,
-            signaling_publish_answer,
-            signaling_publish_ice_candidate,
-            signaling_start,
-            signaling_stop,
+            get_sync_status,
+            request_pair,
+            answer_pair_request,
+            disconnect_device,
+            reconnect_device,
+            request_attachment,
+            get_network_status,
             probe_stored_addresses,
-            local_address_toward,
             list_reachable_peers,
             list_export_attachments,
             export_notes,
@@ -838,13 +848,15 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, _event| {
+        .run(|app, event| match event {
+            // Say goodbye on the network before going, so peers do not keep
+            // dialling a port nothing answers.
+            tauri::RunEvent::Exit => crate::commands::signaling::stop_network(app),
             // Clicking the Dock icon of an Oyot hidden to the menu bar brings
             // its window back (ADR 0030, decision 3).
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = _event {
-                desktop::show_main_window(_app);
-            }
+            tauri::RunEvent::Reopen { .. } => desktop::show_main_window(app),
+            _ => {}
         });
 }
 
@@ -1257,8 +1269,8 @@ mod migration_tests {
         );
     }
 
-    // Mirrors pairing::save_pair. The transport calls it on every transition to
-    // connected, so it must not disturb the sync timestamp of an existing pair.
+    // Mirrors pairing::save_pair. A device can pair again with one that still
+    // has it, so saving must not disturb the sync timestamp of an existing pair.
     #[test]
     fn saving_a_known_pair_keeps_its_last_sync_time() {
         let db = Connection::open_in_memory().unwrap();

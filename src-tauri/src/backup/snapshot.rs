@@ -102,8 +102,8 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<LibrarySnapshot, String
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("could not read a document: {e}"))?;
 
-    // The same set `list_attachment_manifest` advertises to a peer and the
-    // export writes: held in full, and embedded by a live document.
+    // The same set the sync engine advertises to a peer and the export
+    // writes: held in full, and embedded by a live document.
     let mut attachments: Vec<AttachmentRow> = referenced_attachments(conn)?
         .into_iter()
         .map(|(hash, mime_type, local_path)| AttachmentRow {

@@ -1,7 +1,7 @@
 // The content hash, computed from a Yjs document the way crdt.rs computes it
 // from a yrs one (ADR 0033). Test-only: in the app, Rust computes the hash.
-// The interop test checks the two agree, and FakeRepo uses it so the sync
-// protocol's tests compare documents the way real devices do.
+// The interop test checks the two agree, and FakeRepo uses it so a backup
+// import's tests compare documents the way real devices do.
 
 import { createHash } from 'node:crypto';
 import * as Y from 'yjs';

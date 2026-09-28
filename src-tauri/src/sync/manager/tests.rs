@@ -10,6 +10,53 @@ use tokio::net::TcpListener;
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact, Update};
 
+#[test]
+fn a_repeat_pair_request_inside_the_cooldown_is_dropped() {
+    // Every request puts a prompt in front of the user, so anyone who learned
+    // a node_id could make the app unusable by asking repeatedly.
+    let mut seen = Vec::new();
+    let now = 1_000_000;
+
+    assert!(allow_pair_prompt(&mut seen, "peer-a", now));
+    assert!(!allow_pair_prompt(&mut seen, "peer-a", now + 1));
+    assert!(!allow_pair_prompt(
+        &mut seen,
+        "peer-a",
+        now + PAIR_REQUEST_COOLDOWN_MS - 1
+    ));
+    assert!(allow_pair_prompt(
+        &mut seen,
+        "peer-a",
+        now + PAIR_REQUEST_COOLDOWN_MS
+    ));
+}
+
+#[test]
+fn one_device_in_cooldown_does_not_silence_another() {
+    let mut seen = Vec::new();
+    let now = 1_000_000;
+
+    assert!(allow_pair_prompt(&mut seen, "peer-a", now));
+    assert!(!allow_pair_prompt(&mut seen, "peer-a", now));
+    assert!(
+        allow_pair_prompt(&mut seen, "peer-b", now),
+        "a different device asking is a different request"
+    );
+}
+
+#[test]
+fn the_pair_request_history_is_bounded() {
+    let mut seen = Vec::new();
+    for i in 0..MAX_PAIR_REQUEST_SENDERS * 2 {
+        assert!(allow_pair_prompt(
+            &mut seen,
+            &format!("peer-{i}"),
+            1_000_000
+        ));
+    }
+    assert_eq!(seen.len(), MAX_PAIR_REQUEST_SENDERS);
+}
+
 #[derive(Default)]
 struct Recorder {
     log: Mutex<Vec<String>>,
@@ -193,6 +240,60 @@ async fn paired_devices_sync_both_ways_over_tls() {
     })
     .await;
     assert!(a.manager.is_connected(&b.node_id));
+}
+
+// ADR 0032, decision 3: one port, so one firewall prompt and one number in a
+// stored address. A probe still gets its pong, and a TLS handshake on the
+// same port reaches the engine.
+#[tokio::test(flavor = "multi_thread")]
+async fn probes_and_sync_connections_share_the_listener() {
+    use crate::network::lan_signaling;
+    use crate::network::signaling_manager::{ProbePayload, SignalingManager};
+
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    write_note(&b, "groceries", "milk, eggs");
+
+    let signaling = SignalingManager::new();
+    signaling.set_identity(crate::identity::get_or_create_identity(&b.db.lock()).unwrap());
+    let listener =
+        lan_signaling::listen(signaling.inbound(&b.node_id, "boot-b"), b.manager.clone())
+            .await
+            .unwrap();
+    let port = listener.port();
+
+    let asker = SignalingManager::new();
+    asker.set_identity(crate::identity::get_or_create_identity(&a.db.lock()).unwrap());
+    let ping = asker
+        .seal_for(
+            &b.node_id,
+            "ping",
+            serde_json::to_string(&ProbePayload::new("boot-a")).unwrap(),
+        )
+        .unwrap();
+    let pong = lan_signaling::request(SocketAddr::from(([127, 0, 0, 1], port)), &ping)
+        .await
+        .unwrap();
+    assert_eq!(pong.msg_type, "pong");
+    assert!(asker.admit_reply(&pong));
+
+    a.peers.observe(Peer {
+        node_id: b.node_id.clone(),
+        source: PeerSource::Address,
+        boot_id: None,
+        addrs: vec!["127.0.0.1".parse().unwrap()],
+        host: None,
+        port,
+        seen_at: now_ms(),
+        key: format!("127.0.0.1:{port}"),
+    });
+    b.manager.start();
+    a.manager.start();
+    eventually("the note over the shared port", || {
+        text_of(&a, "groceries") == "milk, eggs"
+    })
+    .await;
+    listener.stop();
 }
 
 #[tokio::test(flavor = "multi_thread")]

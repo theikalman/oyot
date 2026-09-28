@@ -9,44 +9,42 @@ import { getOpenDoc, registerOpenDoc } from '../editor/openDocs';
 import { REMOTE_ORIGIN } from '../editor/origin';
 import { renameTagInDoc } from '../tags/renameInDoc';
 import { createWriteQueue } from './writeQueue';
-import {
-    base64ToBytes,
-    bytesToBase64,
-    lifecycleStamp,
-    EMPTY_UPDATE_LEN,
-    type AttachmentManifestEntry,
-    type ManifestEntry,
-} from './protocol';
+import { base64ToBytes, bytesToBase64, lifecycleStamp, type ManifestEntry } from './protocol';
 
-// Reading an index out of a merged document needs the editor's schema, and
-// that module imports back through to this one. A static import would make the
-// two circular at load time; a deferred one resolves after both are built.
+// Reading an index out of a document needs the editor's schema, and that
+// module imports back through to this one. A static import would make the two
+// circular at load time; a deferred one resolves after both are built.
 // Cached, including the failure, so a broken load is not retried per document.
-type RemoteIndexer = (ydoc: Y.Doc) => DocumentIndex;
-let indexerLoad: Promise<RemoteIndexer | null> | null = null;
+type HeadlessIndexer = (ydoc: Y.Doc) => DocumentIndex;
+let indexerLoad: Promise<HeadlessIndexer | null> | null = null;
 
-function loadRemoteIndexer(): Promise<RemoteIndexer | null> {
+function loadIndexer(): Promise<HeadlessIndexer | null> {
     indexerLoad ??= import('../editor/headlessIndex')
         .then((m) => m.indexFromYDoc)
         .catch((e) => {
-            console.warn('[sync] no remote indexer available, documents will index on open:', e);
+            console.warn('[sync] no headless indexer available, documents will index on open:', e);
             return null;
         });
     return indexerLoad;
 }
 
-// Never let indexing cost us the merge. A document whose schema this build
-// does not recognise still has to be stored; it just goes unindexed until
-// someone opens it.
-function readIndex(indexer: RemoteIndexer | null, ydoc: Y.Doc): DocumentIndex | null {
+// Never let indexing cost us the content. A document whose schema this build
+// does not recognise is still stored; it just goes unindexed until someone
+// opens it.
+function readIndex(indexer: HeadlessIndexer | null, ydoc: Y.Doc): DocumentIndex | null {
     if (!indexer) return null;
     try {
         return indexer(ydoc);
     } catch (e) {
-        console.warn('[sync] could not index a merged document:', e);
+        console.warn('[sync] could not index a document:', e);
         return null;
     }
 }
+
+// How long after a peer's edit lands in the open document to index it. A
+// peer typing sends an update every few hundred milliseconds, and the index
+// only has to have caught up once they stop.
+const OPEN_INDEX_DELAY_MS = 500;
 
 // Rust `DocSyncEntry` shape: snake_case, the hash already base64. A backup
 // being imported describes its documents in the same shape.
@@ -95,23 +93,44 @@ function toSummary(doc: Document): DocumentSummary {
     };
 }
 
+// A document a peer made, as the sidebar lists it before its content arrives.
+function summaryOf(entry: ManifestEntry): DocumentSummary {
+    return {
+        id: entry.id,
+        doc_type: entry.docType,
+        title: entry.title,
+        todo_count: 0,
+        completed_todo_count: 0,
+        created_at: entry.createdAt,
+        updated_at: entry.titleUpdatedAt,
+        has_content: false,
+        pinned: entry.pinned ?? false,
+    };
+}
+
 // What `save_yjs_update` hands back: the stored state vector after the merge,
 // base64, or empty when there was no live row to save into.
 interface SavedState {
     state_vector: string;
 }
 
-// The single boundary between the sync protocol and (Tauri commands + Yjs). All
-// CRDT diffing and every document mutation the sync layer performs goes
-// through here, and the in-memory document store is kept in step so the sidebar
-// reflects a converging set live. Rust merges what is saved into the stored
-// state and hashes it (ADR 0031, decision 3; ADR 0033).
+// What `get_yjs_state` hands back.
+interface StoredState {
+    state: string;
+    content_hash: string | null;
+}
+
+// The page's side of documents: the only place Tauri's document commands and
+// Yjs meet. Rust merges what is saved into the stored state, hashes it, and
+// tells connected devices (ADR 0031, decisions 3, 4 and 6). A peer's changes
+// are merged by Rust and arrive here as events, to be put on screen, into
+// the sidebar and into the index (decisions 5, 7 and 9).
 export class DocumentRepository {
     // Work on one document is serialised. Rust merges rather than overwrites,
     // so a write can no longer erase another, but the steps the page takes
     // around a write still have to happen in order: opening a document reads
-    // its state and registers it in one step, and a merge reads the index
-    // from the copy it just changed.
+    // its state and registers it in one step, and a peer's update is applied
+    // to the open copy only once that copy is registered.
     private write = createWriteQueue();
 
     // The stored state vector each document had after its last save here, so
@@ -120,17 +139,24 @@ export class DocumentRepository {
     // a little more than it needs to, never less.
     private storedStateVectors = new Map<string, Uint8Array>();
 
+    // Open documents waiting to be indexed after a peer's edit.
+    private openIndexTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    // One backfill at a time: coming back on screen while one runs has
+    // nothing to add to it.
+    private backfill: Promise<number> | null = null;
+
     private async save(
         docId: string,
         update: Uint8Array,
-        origin: 'local' | 'remote',
         index: DocumentIndex | null,
+        quiet = false,
     ): Promise<void> {
         const saved = await invoke<SavedState | undefined>('save_yjs_update', {
             docId,
             update: bytesToBase64(update),
-            origin,
             index,
+            quiet,
         });
         if (saved?.state_vector) {
             this.storedStateVectors.set(docId, base64ToBytes(saved.state_vector));
@@ -146,86 +172,69 @@ export class DocumentRepository {
         return rows.map(toManifestEntry);
     }
 
-    private async loadDoc(docId: string): Promise<Y.Doc> {
-        const res = await invoke<{ doc_id: string; state: string }>('get_yjs_state', { docId });
+    private async loadDoc(docId: string): Promise<{ ydoc: Y.Doc; contentHash: string | null }> {
+        const res = await invoke<StoredState>('get_yjs_state', { docId });
         const ydoc = new Y.Doc();
         if (res.state) {
             Y.applyUpdate(ydoc, base64ToBytes(res.state));
         }
-        return ydoc;
-    }
-
-    // base64(state vector) of our copy; the empty-doc vector when we have nothing.
-    async localStateVector(docId: string): Promise<string> {
-        const ydoc = await this.loadDoc(docId);
-        return bytesToBase64(Y.encodeStateVector(ydoc));
-    }
-
-    // The delta a peer at `remoteSvB64` is missing from our copy, or null if
-    // none. An empty `remoteSvB64` means "send everything".
-    async computeDelta(docId: string, remoteSvB64: string): Promise<string | null> {
-        const ydoc = await this.loadDoc(docId);
-        const diff = remoteSvB64
-            ? Y.encodeStateAsUpdate(ydoc, base64ToBytes(remoteSvB64))
-            : Y.encodeStateAsUpdate(ydoc);
-        if (diff.length <= EMPTY_UPDATE_LEN) return null;
-        return bytesToBase64(diff);
+        return { ydoc, contentHash: res.content_hash };
     }
 
     // --- writes ----------------------------------------------------------
 
     // Hand the editor the document's state as a Y.Doc, registered as the open
-    // copy so inbound merges can be applied straight into it.
+    // copy so a peer's updates can be applied straight into it.
     //
     // Reading the state and registering happen as one queued operation on
-    // purpose. If a merge could land in the gap between the two, the editor
-    // would open on content that is already stale and then save over the newer
-    // copy. Queueing closes that window without a second lock.
+    // purpose. A peer's update that Rust merged after the read arrives as an
+    // event queued behind this, and finds the copy registered; one merged
+    // before the read is already in it.
     //
     // The caller must `unregisterOpenDoc` before it stops using the Y.Doc.
     async openDocument(docId: string): Promise<Y.Doc> {
         return this.write(docId, async () => {
-            const ydoc = await this.loadDoc(docId);
+            const { ydoc } = await this.loadDoc(docId);
+            // The store's own vector, so the first save sends only the edit.
+            this.storedStateVectors.set(docId, Y.encodeStateVector(ydoc));
             registerOpenDoc(docId, ydoc);
             return ydoc;
         });
     }
 
-    // Merge an inbound update (delta or live edit) into local storage.
-    //
-    // When the document is open, the editor's Y.Doc is the copy to merge into:
-    // it is at least as advanced as the stored state, and applying there is
-    // what puts a peer's edit on screen. The editor is not told to reload
-    // afterwards, because it is already holding the merged document.
+    /**
+     * Merge content from a backup into a document, applied to the open copy
+     * if there is one, and tell connected devices, as a user's own edit does.
+     */
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
-        await this.merge(docId, base64ToBytes(updateB64), 'remote', true);
+        await this.merge(docId, base64ToBytes(updateB64), true, false);
     }
 
     /**
-     * Store content made outside the editor, an imported file's, as a peer's
-     * edit is stored: merged into whatever the document already holds, never
-     * written over it. The note may have been opened and typed in, or a peer
-     * may have sent it something, since it was created.
+     * Store content made outside the editor, an imported file's, merged into
+     * whatever the document already holds, never written over it. The note
+     * may have been opened and typed in since it was created.
      *
-     * Saved as local, since nothing needs telling to reload it, and without
-     * refreshing anything that reads derived rows: an import saves notes one
-     * after another and refreshes those once per batch (`$lib/import`).
-     * Returns the index written, for the import to show the counts with.
+     * Saved quietly, since peers pull it when the note is announced with the
+     * rest of its batch, and without refreshing anything that reads derived
+     * rows: an import saves notes one after another and refreshes those once
+     * per batch (`$lib/import`). Returns the index written, for the import to
+     * show the counts with.
      */
     async importContent(docId: string, update: Uint8Array): Promise<DocumentIndex | null> {
-        return this.merge(docId, update, 'local', false);
+        return this.merge(docId, update, false, true);
     }
 
     private async merge(
         docId: string,
         updateBytes: Uint8Array,
-        origin: 'local' | 'remote',
         refresh: boolean,
+        quiet: boolean,
     ): Promise<DocumentIndex | null> {
         return this.write(docId, async () => {
             // Resolved before the document is touched, so the merge below
             // stays synchronous from lookup to encode.
-            const indexer = await loadRemoteIndexer();
+            const indexer = await loadIndexer();
 
             const live = getOpenDoc(docId);
             let index: DocumentIndex | null;
@@ -238,33 +247,22 @@ export class DocumentRepository {
             } else {
                 // Loaded only to read the index from. The stored state is
                 // Rust's to merge into.
-                const current = await this.loadDoc(docId);
-                Y.applyUpdate(current, updateBytes);
-                index = readIndex(indexer, current);
-                current.destroy();
+                const { ydoc } = await this.loadDoc(docId);
+                Y.applyUpdate(ydoc, updateBytes);
+                index = readIndex(indexer, ydoc);
+                ydoc.destroy();
             }
-            await this.save(docId, updateBytes, origin, index);
-            if (refresh) {
-                appStore.markDocumentHasContent(docId);
-                if (index) {
-                    appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
-                    // A peer's edit is the one change nothing on this device
-                    // asked for, so anything reading derived rows has to be
-                    // told.
-                    bumpIndexRevision();
-                }
-            }
+            await this.save(docId, updateBytes, index, quiet);
+            if (refresh) this.showIndex(docId, index);
             return index;
         });
     }
 
-    // Persist a locally-made update (editor save path). 'local' suppresses the
-    // sync-received event: the editor that produced this already has it.
+    // Persist a locally-made update (editor save path). Rust sends connected
+    // devices whatever it adds to the store.
     //
     // `index` is what the editor extracted from the rendered document (text,
-    // links, todo counts). The sync path derives the same thing for itself by
-    // rendering the merged document headlessly, so both paths keep the derived
-    // rows current.
+    // links, todo counts).
     async saveLocalUpdate(
         docId: string,
         mergedState: Uint8Array,
@@ -272,9 +270,9 @@ export class DocumentRepository {
     ): Promise<void> {
         return this.write(docId, async () => {
             // `mergedState` was encoded by the caller before it queued, so a
-            // merge that ran while it waited is missing from it. Fold it back
-            // into the live document, so the editor's copy is the union of
-            // both, and send what the store does not have yet.
+            // peer's update applied while it waited is missing from it. Fold
+            // it back into the live document, so the editor's copy is the
+            // union of both, and send what the store does not have yet.
             const live = getOpenDoc(docId);
             let update = mergedState;
             if (live) {
@@ -282,69 +280,53 @@ export class DocumentRepository {
                 const stored = this.storedStateVectors.get(docId);
                 update = stored ? Y.encodeStateAsUpdate(live, stored) : Y.encodeStateAsUpdate(live);
             }
-            await this.save(docId, update, 'local', index ?? null);
+            await this.save(docId, update, index ?? null);
             if (index) bumpIndexRevision();
         });
     }
 
     /**
-     * Rewrite one document's `#from` chips to say `#to`.
+     * Rewrite one document's `#from` chips to say `#to`, and return how many
+     * changed.
      *
-     * Queued like every other write to a document: this is a read-modify-write
-     * over the column `save_yjs_update` overwrites outright, so two of these
-     * landing at once, or one landing beside a peer's delta, would lose an
-     * edit.
-     *
-     * Returns how many chips changed and, separately, the update a peer needs.
-     * The two come apart when the document is open in the editor: the edit goes
-     * into the live Y.Doc, whose update listener already saves and broadcasts
-     * it, and sending it a second time from here would be an echo.
-     *
-     * This method does not broadcast. `transport` owns the repository, so the
-     * repository cannot import the broadcaster back without the two becoming
-     * circular at load; the caller sends what it is handed.
+     * Queued like every other write to a document, so it cannot interleave
+     * with a save or a peer's update to the same one. An open document is
+     * edited in its live Y.Doc, whose update listener saves it like any
+     * other edit; a closed one is saved here. Either way the save is what
+     * tells connected devices.
      */
-    async renameTagIn(
-        docId: string,
-        from: string,
-        to: string,
-    ): Promise<{ changed: number; broadcast: string | null }> {
+    async renameTagIn(docId: string, from: string, to: string): Promise<number> {
         return this.write(docId, async () => {
             // Resolved before the document is touched, so the edit below stays
             // synchronous from lookup to encode.
-            const indexer = await loadRemoteIndexer();
+            const indexer = await loadIndexer();
 
             // No await between the lookup and the encode: the editor cannot
             // swap the document out from under an edit that never yields.
             const live = getOpenDoc(docId);
-            if (live) {
-                const changed = renameTagInDoc(live, from, to);
-                return { changed, broadcast: null };
-            }
+            if (live) return renameTagInDoc(live, from, to);
 
-            const current = await this.loadDoc(docId);
-            const before = Y.encodeStateVector(current);
-            const changed = renameTagInDoc(current, from, to);
+            const { ydoc } = await this.loadDoc(docId);
+            const before = Y.encodeStateVector(ydoc);
+            const changed = renameTagInDoc(ydoc, from, to);
             if (changed === 0) {
-                current.destroy();
-                return { changed: 0, broadcast: null };
+                ydoc.destroy();
+                return 0;
             }
 
-            // The delta is what the rename added, not the document: a peer that
-            // has the note already needs one attribute, and sending the whole
-            // thing would undo nothing but cost everything.
-            const delta = Y.encodeStateAsUpdate(current, before);
-            const index = readIndex(indexer, current);
-            current.destroy();
+            // The delta is what the rename added, not the document.
+            const delta = Y.encodeStateAsUpdate(ydoc, before);
+            const index = readIndex(indexer, ydoc);
+            ydoc.destroy();
 
-            await this.save(docId, delta, 'local', index);
+            await this.save(docId, delta, index);
             bumpIndexRevision();
-            return { changed, broadcast: bytesToBase64(delta) };
+            return changed;
         });
     }
 
-    // Materialize a document row learned from a peer. Never clobbers a known
-    // row: the pin, like the title, is only taken when the row is new.
+    // Materialize a document row from a backup being imported. Never clobbers
+    // a known row: the pin, like the title, is only taken when the row is new.
     async ensureDoc(entry: ManifestEntry): Promise<void> {
         const doc = await invoke<Document>('ensure_document', {
             entry: {
@@ -362,8 +344,8 @@ export class DocumentRepository {
         appStore.addDocument(toSummary(doc));
     }
 
-    // Record a peer's tombstone for a document we have never held, so the
-    // delete keeps propagating instead of stopping here.
+    // Record a backup's tombstone for a document this device has never held,
+    // so the delete keeps propagating instead of stopping here.
     //
     // Deliberately does not touch the sidebar store: there is nothing to show,
     // and `ensureDoc` adding a row is what would make a deleted document
@@ -389,14 +371,7 @@ export class DocumentRepository {
             title,
             titleUpdatedAt,
         });
-        if (!changed) return;
-        // The todo index groups by title, so a rename moves every one of this
-        // document's items under a new heading.
-        bumpIndexRevision();
-        const existing = get(appStore).documents.find((d) => d.id === docId);
-        if (existing) {
-            appStore.updateDocumentInList({ ...existing, title, updated_at: titleUpdatedAt });
-        }
+        if (changed) this.peerRenamed(docId, title, titleUpdatedAt);
     }
 
     // Last-writer-wins on the pin stamp, decided in Rust by the same rule
@@ -407,29 +382,114 @@ export class DocumentRepository {
             pinned,
             pinnedUpdatedAt,
         });
-        if (changed) appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
+        if (changed) this.peerPinned(docId, pinned, pinnedUpdatedAt);
     }
 
-    // Returns true if the tombstone won. A losing tombstone (we revived the
-    // document after the peer deleted it) must not remove it from the sidebar.
+    // Returns true if the tombstone won. A losing tombstone (the document was
+    // revived after it was deleted) must not remove it from the sidebar.
     async applyDelete(docId: string, deletedAt: number): Promise<boolean> {
         const applied = await invoke<boolean>('apply_remote_delete', { docId, deletedAt });
-        if (applied) {
-            appStore.removeDocument(docId);
-            bumpIndexRevision();
-        }
+        if (applied) this.peerDeleted(docId);
         return applied;
     }
 
-    // --- attachments ---------------------------------------------------
+    // --- what a peer changed, which Rust has already stored --------------
 
-    // Every image binary we hold in full, to advertise to a peer.
-    async listAttachments(): Promise<AttachmentManifestEntry[]> {
-        const rows = await invoke<{ hash: string; mime_type: string; size: number }[]>(
-            'list_attachment_manifest',
-        );
-        return rows.map((r) => ({ hash: r.hash, mime: r.mime_type, size: r.size }));
+    peerCreated(entry: ManifestEntry): void {
+        appStore.addDocument(summaryOf(entry));
     }
+
+    peerRenamed(docId: string, title: string, titleUpdatedAt: number): void {
+        // The todo index groups by title, so a rename moves every one of this
+        // document's items under a new heading.
+        bumpIndexRevision();
+        const existing = get(appStore).documents.find((d) => d.id === docId);
+        if (existing) {
+            appStore.updateDocumentInList({ ...existing, title, updated_at: titleUpdatedAt });
+        }
+    }
+
+    peerPinned(docId: string, pinned: boolean, pinnedUpdatedAt: number): void {
+        appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
+    }
+
+    peerDeleted(docId: string): void {
+        appStore.removeDocument(docId);
+        bumpIndexRevision();
+    }
+
+    /**
+     * A peer's update, which Rust has merged into the store (ADR 0031,
+     * decision 5). Applied to the open copy with `REMOTE_ORIGIN`, so the
+     * editor shows it and does not send it back, then indexed: the open copy
+     * shortly after, the stored state of a closed one at once (decision 7).
+     */
+    async peerMerged(docId: string, updateB64: string): Promise<void> {
+        const update = base64ToBytes(updateB64);
+        return this.write(docId, async () => {
+            const live = getOpenDoc(docId);
+            if (live) {
+                Y.applyUpdate(live, update, REMOTE_ORIGIN);
+                appStore.markDocumentHasContent(docId);
+                this.indexOpenSoon(docId);
+                return;
+            }
+            await this.indexStored(docId);
+        });
+    }
+
+    private indexOpenSoon(docId: string): void {
+        clearTimeout(this.openIndexTimers.get(docId));
+        this.openIndexTimers.set(
+            docId,
+            setTimeout(() => {
+                this.openIndexTimers.delete(docId);
+                void this.write(docId, async () => {
+                    const indexer = await loadIndexer();
+                    const live = getOpenDoc(docId);
+                    if (!live) return this.indexStored(docId);
+                    const index = readIndex(indexer, live);
+                    if (!index) return;
+                    // The open copy holds everything merged into the store
+                    // that has reached this page, so the index is taken as
+                    // it is; anything merged since has its own turn queued.
+                    await invoke('save_document_index', { docId, index, contentHash: null });
+                    this.showIndex(docId, index);
+                }).catch((e) => console.warn(`[sync] could not index ${docId}:`, e));
+            }, OPEN_INDEX_DELAY_MS),
+        );
+    }
+
+    // Index a document from its stored state. Rust drops the index if the
+    // document changed after it was read, and the change that moved it
+    // brings its own turn. Returns whether it was written.
+    private async indexStored(docId: string): Promise<boolean> {
+        const indexer = await loadIndexer();
+        if (!indexer) return false;
+        const { ydoc, contentHash } = await this.loadDoc(docId);
+        const index = readIndex(indexer, ydoc);
+        ydoc.destroy();
+        if (!index) return false;
+        const written = await invoke<boolean>('save_document_index', {
+            docId,
+            index,
+            contentHash,
+        });
+        if (written) this.showIndex(docId, index);
+        return written;
+    }
+
+    // A document's index changed: its counts in the sidebar, and every view
+    // that reads derived rows, catch up.
+    private showIndex(docId: string, index: DocumentIndex | null): void {
+        appStore.markDocumentHasContent(docId);
+        if (index) {
+            appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
+            bumpIndexRevision();
+        }
+    }
+
+    // --- attachments ---------------------------------------------------
 
     // Do we already have this attachment's bytes on disk?
     async hasAttachment(hash: string): Promise<boolean> {
@@ -439,38 +499,25 @@ export class DocumentRepository {
         return !!info && info.is_fully_downloaded;
     }
 
-    // The bytes for a peer's `attach-need`, or null if we do not have them.
-    async readAttachment(hash: string): Promise<{ mime: string; data: string } | null> {
-        const res = await invoke<{ mime_type: string; data: string } | null>(
-            'get_attachment_bytes',
-            {
-                hash,
-            },
-        );
-        return res ? { mime: res.mime_type, data: res.data } : null;
-    }
+    // --- catching up ---------------------------------------------------
 
-    // Persist an attachment pulled from a peer. Rejects on hash mismatch.
-    async saveAttachment(hash: string, mime: string, data: string): Promise<void> {
-        await invoke('save_attachment_bytes', { hash, mimeType: mime, data });
-    }
-
-    // --- one-time maintenance -------------------------------------------
-
-    // Build the derived rows for documents that have never had them.
+    // Build the derived rows for every document that does not have current
+    // ones: never indexed, indexed by an older build, or merged by Rust while
+    // no page was running to index it (ADR 0031, decision 7).
     //
     // Search, backlinks, task counts and attachment references are all read
-    // out of a rendered document, so before this they only existed for
-    // documents saved on this device since the feature shipped. Everything
-    // else was unsearchable, and its images looked unreferenced, which is why
-    // collecting them has to wait for this to finish.
-    //
-    // Rendering is the same headless path a merge uses. One document at a
-    // time, off the startup critical path; a failure on one is logged and the
-    // rest continue.
-    async backfillIndex(): Promise<number> {
-        const indexer = await loadRemoteIndexer();
-        if (!indexer) return 0;
+    // out of a rendered document, which is why collecting images has to wait
+    // for this to finish. One document at a time, off the startup critical
+    // path; a failure on one is logged and the rest continue.
+    backfillIndex(): Promise<number> {
+        this.backfill ??= this.runBackfill().finally(() => {
+            this.backfill = null;
+        });
+        return this.backfill;
+    }
+
+    private async runBackfill(): Promise<number> {
+        if (!(await loadIndexer())) return 0;
 
         let ids: string[];
         try {
@@ -483,12 +530,7 @@ export class DocumentRepository {
         let done = 0;
         for (const docId of ids) {
             try {
-                const ydoc = await this.loadDoc(docId);
-                const index = indexer(ydoc);
-                const state = Y.encodeStateAsUpdate(ydoc);
-                ydoc.destroy();
-                await this.saveLocalUpdate(docId, state, index);
-                done++;
+                if (await this.write(docId, () => this.indexStored(docId))) done++;
             } catch (e) {
                 console.warn(`[sync] could not index ${docId}:`, e);
             }

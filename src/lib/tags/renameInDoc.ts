@@ -67,8 +67,8 @@ export function renameTagInFragment(
  * once.
  *
  * `origin` is left unset on purpose. This is a local edit, and the editor's
- * update listener rebroadcasts everything that is not tagged as remote, which
- * is exactly what should happen to a rename made while the document is open.
+ * update listener saves everything that is not tagged as remote, which is
+ * exactly what should happen to a rename made while the document is open.
  */
 export function renameTagInDoc(ydoc: Y.Doc, from: string, to: string): number {
     let changed = 0;

@@ -31,9 +31,11 @@ const TXT_NODE_ID: &str = "nid";
 const TXT_BOOT: &str = "boot";
 const TXT_VERSION: &str = "v";
 
-/// What this build advertises, and the only version it understands. A peer
-/// announcing anything else is ignored rather than guessed at.
-const ADVERT_VERSION: &str = "1";
+/// What this build advertises, and the only version it understands: the sync
+/// protocol's. A peer announcing anything else is ignored rather than guessed
+/// at, which is how a build that syncs over TLS and one that synced over
+/// WebRTC stay apart (ADR 0032, decision 9).
+const ADVERT_VERSION: &str = crate::sync::protocol::PROTOCOL_VERSION;
 
 /// The TXT properties to advertise for this device.
 pub fn advert_properties(node_id: &str, boot_id: &str) -> Vec<(String, String)> {
@@ -338,7 +340,7 @@ mod tests {
     }
 
     fn advert(node_id: &str) -> HashMap<String, String> {
-        txt(&[("nid", node_id), ("boot", "boot-1"), ("v", "1")])
+        txt(&[("nid", node_id), ("boot", "boot-1"), ("v", "2")])
     }
 
     fn addr(last: u8) -> Vec<IpAddr> {
@@ -367,13 +369,17 @@ mod tests {
 
     #[test]
     fn an_advert_from_a_version_we_do_not_speak_is_ignored() {
-        let props = txt(&[("nid", "peer-a"), ("v", "2")]);
-        assert!(peer_from_advert(&props, "f", addr(2), 7000, US, 0).is_none());
+        for version in ["1", "3"] {
+            let props = txt(&[("nid", "peer-a"), ("v", version)]);
+            assert!(peer_from_advert(&props, "f", addr(2), 7000, US, 0).is_none());
+        }
+        let unversioned = txt(&[("nid", "peer-a")]);
+        assert!(peer_from_advert(&unversioned, "f", addr(2), 7000, US, 0).is_none());
     }
 
     #[test]
     fn an_advert_with_no_node_id_is_ignored() {
-        let props = txt(&[("v", "1")]);
+        let props = txt(&[("v", "2")]);
         assert!(peer_from_advert(&props, "f", addr(2), 7000, US, 0).is_none());
     }
 

@@ -82,25 +82,27 @@ fn load(state: &[u8]) -> Result<Doc, String> {
     Ok(doc)
 }
 
+/// A row as a manifest describes it to a peer.
+pub fn manifest_entry(r: documents::DocSyncEntry) -> ManifestEntry {
+    ManifestEntry {
+        id: r.id,
+        doc_type: r.doc_type,
+        title: r.title,
+        title_updated_at: r.title_updated_at,
+        created_at: r.created_at,
+        is_deleted: r.is_deleted,
+        deleted_at: r.deleted_at,
+        lifecycle_updated_at: Some(r.lifecycle_updated_at),
+        pinned: Some(r.pinned),
+        pinned_updated_at: r.pinned_updated_at,
+        content_hash: r.content_hash,
+    }
+}
+
 impl Repo for SqliteRepo {
     fn list_sync_state(&self) -> Result<Vec<ManifestEntry>, String> {
         let rows = documents::query_sync_state(&self.db.lock())?;
-        Ok(rows
-            .into_iter()
-            .map(|r| ManifestEntry {
-                id: r.id,
-                doc_type: r.doc_type,
-                title: r.title,
-                title_updated_at: r.title_updated_at,
-                created_at: r.created_at,
-                is_deleted: r.is_deleted,
-                deleted_at: r.deleted_at,
-                lifecycle_updated_at: Some(r.lifecycle_updated_at),
-                pinned: Some(r.pinned),
-                pinned_updated_at: r.pinned_updated_at,
-                content_hash: r.content_hash,
-            })
-            .collect())
+        Ok(rows.into_iter().map(manifest_entry).collect())
     }
 
     fn ensure_doc(&self, entry: &ManifestEntry) -> Result<(), String> {

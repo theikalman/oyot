@@ -5,12 +5,6 @@ import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
 import { bumpIndexRevision } from '../stores/derivedIndex';
 import { toDocumentSummary } from './documents';
-import {
-    broadcastDocCreated,
-    broadcastDocRenamed,
-    broadcastDocPinned,
-    broadcastDocDeleted,
-} from '../sync';
 
 function appStoreDoc(docId: string) {
     return get(appStore).documents.find((d) => d.id === docId);
@@ -19,23 +13,10 @@ function appStoreCurrentId(): string | undefined {
     return get(appStore).currentDocument?.id;
 }
 
-// Single owner of user-initiated document mutations: run the Rust command,
-// update the in-memory store, and tell paired devices. UI components call these
-// instead of invoking + broadcasting inline, so the local and the synced paths
-// stay identical. See docs/decisions/0003-full-document-set-sync.md.
-
-function announceCreated(doc: Document): void {
-    broadcastDocCreated({
-        id: doc.id,
-        docType: doc.doc_type,
-        title: doc.title,
-        titleUpdatedAt: doc.title_updated_at,
-        createdAt: doc.created_at,
-        lifecycleUpdatedAt: doc.lifecycle_updated_at ?? doc.created_at,
-        pinned: doc.pinned,
-        pinnedUpdatedAt: doc.pinned_updated_at,
-    });
-}
+// Single owner of user-initiated document mutations: run the Rust command and
+// update the in-memory store. UI components call these instead of invoking
+// inline, so every path keeps the store the same way. Each command tells
+// connected devices itself (ADR 0031, decision 6).
 
 // Creating does not open. The caller navigates, and the document route sets
 // the open document from the URL, so there is exactly one thing that decides
@@ -47,7 +28,6 @@ function announceCreated(doc: Document): void {
 export async function createNote(title: string, pinned = false): Promise<Document> {
     const doc = await invoke<Document>('create_document', { docType: 'note', title, pinned });
     appStore.addDocument(toDocumentSummary(doc));
-    announceCreated(doc);
     return doc;
 }
 
@@ -57,7 +37,13 @@ export async function createNote(title: string, pinned = false): Promise<Documen
 // with nothing in it yet, and a peer told now would pull content that is not
 // there.
 export async function createImportedNote(id: string, title: string): Promise<Document> {
-    return invoke<Document>('create_document', { docType: 'note', title, pinned: false, id });
+    return invoke<Document>('create_document', {
+        docType: 'note',
+        title,
+        pinned: false,
+        id,
+        quiet: true,
+    });
 }
 
 export interface PublishedNote {
@@ -83,30 +69,24 @@ export function publishImportedNotes(notes: PublishedNote[]): void {
         })),
     );
     bumpIndexRevision();
-    for (const { doc } of notes) announceCreated(doc);
+    void invoke('announce_documents', { ids: notes.map(({ doc }) => doc.id) }).catch((e) =>
+        console.warn('[import] could not tell connected devices about the imported notes:', e),
+    );
 }
 
 export async function createJournalForDate(dateTitle: string): Promise<Document> {
     const doc = await invoke<Document>('create_document', { docType: 'journal', title: dateTitle });
     appStore.addDocument(toDocumentSummary(doc));
-    announceCreated(doc);
     return doc;
 }
 
-// Wraps get_or_create_today_journal, announcing only when there is something
-// peers have not heard.
-//
-// Announcing unconditionally meant every launch broadcast `doc-created` for a
-// journal every peer already had, and each of them answered with a `sync-need`
-// carrying an empty state vector, so the whole document came back across the
-// wire. A revival still counts as news: it is how a peer learns the tombstone
-// it holds has been superseded.
+// Rust announces today's journal only when it made or revived it: every peer
+// already has one that was sitting there.
 export async function ensureTodayJournal(): Promise<Document> {
-    const { document: doc, created } = await invoke<{ document: Document; created: boolean }>(
+    const { document: doc } = await invoke<{ document: Document; created: boolean }>(
         'get_or_create_today_journal',
     );
     appStore.addDocument(toDocumentSummary(doc));
-    if (created) announceCreated(doc);
     return doc;
 }
 
@@ -125,27 +105,20 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
     }
     // Views grouped by title, the todo index among them, have to regroup.
     bumpIndexRevision();
-    broadcastDocRenamed(docId, doc.title, doc.title_updated_at);
     return doc;
 }
 
 // Pinning keeps a note in the sidebar, on every device: it is the user's
 // choice about the note, like its title (ADR 0027). The stamp comes back from
-// Rust, which wrote it, for the reason the delete's does.
+// Rust, which wrote it.
 export async function setPinned(docId: string, pinned: boolean): Promise<void> {
     const pinnedUpdatedAt = await invoke<number>('set_document_pinned', { docId, pinned });
     appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
-    broadcastDocPinned(docId, pinned, pinnedUpdatedAt);
 }
 
 export async function deleteDocument(docId: string): Promise<void> {
-    // Broadcast the stamp Rust actually wrote. Taking a second reading with
-    // `Date.now()` here produced one strictly later than the row's, so every
-    // peer recorded the delete as marginally newer than ours and handed it
-    // back on the next manifest exchange as if it were news.
-    const deletedAt = await invoke<number>('delete_document', { docId });
+    await invoke<number>('delete_document', { docId });
     appStore.removeDocument(docId);
     // Its derived rows went with it, so anything reading them is now stale.
     bumpIndexRevision();
-    broadcastDocDeleted(docId, deletedAt);
 }

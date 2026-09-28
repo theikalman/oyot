@@ -1,8 +1,7 @@
 <script lang="ts">
-    import { log } from '$lib/log';
     import { onMount, onDestroy } from 'svelte';
-    import { listen } from '@tauri-apps/api/event';
     import { currentDocument } from '$lib/stores/app';
+    import { indexRevision as derivedRevision } from '$lib/stores/derivedIndex';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
@@ -31,10 +30,10 @@
     let current = $derived($currentDocument);
     let editorInstance = $state<EditorType | null>(null);
     let saveService = $state<EditorSaveService | null>(null);
-    let unlistenSyncEvent: (() => void) | null = null;
     // Bumped after a save so the backlinks panel re-reads: a link added in this
     // document changes what other documents' panels show, and this one's too if
-    // the save also removed a link.
+    // the save also removed a link. The panel also re-reads whenever derived
+    // rows change anywhere, a peer's edit to another note among them.
     let indexRevision = $state(0);
 
     // Closing the window saves through the layout, which flushes every
@@ -72,8 +71,8 @@
         }
     }
 
-    function handleLocalUpdate(update: Uint8Array) {
-        saveService?.recordUpdate(update);
+    function handleLocalUpdate() {
+        saveService?.recordUpdate();
     }
 
     // EditorInstance is about to destroy the editor behind `doc`. Encode now,
@@ -83,17 +82,15 @@
     // `saveService` still points at the outgoing document at this point (the
     // incoming one is set later, in handleEditorReady), so its pending flag
     // answers for the document being torn down. Skipping when nothing is
-    // pending keeps plain navigation from rewriting and re-broadcasting a
-    // document nobody edited.
+    // pending keeps plain navigation from rewriting a document nobody edited.
     function handleBeforeTeardown(docId: string, doc: Y.Doc) {
         if (!saveService?.hasPendingWrite()) return;
-        const delta = saveService.takePendingDelta();
         const snapshot = Y.encodeStateAsUpdate(doc);
         // Read the index here, while the editor still exists.
         const index = editorInstance ? extractDocumentIndex(editorInstance.state.doc) : undefined;
         // Nothing awaits this; persistSnapshot rethrows after reporting, so
         // swallow here rather than leave an unhandled rejection on a teardown.
-        void persistSnapshot(docId, snapshot, delta, index).catch(() => {});
+        void persistSnapshot(docId, snapshot, index).catch(() => {});
     }
 
     // The debounce timer dies with the process, so flush on every predictable
@@ -101,43 +98,20 @@
     // backgrounded app without ever firing a close event.
     function handleVisibilityChange() {
         // Only when there is something to write. Flushing regardless rewrote
-        // the whole document, bumped `updated_at` and broadcast it to every
-        // peer each time the user switched away from the window.
+        // the whole document each time the user switched away from the window.
         if (document.visibilityState === 'hidden' && saveService?.hasPendingWrite()) {
             void saveService.flushNow();
         }
     }
 
-    // The Tauri listener is registered asynchronously, so a component
-    // destroyed before it resolves would have had nothing to unregister and
-    // would have leaked a handler holding a stale editor. That happens
-    // whenever the open document is deleted.
-    let destroyed = false;
-
-    onMount(async () => {
+    onMount(() => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('pagehide', handleVisibilityChange);
-
-        // A peer's edit is applied straight into the open document by the
-        // sync layer, so there is nothing to fetch here and nothing to apply.
-        // What still needs telling is the panel below the editor, which reads
-        // derived rows out of SQL rather than out of the document.
-        const unlistenSync = await listen('sync-received', (event) => {
-            const payload = event.payload as { doc_id?: string };
-            log.debug(`[Editor] event: sync-received doc_id=${payload?.doc_id ?? '(none)'}`);
-            if (payload?.doc_id && payload.doc_id === current?.id) {
-                indexRevision++;
-            }
-        });
-        if (destroyed) unlistenSync();
-        else unlistenSyncEvent = unlistenSync;
     });
 
     onDestroy(() => {
-        destroyed = true;
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('pagehide', handleVisibilityChange);
-        unlistenSyncEvent?.();
         unregisterPendingSave();
         if (saveService) {
             saveService.destroy();
@@ -160,7 +134,7 @@
             {editable}
         />
 
-        <Backlinks docId={current.id} revision={indexRevision} />
+        <Backlinks docId={current.id} revision={indexRevision + $derivedRevision} />
     {:else}
         <div class="empty-state">
             <p>Select a file to edit</p>

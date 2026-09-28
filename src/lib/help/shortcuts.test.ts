@@ -24,7 +24,6 @@ vi.mock('$lib/tiptap/pickerPopup', () => ({
     openPickerPopup: vi.fn(),
 }));
 vi.mock('$lib/sync', () => ({
-    broadcastAttachmentAvailable: vi.fn(),
     pullAttachmentFromPeers: vi.fn(),
 }));
 

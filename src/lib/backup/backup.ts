@@ -1,23 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import {
-    documentRepository,
-    broadcastDocCreated,
-    broadcastDocRenamed,
-    broadcastDocPinned,
-    broadcastLocalUpdate,
-} from '$lib/sync';
+import { documentRepository } from '$lib/sync';
 import { toManifestEntry, type RawSyncEntry } from '$lib/sync/DocumentRepository';
-import { lifecycleStamp, type ManifestEntry } from '$lib/sync/protocol';
+import type { ManifestEntry } from '$lib/sync/protocol';
 import { appStore } from '$lib/stores/app';
 import { saveTheme } from '$lib/services/theme';
 import type { Theme } from '$lib/types';
-import {
-    applyImport,
-    planImport,
-    type ImportAnnouncer,
-    type ImportPlan,
-    type ImportResult,
-} from './importBackup';
+import { applyImport, planImport, type ImportPlan, type ImportResult } from './importBackup';
 
 /**
  * Backing up to a file and importing one back, as the settings page uses
@@ -215,23 +203,6 @@ export interface BackupImportResult extends ImportResult {
     themeApplied: boolean;
 }
 
-const announce: ImportAnnouncer = {
-    created: (entry) =>
-        broadcastDocCreated({
-            id: entry.id,
-            docType: entry.docType,
-            title: entry.title,
-            titleUpdatedAt: entry.titleUpdatedAt,
-            createdAt: entry.createdAt,
-            lifecycleUpdatedAt: lifecycleStamp(entry),
-            pinned: entry.pinned,
-            pinnedUpdatedAt: entry.pinnedUpdatedAt,
-        }),
-    updated: (docId, state) => broadcastLocalUpdate(docId, state),
-    renamed: (docId, title, titleUpdatedAt) => broadcastDocRenamed(docId, title, titleUpdatedAt),
-    pinned: (docId, pinned, pinnedUpdatedAt) => broadcastDocPinned(docId, pinned, pinnedUpdatedAt),
-};
-
 /**
  * Import an opened backup. Documents first, then images: an image arriving
  * before the note that embeds it would sit unreferenced, which is exactly
@@ -250,7 +221,6 @@ export async function importBackup(
             plan,
             (docId) => invoke<string | null>('backup_session_read_state', { sessionId, docId }),
             documentRepository,
-            announce,
             onProgress,
         );
         const images = await invoke<{ imported: number; already_here: number; failed: number }>(

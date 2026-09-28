@@ -1,10 +1,13 @@
-//! The local-network signaling channel, and since ADR 0022 the only one.
+//! The listener every other device reaches this one on, and the probe sent
+//! to a stored address.
 //!
-//! Carries a signed `SignalingMessage` in a frame of its own, to a peer whose
-//! address `lan_discovery` found. The envelope does not trust the transport:
-//! ADR 0009 treated the broker that used to carry it as untrusted
-//! infrastructure, and an untrusted LAN is the same threat model, so nothing
-//! about the envelope changed when the broker went.
+//! One port carries two things (ADR 0032, decision 3). A connection that
+//! opens with a TLS handshake is a sync connection, and goes to the sync
+//! engine. Anything else is a signed `SignalingMessage` in a frame of its
+//! own, which since ADR 0032 means a probe: a `ping`, answered with a `pong`
+//! on the same connection. The envelope does not trust the transport: ADR
+//! 0009 treated the broker that used to carry it as untrusted
+//! infrastructure, and an untrusted LAN is the same threat model.
 //!
 //! The port is fixed where it can be. mDNS tells a peer on this network which
 //! port to use, but a peer reached at a stored address (ADR 0023) has only the
@@ -14,11 +17,9 @@
 //! working, while the stored-address route cannot be reached inbound. That is
 //! a real state with a real cause, so the listener reports which it got.
 //!
-//! One connection per message, rather than a connection held open per peer.
-//! A signaling exchange is an offer, an answer and a handful of candidates, so
-//! the handshake costs about a millisecond on a LAN and buys statelessness:
-//! there is no connection to notice the loss of, re-establish, or keep in step
-//! with the peer's own idea of it.
+//! A probe is one connection per exchange, rather than one held open per
+//! peer: the handshake costs about a millisecond on a LAN and buys
+//! statelessness. The connection that stays open is the sync engine's.
 //!
 //! See docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md
 //! and docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md.
@@ -26,6 +27,7 @@
 use crate::crypto;
 use crate::network::message::SignalingMessage;
 use crate::network::signaling_manager::Inbound;
+use crate::sync::manager::SyncManager;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -41,10 +43,14 @@ pub const SIGNALING_PORT: u16 = 19701;
 
 /// The largest frame we will read.
 ///
-/// An SDP offer is a few KB. This is generous enough for one with many
-/// candidates and small enough that a hostile length prefix cannot make us
-/// allocate anything interesting.
+/// A probe is a few hundred bytes. This is generous, and small enough that a
+/// hostile length prefix cannot make us allocate anything interesting. It
+/// also keeps a frame's first byte at zero, which is how a probe is told from
+/// a TLS handshake.
 const MAX_FRAME_BYTES: usize = 64 * 1024;
+
+/// The first byte of a TLS record carrying a handshake.
+const TLS_HANDSHAKE: u8 = 0x16;
 
 /// How long one inbound connection may take to deliver its frame.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -55,19 +61,17 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long a whole send may take once connected.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long to wait for an answer on a connection that expects one.
-///
-/// Only `request` waits at all. A peer answers a probe from memory, so this is
-/// a round trip plus nothing, and waiting longer would only make a device that
-/// is not there take longer to report as not there.
+/// How long to wait for an answer to a probe. A peer answers from memory, so
+/// this is a round trip plus nothing, and waiting longer would only make a
+/// device that is not there take longer to report as not there.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Frames allowed from one address per window, and how long that window is.
 ///
 /// Anyone on the network can connect to this listener. Verification already
 /// drops what they send, but doing that work on demand is itself the cost, so
-/// the limit is on arrivals rather than on acceptances. Generous next to a
-/// real exchange, which is single digits.
+/// the limit is on arrivals rather than on acceptances, TLS handshakes
+/// included. Generous next to a real exchange, which is single digits.
 const RATE_WINDOW_MS: i64 = 10_000;
 const MAX_FRAMES_PER_WINDOW: u32 = 30;
 
@@ -186,14 +190,14 @@ async fn bind() -> Result<TcpListener, String> {
     }
 }
 
-/// Start accepting signaling connections.
+/// Start accepting connections: probes, answered through `inbound`, and sync
+/// connections, handed to `sync`.
 ///
 /// Binds on every IPv4 interface, which includes a VPN's: a tailnet address is
 /// an address on this machine like any other, so nothing here knows or cares
 /// that a connection arrived over one. IPv4 only for now, which is what a home
-/// network hands out and what every tailnet node has, and `send_to` prefers
-/// IPv4 addresses to match.
-pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
+/// network hands out and what every tailnet node has.
+pub async fn listen(inbound: Inbound, sync: SyncManager) -> Result<LanListener, String> {
     let listener = bind().await?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
@@ -212,8 +216,9 @@ pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
                 continue;
             }
             let inbound = inbound.clone();
+            let sync = sync.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = serve(stream, from, inbound).await {
+                if let Err(e) = serve(stream, from, inbound, sync).await {
                     trace!("[LAN] dropped a connection from {}: {}", from, e);
                 }
             });
@@ -224,12 +229,30 @@ pub async fn listen(inbound: Inbound) -> Result<LanListener, String> {
     Ok(LanListener { port, task })
 }
 
-/// Read one message from a connection and hand it to the shared inbound path.
+/// Hand a sync connection to the engine, or answer a probe.
 ///
-/// Writes an answer back on the same connection when there is one, which since
-/// ADR 0023 means a probe and nothing else. Everything else is still one
-/// message per connection: a peer that wants to reply opens its own.
-async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Result<(), String> {
+/// The first byte decides, read without taking it off the stream: a TLS
+/// handshake starts with 0x16, and a probe's frame with the high byte of a
+/// length under 64 KiB, which is zero.
+async fn serve(
+    mut stream: TcpStream,
+    from: SocketAddr,
+    inbound: Inbound,
+    sync: SyncManager,
+) -> Result<(), String> {
+    let mut first = [0u8; 1];
+    let peeked = tokio::time::timeout(READ_TIMEOUT, stream.peek(&mut first))
+        .await
+        .map_err(|_| "timed out waiting for the first byte".to_string())?
+        .map_err(|e| e.to_string())?;
+    if peeked == 0 {
+        return Err("closed before sending anything".to_string());
+    }
+    if first[0] == TLS_HANDSHAKE {
+        sync.accept(stream);
+        return Ok(());
+    }
+
     let body = tokio::time::timeout(READ_TIMEOUT, read_frame(&mut stream))
         .await
         .map_err(|_| "timed out waiting for a frame".to_string())??;
@@ -238,7 +261,7 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Res
         serde_json::from_slice(&body).map_err(|e| format!("unreadable envelope: {e}"))?;
 
     trace!("[LAN] {} from {}", msg.msg_type, from);
-    let reply = inbound.receive(msg).await;
+    let reply = inbound.receive(msg);
 
     if let Some(reply) = reply {
         let body = serde_json::to_vec(&reply).map_err(|e| e.to_string())?;
@@ -249,11 +272,7 @@ async fn serve(mut stream: TcpStream, from: SocketAddr, inbound: Inbound) -> Res
     Ok(())
 }
 
-/// Send one message to one address and wait for the answer.
-///
-/// The one exchange that expects a reply on its own connection. `send_to`
-/// stays fire-and-forget, because everything else is answered by the peer
-/// opening a connection back.
+/// Send one message to one address and wait for the answer: a probe.
 pub async fn request(addr: SocketAddr, msg: &SignalingMessage) -> Result<SignalingMessage, String> {
     let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
 
@@ -271,50 +290,6 @@ pub async fn request(addr: SocketAddr, msg: &SignalingMessage) -> Result<Signali
         .map_err(|_| "no answer".to_string())??;
 
     serde_json::from_slice(&reply).map_err(|e| format!("unreadable answer: {e}"))
-}
-
-/// Send one message to a peer on this network.
-///
-/// Tries the peer's addresses in turn, IPv4 first, and reports the last
-/// failure if none of them answer. A refused connection is worth knowing
-/// quickly: it is cheaper to learn here than by waiting out a negotiation
-/// that never completes.
-pub async fn send_to(addrs: &[IpAddr], port: u16, msg: &SignalingMessage) -> Result<(), String> {
-    if addrs.is_empty() {
-        return Err("peer has no address on this network".to_string());
-    }
-    let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
-
-    let mut ordered: Vec<&IpAddr> = addrs.iter().collect();
-    ordered.sort_by_key(|a| !a.is_ipv4());
-
-    let mut last = String::new();
-    for addr in ordered {
-        match send_one(SocketAddr::new(*addr, port), &body).await {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                trace!("[LAN] {}:{} did not take the message: {}", addr, port, e);
-                last = e;
-            }
-        }
-    }
-    Err(last)
-}
-
-async fn send_one(addr: SocketAddr, body: &[u8]) -> Result<(), String> {
-    let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
-        .await
-        .map_err(|_| "connection timed out".to_string())?
-        .map_err(|e| e.to_string())?;
-
-    tokio::time::timeout(WRITE_TIMEOUT, write_frame(&mut stream, body))
-        .await
-        .map_err(|_| "send timed out".to_string())??;
-
-    // Half-close rather than drop: it tells the peer the message is complete
-    // without waiting for it to answer, which it does not.
-    let _ = stream.shutdown().await;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -418,19 +393,5 @@ mod tests {
             limiter.allow(ip(i as u8), 1_000_000);
         }
         assert_eq!(limiter.seen.len(), MAX_TRACKED_SOURCES);
-    }
-
-    #[tokio::test]
-    async fn sending_to_a_peer_with_no_address_fails_rather_than_hanging() {
-        let msg = SignalingMessage {
-            from: "a".into(),
-            to: Some("b".into()),
-            msg_type: "offer".into(),
-            payload: "{}".into(),
-            ts: 0,
-            nonce: "n".into(),
-            sig: "s".into(),
-        };
-        assert!(send_to(&[], 7000, &msg).await.is_err());
     }
 }

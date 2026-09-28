@@ -46,9 +46,10 @@ pub fn save_pair(
 ) -> Result<(), String> {
     // Upsert rather than INSERT OR REPLACE: REPLACE deletes the row and inserts
     // a fresh one, and `last_synchronized` is not in the column list, so it
-    // reset to NULL. The transport calls this on every transition to connected,
-    // so "last synced" flipped to never-synced on every reconnect until the
-    // sync completed and update_last_sync put it back.
+    // reset to NULL. The webview's transport called this on every transition
+    // to connected, so "last synced" flipped to never-synced on every
+    // reconnect; a device pairing again with one that still has it would do
+    // the same.
     db.execute(
         "INSERT INTO device_pairs (user_id, peer_node_id, peer_display_name, room_id)
          VALUES (?1, ?2, ?3, ?4)

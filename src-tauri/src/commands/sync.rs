@@ -1,11 +1,11 @@
 use crate::crdt;
 use crate::db::AppState;
 use crate::indexer;
+use crate::sync::protocol::Message;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 // Yjs state crosses the IPC boundary as base64 rather than a JSON array of
 // numbers. A number array serialises to roughly 3.6 bytes of JSON per byte of
@@ -22,6 +22,9 @@ pub struct YjsStateResult {
     pub doc_id: String,
     /// base64 of the merged Yjs state; empty string when there is none.
     pub state: String,
+    /// base64 of the stored content hash, so an index read from this state
+    /// can say which state it was read from (`save_document_index`).
+    pub content_hash: Option<String>,
 }
 
 #[tauri::command]
@@ -30,12 +33,17 @@ pub fn get_yjs_state(
     doc_id: String,
 ) -> Result<YjsStateResult, String> {
     trace!("[cmd] get_yjs_state doc_id={}", doc_id);
-    let state_vec: Vec<u8> = {
+    let (state_vec, hash): (Vec<u8>, Option<Vec<u8>>) = {
         let db = state.db.lock();
         db.query_row(
-            "SELECT crdt_state FROM documents WHERE id = ? AND is_deleted = 0",
+            "SELECT crdt_state, content_hash FROM documents WHERE id = ? AND is_deleted = 0",
             params![&doc_id],
-            |row| row.get::<_, Option<Vec<u8>>>(0),
+            |row| {
+                Ok((
+                    row.get::<_, Option<Vec<u8>>>(0)?,
+                    row.get::<_, Option<Vec<u8>>>(1)?,
+                ))
+            },
         )
         // Two legitimately empty cases: no such row (missing or tombstoned),
         // and a row that has no content yet. A query that actually failed is
@@ -44,7 +52,7 @@ pub fn get_yjs_state(
         // then saved back over the real content.
         .optional()
         .map_err(|e| format!("failed to read state for {doc_id}: {e}"))?
-        .flatten()
+        .map(|(state, hash)| (state.unwrap_or_default(), hash))
         .unwrap_or_default()
     };
     trace!(
@@ -55,18 +63,8 @@ pub fn get_yjs_state(
     Ok(YjsStateResult {
         doc_id,
         state: BASE64.encode(&state_vec),
+        content_hash: hash.map(|h| BASE64.encode(h)),
     })
-}
-
-/// Where a Yjs update came from, which decides whether the editor is told to
-/// reload the document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum UpdateOrigin {
-    /// The editor's own save. It already has this content in its ydoc.
-    Local,
-    /// Merged from a peer. An open editor has to be told.
-    Remote,
 }
 
 /// What the store holds after a save, for the editor's next one.
@@ -133,15 +131,20 @@ pub fn merge_into_document(
     Ok(Some(merged))
 }
 
+/// Save a change made on this device, and tell connected devices what it
+/// added (ADR 0031, decision 6). A peer's changes never come through here:
+/// the engine merges those itself.
 #[tauri::command]
 pub async fn save_yjs_update(
     state: tauri::State<'_, AppState>,
     doc_id: String,
     update: String,
-    origin: UpdateOrigin,
     // What the editor extracted from the document: text for search, link
     // targets, todo counts. Absent when the caller could not render it.
     index: Option<indexer::DocumentIndexInput>,
+    // Saved without telling peers: an imported note's content, which they
+    // pull when the note is announced with the rest of its batch (ADR 0029).
+    quiet: Option<bool>,
 ) -> Result<SavedState, String> {
     let update = decode("update", &update)?;
     trace!(
@@ -171,22 +174,72 @@ pub async fn save_yjs_update(
         merged
     };
 
-    // Only a peer's update needs to reach an open editor. This used to fire on
-    // every save, including the editor's own: the editor listened, saw its own
-    // document id, and pulled the entire document back over IPC to apply state
-    // it had just produced. Idempotent in Yjs terms, and pure waste that grew
-    // with document size.
-    if origin == UpdateOrigin::Remote {
-        let _ = state
-            .app_handle
-            .emit("sync-received", serde_json::json!({ "doc_id": doc_id }));
+    let Some(merged) = merged else {
+        return Ok(SavedState {
+            state_vector: String::new(),
+        });
+    };
+    // What the save added, not what it was handed: the page sends whatever
+    // the store might be missing, which can include a peer's edit the store
+    // already has, and sending that back would echo it.
+    if let (Some(delta), false) = (merged.delta, quiet.unwrap_or(false)) {
+        crate::sync::announce(
+            &state.app_handle,
+            Message::LiveUpdate {
+                id: doc_id,
+                update: delta,
+            },
+        );
     }
-
     Ok(SavedState {
-        state_vector: merged
-            .map(|m| BASE64.encode(m.state_vector))
-            .unwrap_or_default(),
+        state_vector: BASE64.encode(merged.state_vector),
     })
+}
+
+/// Record what the page read out of a document (ADR 0031, decision 7). The
+/// engine merges a peer's update but cannot render the result, so the
+/// document waits at `index_version = 0` until the page has.
+///
+/// `content_hash` names the state the index was read from, when the page
+/// read it from the store. An index read from a state the document has since
+/// moved on from is dropped: the change that moved it brings its own turn,
+/// and a stale index marked current would never be redone. Without one, the
+/// index is taken as it is. Returns whether it was written.
+#[tauri::command]
+pub fn save_document_index(
+    state: tauri::State<'_, AppState>,
+    doc_id: String,
+    index: indexer::DocumentIndexInput,
+    content_hash: Option<String>,
+) -> Result<bool, String> {
+    let db = state.db.lock();
+    write_index(&db, &doc_id, &index, content_hash.as_deref())
+}
+
+pub fn write_index(
+    db: &rusqlite::Connection,
+    doc_id: &str,
+    index: &indexer::DocumentIndexInput,
+    read_from: Option<&str>,
+) -> Result<bool, String> {
+    let row: Option<(String, Option<Vec<u8>>)> = db
+        .query_row(
+            "SELECT title, content_hash FROM documents WHERE id = ?1 AND is_deleted = 0",
+            params![doc_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((title, stored)) = row else {
+        return Ok(false);
+    };
+    if let Some(read_from) = read_from {
+        if stored.map(|h| BASE64.encode(h)).as_deref() != Some(read_from) {
+            return Ok(false);
+        }
+    }
+    indexer::update_document_index(db, doc_id, &title, index)?;
+    Ok(true)
 }
 
 /// Give every document without a content hash one, a row at a time (ADR
@@ -322,6 +375,61 @@ mod tests {
         add(&db, "d", Some(&written(1, "kept")));
         assert!(merge_into_document(&db, "d", &[9, 9, 9, 9], 1).is_err());
         assert_eq!(stored(&db, "d").0, Some(written(1, "kept")));
+    }
+
+    fn hash_of(db: &Connection, id: &str) -> String {
+        BASE64.encode(stored(db, id).1.unwrap())
+    }
+
+    fn index(text: &str) -> indexer::DocumentIndexInput {
+        indexer::DocumentIndexInput {
+            text: text.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn indexed_text(db: &Connection, id: &str) -> Option<String> {
+        db.query_row(
+            "SELECT body FROM document_search WHERE document_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap()
+    }
+
+    #[test]
+    fn an_index_read_from_the_stored_state_is_written() {
+        let db = library();
+        add(&db, "d", None);
+        merge_into_document(&db, "d", &written(1, "one"), 1).unwrap();
+        let read_from = hash_of(&db, "d");
+
+        assert!(write_index(&db, "d", &index("one"), Some(&read_from)).unwrap());
+        assert_eq!(indexed_text(&db, "d").as_deref(), Some("one"));
+    }
+
+    // ADR 0031, decision 7: a merge landed after the page read the document,
+    // so what it rendered is already out of date, and marking it current
+    // would keep it that way.
+    #[test]
+    fn an_index_read_from_a_state_the_document_has_moved_on_from_is_dropped() {
+        let db = library();
+        add(&db, "d", None);
+        merge_into_document(&db, "d", &written(1, "one"), 1).unwrap();
+        let read_from = hash_of(&db, "d");
+        merge_into_document(&db, "d", &written(2, "two"), 2).unwrap();
+
+        assert!(!write_index(&db, "d", &index("one"), Some(&read_from)).unwrap());
+        assert_eq!(indexed_text(&db, "d"), None);
+    }
+
+    #[test]
+    fn an_index_from_the_open_document_is_taken_as_it_is() {
+        let db = library();
+        add(&db, "d", Some(&written(1, "one")));
+        assert!(write_index(&db, "d", &index("one"), None).unwrap());
+        assert!(!write_index(&db, "gone", &index("x"), None).unwrap());
     }
 
     #[test]

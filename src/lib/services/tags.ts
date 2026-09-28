@@ -7,7 +7,7 @@ import {
     type TagsByDocument,
 } from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
-import { broadcastLocalUpdate, documentRepository } from '$lib/sync';
+import { documentRepository } from '$lib/sync';
 import { bumpIndexRevision } from '$lib/stores/derivedIndex';
 
 /** One tag row, as SQL reports it. */
@@ -91,8 +91,8 @@ export class TagRenameError extends Error {}
  *
  * There is no registry to rename in (ADR 0019), so this is what a rename is: an
  * edit to every document carrying the tag. Each document is rewritten on its
- * own, through the repository's per-document write queue, and each is saved,
- * re-indexed and broadcast as the local edit it is.
+ * own, through the repository's per-document write queue, and each is saved
+ * and re-indexed as the local edit it is, which also tells connected devices.
  *
  * That means a rename is not atomic, and cannot be: the documents are separate
  * CRDTs with separate peers. A failure part-way through leaves some documents
@@ -123,14 +123,12 @@ export async function renameTag(rawFrom: string, rawTo: string): Promise<TagRena
 
     for (const doc of targets) {
         try {
-            const { changed, broadcast } = await documentRepository.renameTagIn(doc.id, from, to);
+            // Saved like any edit, which is what tells connected devices.
+            const changed = await documentRepository.renameTagIn(doc.id, from, to);
             if (changed > 0) {
                 documents++;
                 chips += changed;
             }
-            // Null when the document is open in the editor, whose own save path
-            // broadcasts the edit; sending it here as well would be an echo.
-            if (broadcast) broadcastLocalUpdate(doc.id, broadcast);
         } catch (error) {
             console.error(`[tags] could not rename #${from} in ${doc.id}:`, error);
             failed++;

@@ -42,7 +42,9 @@ pub struct PeerState {
     pub last_synced_at: Option<i64>,
 }
 
-/// No page to tell: a background run, and tests that do not listen.
+/// No page to tell: a phone's background run (ADR 0034), which a desktop
+/// never has.
+#[cfg_attr(desktop, allow(dead_code))]
 pub struct NoEvents;
 
 impl Events for NoEvents {}

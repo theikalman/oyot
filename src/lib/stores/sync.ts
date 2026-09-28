@@ -11,6 +11,8 @@ export interface DevicePair {
     peer_display_name: string;
     room_id: string;
     last_synchronized: number | null;
+    /** The user disconnected it, and it stays so until they reconnect it. */
+    disconnected?: boolean;
 }
 
 export interface ConnectedPeer {
@@ -60,9 +62,24 @@ export type LanStatus = 'off' | 'starting' | 'active' | 'error';
 
 export type PairingState = 'requesting' | 'declined' | 'timed-out' | null;
 
-// Per-room document-sync progress, driven by DocSyncProtocol.
+// Per-room document-sync progress, as the sync engine reports it.
 export type RoomSyncPhase =
     'idle' | 'connecting' | 'reconciling' | 'transferring' | 'synced' | 'error';
+
+// One paired device's connection, as the sync engine reports it (ADR 0031,
+// decision 9). Mirrors `PeerState` in sync/events.rs.
+export interface PeerState {
+    peerNodeId: string;
+    displayName: string;
+    roomId: string;
+    connected: boolean;
+    /** A connection is being made, or will be retried. */
+    reconnecting: boolean;
+    phase: RoomSyncPhase;
+    pending: number;
+    total: number;
+    lastSyncedAt: number | null;
+}
 
 export interface RoomSync {
     phase: RoomSyncPhase;
@@ -70,8 +87,6 @@ export interface RoomSync {
     total: number;
     lastSyncedAt: number | null;
 }
-
-const EMPTY_ROOM_SYNC: RoomSync = { phase: 'idle', pending: 0, total: 0, lastSyncedAt: null };
 
 function createSyncStore() {
     const { subscribe, set, update } = writable({
@@ -127,71 +142,53 @@ function createSyncStore() {
             })),
         setPairedDevices: (devices: DevicePair[]) =>
             update((s) => ({ ...s, pairedDevices: devices })),
-        setConnectedPeers: (peers: ConnectedPeer[]) =>
-            update((s) => ({ ...s, connectedPeers: peers })),
-        addConnectedPeer: (peer: ConnectedPeer) =>
-            update((s) => ({
-                ...s,
-                connectedPeers: [
-                    ...s.connectedPeers.filter((p) => p.room_id !== peer.room_id),
-                    peer,
-                ],
-            })),
-        removeConnectedPeer: (roomId: string) =>
-            update((s) => ({
-                ...s,
-                connectedPeers: s.connectedPeers.filter((p) => p.room_id !== roomId),
-            })),
-        setPeerReconnecting: (peerNodeId: string, reconnecting: boolean) =>
-            update((s) => ({
-                ...s,
-                reconnectingPeers: reconnecting
-                    ? s.reconnectingPeers.includes(peerNodeId)
-                        ? s.reconnectingPeers
-                        : [...s.reconnectingPeers, peerNodeId]
-                    : s.reconnectingPeers.filter((id) => id !== peerNodeId),
-            })),
-        setRoomSyncPhase: (roomId: string, phase: RoomSyncPhase) =>
-            update((s) => ({
-                ...s,
-                roomSync: {
-                    ...s.roomSync,
-                    [roomId]: { ...(s.roomSync[roomId] ?? EMPTY_ROOM_SYNC), phase },
-                },
-            })),
-        setRoomSyncProgress: (roomId: string, pending: number, total: number) =>
-            update((s) => ({
-                ...s,
-                roomSync: {
-                    ...s.roomSync,
-                    [roomId]: {
-                        ...(s.roomSync[roomId] ?? EMPTY_ROOM_SYNC),
-                        pending,
-                        total,
-                        phase:
-                            pending > 0
-                                ? 'transferring'
-                                : (s.roomSync[roomId]?.phase ?? 'reconciling'),
-                    },
-                },
-            })),
-        markRoomSynced: (roomId: string, at: number) =>
-            update((s) => ({
-                ...s,
-                roomSync: {
-                    ...s.roomSync,
-                    [roomId]: {
-                        ...(s.roomSync[roomId] ?? EMPTY_ROOM_SYNC),
-                        phase: 'synced',
-                        pending: 0,
-                        lastSyncedAt: at,
-                    },
-                },
-            })),
-        clearRoomSync: (roomId: string) =>
+        // Everything the engine says about one device, in one update: whether
+        // it is connected or being tried, how far along its exchange is, and
+        // when it last finished one.
+        applyPeerState: (p: PeerState) =>
             update((s) => {
-                const { [roomId]: _removed, ...rest } = s.roomSync;
-                return { ...s, roomSync: rest };
+                const listed = s.connectedPeers.some((c) => c.room_id === p.roomId);
+                const connectedPeers =
+                    p.connected === listed
+                        ? s.connectedPeers
+                        : p.connected
+                          ? [
+                                ...s.connectedPeers,
+                                {
+                                    peer_node_id: p.peerNodeId,
+                                    peer_display_name: p.displayName,
+                                    room_id: p.roomId,
+                                },
+                            ]
+                          : s.connectedPeers.filter((c) => c.room_id !== p.roomId);
+                const trying = p.reconnecting && !p.connected;
+                const reconnectingPeers =
+                    trying === s.reconnectingPeers.includes(p.peerNodeId)
+                        ? s.reconnectingPeers
+                        : trying
+                          ? [...s.reconnectingPeers, p.peerNodeId]
+                          : s.reconnectingPeers.filter((id) => id !== p.peerNodeId);
+                return {
+                    ...s,
+                    connectedPeers,
+                    reconnectingPeers,
+                    roomSync: {
+                        ...s.roomSync,
+                        [p.roomId]: {
+                            phase: p.phase,
+                            pending: p.pending,
+                            total: p.total,
+                            lastSyncedAt: p.lastSyncedAt,
+                        },
+                    },
+                    pairedDevices: s.pairedDevices.map((d) =>
+                        d.peer_node_id === p.peerNodeId &&
+                        p.lastSyncedAt !== null &&
+                        d.last_synchronized !== p.lastSyncedAt
+                            ? { ...d, last_synchronized: p.lastSyncedAt }
+                            : d,
+                    ),
+                };
             }),
         setPendingPairRequest: (req: PendingPairRequest | null) =>
             update((s) => ({ ...s, pendingPairRequest: req })),
@@ -218,9 +215,6 @@ export const listeningOnAnotherPort = derived(
 // this literally, so they must not count a device reached over a VPN.
 export const lanPeers = derived(syncStore, ($s) => $s.peers.filter((p) => p.source === 'mdns'));
 export const lanPeerIds = derived(lanPeers, ($p) => new Set($p.map((peer) => peer.node_id)));
-
-// Reachable by any route at all, which is what the reconnect paths ask about.
-export const reachablePeerIds = derived(syncStore, ($s) => new Set($s.peers.map((p) => p.node_id)));
 
 // Reachable at a stored address: an address that has answered a probe, which
 // is the only evidence there is that one works.

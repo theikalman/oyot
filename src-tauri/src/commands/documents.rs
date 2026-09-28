@@ -199,6 +199,15 @@ pub struct DocSyncEntry {
 // than none (ADR 0033, decision 4). None means "unknown, exchange", so every
 // empty journal used to be exchanged again on every connection.
 pub fn query_sync_state(db: &Connection) -> Result<Vec<DocSyncEntry>, String> {
+    sync_entries(db, None)
+}
+
+/// One document's manifest entry, for telling peers about it.
+pub fn sync_entry(db: &Connection, doc_id: &str) -> Result<Option<DocSyncEntry>, String> {
+    Ok(sync_entries(db, Some(doc_id))?.into_iter().next())
+}
+
+fn sync_entries(db: &Connection, only: Option<&str>) -> Result<Vec<DocSyncEntry>, String> {
     let empty_hash = crate::crdt::encode_hash(&crate::crdt::empty_hash());
     let mut stmt = db
         .prepare(
@@ -207,12 +216,12 @@ pub fn query_sync_state(db: &Connection) -> Result<Vec<DocSyncEntry>, String> {
                     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
                     content_hash, pinned, pinned_updated_at, \
                     crdt_state IS NULL OR length(crdt_state) <= 2 \
-             FROM documents",
+             FROM documents WHERE ?1 IS NULL OR id = ?1",
         )
         .map_err(|e| e.to_string())?;
 
     let entries: Vec<DocSyncEntry> = stmt
-        .query_map([], |row| {
+        .query_map(params![only], |row| {
             let is_deleted_int: i64 = row.get(6)?;
             let pinned_int: i64 = row.get(10)?;
             let no_content: bool = row.get(12)?;
@@ -249,6 +258,17 @@ pub fn list_document_sync_state(
 ) -> Result<Vec<DocSyncEntry>, String> {
     let db = state.db.lock();
     query_sync_state(&db)
+}
+
+/// Tell connected devices about documents made quietly: imported notes,
+/// once their content is saved, so a peer that pulls one finds it there
+/// (ADR 0029).
+#[tauri::command]
+pub fn announce_documents(state: tauri::State<'_, AppState>, ids: Vec<String>) {
+    let db = state.db.lock();
+    for id in &ids {
+        crate::sync::announce_created(&state.app_handle, &db, id);
+    }
 }
 
 // One document as a peer advertised it. Mirrors the frontend `ManifestEntry`;
@@ -343,6 +363,7 @@ pub fn ensure_document(
     {
         let db = state.db.lock();
         ensure_row(&db, &entry)?;
+        crate::sync::announce_created(&state.app_handle, &db, &entry.doc_id);
     }
     get_document(state, entry.doc_id)
 }
@@ -398,7 +419,18 @@ pub fn apply_remote_rename(
     title_updated_at: i64,
 ) -> Result<bool, String> {
     let db = state.db.lock();
-    apply_rename_if_newer(&db, &doc_id, &title, title_updated_at)
+    let changed = apply_rename_if_newer(&db, &doc_id, &title, title_updated_at)?;
+    if changed {
+        crate::sync::announce(
+            &state.app_handle,
+            crate::sync::protocol::Message::DocRenamed {
+                id: doc_id,
+                title,
+                title_updated_at,
+            },
+        );
+    }
+    Ok(changed)
 }
 
 /// Last-writer-wins on `title_updated_at` (ADR 0003, decision 4). True when
@@ -456,7 +488,18 @@ pub fn apply_remote_pin(
     pinned_updated_at: i64,
 ) -> Result<bool, String> {
     let db = state.db.lock();
-    apply_pin_if_newer(&db, &doc_id, pinned, pinned_updated_at)
+    let changed = apply_pin_if_newer(&db, &doc_id, pinned, pinned_updated_at)?;
+    if changed {
+        crate::sync::announce(
+            &state.app_handle,
+            crate::sync::protocol::Message::DocPinned {
+                id: doc_id,
+                pinned,
+                pinned_updated_at,
+            },
+        );
+    }
+    Ok(changed)
 }
 
 // Applies a peer's deletion as a tombstone (the row is kept so the delete keeps
@@ -470,7 +513,17 @@ pub fn apply_remote_delete(
     deleted_at: i64,
 ) -> Result<bool, String> {
     let db = state.db.lock();
-    apply_tombstone_if_newer(&db, &doc_id, deleted_at)
+    let applied = apply_tombstone_if_newer(&db, &doc_id, deleted_at)?;
+    if applied {
+        crate::sync::announce(
+            &state.app_handle,
+            crate::sync::protocol::Message::DocDeleted {
+                id: doc_id,
+                deleted_at,
+            },
+        );
+    }
+    Ok(applied)
 }
 
 /// Write a new document's row, or revive the tombstone holding its id.
@@ -519,6 +572,9 @@ pub fn create_document(
     title: String,
     pinned: Option<bool>,
     id: Option<String>,
+    // Made without telling peers: an imported note is announced once its
+    // content is saved, with the rest of its batch (ADR 0029).
+    quiet: Option<bool>,
 ) -> Result<Document, String> {
     let now = current_timestamp();
     let doc_id = {
@@ -541,6 +597,9 @@ pub fn create_document(
             pinned.unwrap_or(false),
             now,
         )?;
+        if !quiet.unwrap_or(false) {
+            crate::sync::announce_created(&state.app_handle, &db, &doc_id);
+        }
         doc_id
     };
 
@@ -592,6 +651,14 @@ pub fn update_document(
         let db = state.db.lock();
         indexer::update_document_title(&db, &doc_id, &title)?;
     }
+    crate::sync::announce(
+        &state.app_handle,
+        crate::sync::protocol::Message::DocRenamed {
+            id: doc_id.clone(),
+            title,
+            title_updated_at: now,
+        },
+    );
 
     get_document(state, doc_id)
 }
@@ -656,6 +723,13 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
         let db = state.db.lock();
         tombstone_document(&db, &doc_id, now)?;
     }
+    crate::sync::announce(
+        &state.app_handle,
+        crate::sync::protocol::Message::DocDeleted {
+            id: doc_id,
+            deleted_at: now,
+        },
+    );
     Ok(now)
 }
 
@@ -690,7 +764,16 @@ pub fn set_document_pinned(
 ) -> Result<i64, String> {
     let now = current_timestamp();
     let db = state.db.lock();
-    set_pinned(&db, &doc_id, pinned, now)
+    let stamp = set_pinned(&db, &doc_id, pinned, now)?;
+    crate::sync::announce(
+        &state.app_handle,
+        crate::sync::protocol::Message::DocPinned {
+            id: doc_id,
+            pinned,
+            pinned_updated_at: stamp,
+        },
+    );
+    Ok(stamp)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1112,7 +1195,14 @@ pub fn get_or_create_today_journal(
 
     let created = {
         let db = state.db.lock();
-        upsert_today_journal(&db, &doc_id, &today_title, now)?
+        let created = upsert_today_journal(&db, &doc_id, &today_title, now)?;
+        // Only news is announced: every peer already has a journal that was
+        // not just made or revived here, and announcing it anyway had each of
+        // them pull the whole thing back on every launch.
+        if created {
+            crate::sync::announce_created(&state.app_handle, &db, &doc_id);
+        }
+        created
     };
 
     Ok(TodayJournal {
