@@ -23,8 +23,9 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn", "mdwn"];
 
 /// Largest file read as one note: the export's cap on a note, so a note
-/// exported can always be imported again.
-const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+/// exported can always be imported again. The webview's summary says "8 MB"
+/// (`src/lib/import/report.ts`) and has to change with it.
+const MAX_FILE_BYTES: u64 = super::export::MAX_NOTE_BYTES as u64;
 
 /// Most files one import reads, and most text in all of them together.
 ///
