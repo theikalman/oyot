@@ -163,20 +163,22 @@ impl Repo for SqliteRepo {
     /// page can render it, so until it has, it is `index_version = 0`, which
     /// also keeps attachment collection waiting (ADR 0013).
     fn merge_delta(&self, id: &str, update: &[u8]) -> Result<(), String> {
-        let merged = {
+        let delta = {
             let db = self.db.lock();
-            let merged = merge_into_document(&db, id, update, now_ms())?;
-            if merged.is_some() {
+            let delta = merge_into_document(&db, id, update, now_ms())?.and_then(|m| m.delta);
+            if delta.is_some() {
                 db.execute(
                     "UPDATE documents SET index_version = 0 WHERE id = ?1",
                     params![id],
                 )
                 .map_err(|e| e.to_string())?;
             }
-            merged
+            delta
         };
-        if merged.is_some() {
-            self.events.doc_merged(id, update);
+        // Only what the update added: one that changed nothing here, an echo
+        // or a repeat, is nothing for the page to apply or index.
+        if let Some(delta) = delta {
+            self.events.doc_merged(id, &delta);
         }
         Ok(())
     }

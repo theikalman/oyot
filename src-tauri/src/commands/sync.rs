@@ -108,19 +108,28 @@ pub fn merge_into_document(
         return Ok(None);
     };
 
-    let merged = crdt::merge(stored.as_deref().unwrap_or_default(), update)
-        .map_err(|e| format!("could not merge into {doc_id}: {e}"))?;
-    db.execute(
-        "UPDATE documents SET crdt_state = ?1, content_hash = ?2, updated_at = ?3
-          WHERE id = ?4 AND is_deleted = 0",
-        params![
-            &merged.state,
-            merged.content_hash.map(|h| h.to_vec()),
-            now,
-            doc_id
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+    let stored = stored.unwrap_or_default();
+    let merged =
+        crdt::merge(&stored, update).map_err(|e| format!("could not merge into {doc_id}: {e}"))?;
+    let hash = merged.content_hash.map(|h| h.to_vec());
+    let written = if merged.delta.is_some() {
+        db.execute(
+            "UPDATE documents SET crdt_state = ?1, content_hash = ?2, updated_at = ?3
+              WHERE id = ?4 AND is_deleted = 0",
+            params![&merged.state, hash, now, doc_id],
+        )
+    } else if merged.state != stored {
+        // Nothing anyone could see changed, so the document was not edited:
+        // an update still waiting on another, or the state as yrs encodes it.
+        db.execute(
+            "UPDATE documents SET crdt_state = ?1, content_hash = ?2
+              WHERE id = ?3 AND is_deleted = 0",
+            params![&merged.state, hash, doc_id],
+        )
+    } else {
+        Ok(0)
+    };
+    written.map_err(|e| e.to_string())?;
     Ok(Some(merged))
 }
 
@@ -313,6 +322,25 @@ mod tests {
         add(&db, "d", Some(&written(1, "kept")));
         assert!(merge_into_document(&db, "d", &[9, 9, 9, 9], 1).is_err());
         assert_eq!(stored(&db, "d").0, Some(written(1, "kept")));
+    }
+
+    #[test]
+    fn a_save_that_changes_nothing_leaves_the_document_unedited() {
+        let db = library();
+        add(&db, "d", None);
+        merge_into_document(&db, "d", &written(1, "one"), 5).unwrap();
+
+        let again = merge_into_document(&db, "d", &written(1, "one"), 9)
+            .unwrap()
+            .unwrap();
+
+        assert!(again.delta.is_none());
+        let updated_at: i64 = db
+            .query_row("SELECT updated_at FROM documents WHERE id = 'd'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(updated_at, 5);
     }
 
     #[test]

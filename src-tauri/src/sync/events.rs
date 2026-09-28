@@ -12,8 +12,9 @@ pub trait Events: Send + Sync {
     fn doc_renamed(&self, _id: &str, _title: &str, _title_updated_at: i64) {}
     fn doc_pinned(&self, _id: &str, _pinned: bool, _pinned_updated_at: i64) {}
     fn doc_deleted(&self, _id: &str) {}
-    /// A peer's update was merged into a document's stored state. The page
-    /// applies it to the open copy, if it has one, and re-indexes it.
+    /// A peer's update was merged into a document's stored state, and
+    /// `update` is what it added. The page applies it to the open copy, if it
+    /// has one, and re-indexes the document.
     fn doc_merged(&self, _id: &str, _update: &[u8]) {}
     fn attachment_downloaded(&self, _hash: &str) {}
     /// How one paired device stands: connected or not, and how far along.

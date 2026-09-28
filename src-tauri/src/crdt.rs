@@ -32,6 +32,12 @@ pub struct Merged {
     /// `None` while the document holds updates it cannot apply yet (ADR 0033,
     /// decision 3), which the manifest reads as "exchange".
     pub content_hash: Option<[u8; 32]>,
+    /// What the update added to the stored state, as an update a device
+    /// holding the stored state needs, or `None` when it added nothing: an
+    /// update the state already held, or one still waiting on another. This
+    /// is what peers are sent, rather than whatever the caller happened to
+    /// hand in.
+    pub delta: Option<Vec<u8>>,
 }
 
 /// Merge `update` into `stored`. Either may be empty.
@@ -41,32 +47,42 @@ pub struct Merged {
 /// overwriting the column did.
 pub fn merge(stored: &[u8], update: &[u8]) -> Result<Merged, String> {
     let doc = Doc::new();
-    {
-        let mut txn = doc.transact_mut();
-        for (what, bytes) in [("stored state", stored), ("update", update)] {
-            if bytes.len() <= EMPTY_UPDATE_LEN {
-                continue;
-            }
-            let decoded =
-                Update::decode_v1(bytes).map_err(|e| format!("the {what} cannot be read: {e}"))?;
-            txn.apply_update(decoded)
-                .map_err(|e| format!("the {what} cannot be applied: {e}"))?;
-        }
-    }
+    apply(&doc, "stored state", stored)?;
+    // What the stored state holds, to tell what the update added to it. The
+    // digest rather than the snapshot itself, since only the digest puts the
+    // deletions in one order.
+    let (before, before_sv) = {
+        let txn = doc.transact();
+        (digest(&txn.snapshot()), txn.state_vector())
+    };
+    apply(&doc, "update", update)?;
 
     let txn = doc.transact();
     let state = txn.encode_state_as_update_v1(&StateVector::default());
     let state_vector = txn.state_vector().encode_v1();
-    let content_hash = if txn.has_missing_updates() {
-        None
-    } else {
-        Some(digest(&txn.snapshot()))
-    };
+    let after = digest(&txn.snapshot());
+    let content_hash = (!txn.has_missing_updates()).then_some(after);
+    // Everything since the stored state vector, with the whole delete set,
+    // as Yjs would send a peer at that vector: a deletion moves no clock, so
+    // the vector alone would miss one.
+    let delta = (after != before).then(|| txn.encode_state_as_update_v1(&before_sv));
     Ok(Merged {
         state,
         state_vector,
         content_hash,
+        delta,
     })
+}
+
+fn apply(doc: &Doc, what: &str, bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() <= EMPTY_UPDATE_LEN {
+        return Ok(());
+    }
+    let decoded =
+        Update::decode_v1(bytes).map_err(|e| format!("the {what} cannot be read: {e}"))?;
+    doc.transact_mut()
+        .apply_update(decoded)
+        .map_err(|e| format!("the {what} cannot be applied: {e}"))
 }
 
 /// The content hash of a stored state, for rows written before Rust hashed
@@ -244,6 +260,61 @@ mod tests {
         let complete = merge(&pending.state, &first).unwrap();
         assert!(complete.content_hash.is_some());
         assert_eq!(text_of(&complete.state), "first second");
+    }
+
+    #[test]
+    fn an_update_the_state_already_holds_adds_nothing_to_send() {
+        let update = written(1, "hello");
+        let once = merge(&[], &update).unwrap();
+        assert!(once.delta.is_some());
+        assert!(merge(&once.state, &update).unwrap().delta.is_none());
+    }
+
+    #[test]
+    fn what_a_merge_added_brings_the_stored_state_up_to_the_merged_one() {
+        let stored = written(1, "one");
+        let merged = merge(&stored, &written(2, "two")).unwrap();
+
+        let caught_up = merge(&stored, &merged.delta.unwrap()).unwrap();
+
+        assert_eq!(caught_up.content_hash, merged.content_hash);
+    }
+
+    #[test]
+    fn a_deletion_on_its_own_is_something_to_send() {
+        let doc = Doc::with_client_id(1);
+        let body = doc.get_or_insert_text("body");
+        body.insert(&mut doc.transact_mut(), 0, "hello");
+        let stored = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let sv = doc.transact().state_vector();
+        body.remove_range(&mut doc.transact_mut(), 0, 2);
+        let deletion = doc.transact().encode_state_as_update_v1(&sv);
+
+        let merged = merge(&stored, &deletion).unwrap();
+        let caught_up = merge(&stored, &merged.delta.unwrap()).unwrap();
+
+        assert_eq!(text_of(&caught_up.state), "llo");
+    }
+
+    #[test]
+    fn an_update_still_waiting_on_another_is_not_sent_until_it_applies() {
+        let doc = Doc::with_client_id(1);
+        let body = doc.get_or_insert_text("body");
+        body.insert(&mut doc.transact_mut(), 0, "first");
+        let first = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let sv = doc.transact().state_vector();
+        body.insert(&mut doc.transact_mut(), 5, " second");
+        let second = doc.transact().encode_state_as_update_v1(&sv);
+
+        let pending = merge(&[], &second).unwrap();
+        assert!(pending.delta.is_none());
+
+        let complete = merge(&pending.state, &first).unwrap();
+        assert_eq!(text_of(&complete.delta.unwrap()), "first second");
     }
 
     #[test]
