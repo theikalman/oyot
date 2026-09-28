@@ -107,9 +107,13 @@ function list(node: ProseMirrorNode, options: MarkdownOptions): string {
     node.forEach((item, _offset, index) => {
         const marker = ordered ? `${start + index}.  ` : itemMarker(item);
         const content = blocks(item, options);
-        // Continuation lines line up under the marker, which is what keeps a
-        // nested list nested and a second paragraph inside its item.
-        items.push(marker + indentContinuation(content, ' '.repeat(marker.length)));
+        // Continuation lines line up where the item's content starts, which is
+        // what keeps a nested list nested and a second paragraph inside its
+        // item. For a task that is after the bullet, not after the checkbox:
+        // `[ ]` is the start of the item's words to a Markdown reader, and
+        // four spaces more than that is an indented code block.
+        const width = ordered ? marker.length : BULLET_MARKER.length;
+        items.push(marker + indentContinuation(content, ' '.repeat(width)));
     });
 
     return items.join('\n');

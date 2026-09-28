@@ -152,6 +152,31 @@ describe('serializeDocument', () => {
         expect(md).toBe('-   [x] packed\n-   [ ] booked\n');
     });
 
+    // A reader starts a task item's words at the checkbox, so nesting is
+    // measured from there. Indented as far as the words after the checkbox,
+    // the nested list was four spaces deeper than that: a code block.
+    it('nests under a task item from where its bullet ends', () => {
+        const md = render([
+            {
+                type: 'taskList',
+                content: [
+                    {
+                        type: 'taskItem',
+                        attrs: { checked: false },
+                        content: [
+                            para('tickets'),
+                            {
+                                type: 'bulletList',
+                                content: [{ type: 'listItem', content: [para('train')] }],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ]);
+        expect(md).toBe('-   [ ] tickets\n\n    -   train\n');
+    });
+
     it('quotes every line of a blockquote', () => {
         const md = render([{ type: 'blockquote', content: [para('first'), para('second')] }]);
         expect(md).toBe('> first\n>\n> second\n');
