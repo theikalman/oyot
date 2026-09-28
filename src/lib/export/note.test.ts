@@ -42,6 +42,14 @@ describe('renderNote', () => {
         expect(rendered).toContain('title: "He said \\"no\\": true"');
     });
 
+    // The heading is Markdown and the title is plain words.
+    it('escapes the title in its heading', () => {
+        expect(renderNote({ ...meta, title: 'Plan *draft* #2' }, '')).toContain(
+            '# Plan \\*draft\\* \\#2\n',
+        );
+        expect(renderNote({ ...meta, title: 'Issue #' }, '')).toContain('# Issue \\#\n');
+    });
+
     it('names an untitled note in the heading', () => {
         expect(renderNote({ ...meta, title: '' }, '')).toContain('# Untitled');
     });

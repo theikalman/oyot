@@ -152,6 +152,31 @@ describe('serializeDocument', () => {
         expect(md).toBe('-   [x] packed\n-   [ ] booked\n');
     });
 
+    // A reader starts a task item's words at the checkbox, so nesting is
+    // measured from there. Indented as far as the words after the checkbox,
+    // the nested list was four spaces deeper than that: a code block.
+    it('nests under a task item from where its bullet ends', () => {
+        const md = render([
+            {
+                type: 'taskList',
+                content: [
+                    {
+                        type: 'taskItem',
+                        attrs: { checked: false },
+                        content: [
+                            para('tickets'),
+                            {
+                                type: 'bulletList',
+                                content: [{ type: 'listItem', content: [para('train')] }],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ]);
+        expect(md).toBe('-   [ ] tickets\n\n    -   train\n');
+    });
+
     it('quotes every line of a blockquote', () => {
         const md = render([{ type: 'blockquote', content: [para('first'), para('second')] }]);
         expect(md).toBe('> first\n>\n> second\n');
@@ -245,10 +270,92 @@ describe('serializeDocument', () => {
         expect(md).toBe('Gone\n');
     });
 
+    // The escape for an ordered item goes before its `.`: a backslash before a
+    // digit is not an escape, and would stay in the text.
     it('escapes a paragraph that would otherwise read as a list or a heading', () => {
         expect(
-            render([para('- not a bullet'), para('1. not a step'), para('# not a heading')]),
-        ).toBe('\\- not a bullet\n\n\\1. not a step\n\n\\# not a heading\n');
+            render([
+                para('- not a bullet'),
+                para('1. not a step'),
+                para('# not a heading'),
+                para('## nor this'),
+            ]),
+        ).toBe('\\- not a bullet\n\n1\\. not a step\n\n\\# not a heading\n\n\\## nor this\n');
+    });
+
+    it('escapes a paragraph that would read as a rule or a heading underline', () => {
+        expect(render([para('---'), para('- - -'), para('===')])).toBe(
+            '\\---\n\n\\- - -\n\n\\===\n',
+        );
+    });
+
+    // After a hard break a line opens a block as readily as a paragraph's
+    // first line does, and under a task item it lines up with the item's
+    // content, where a marker would start a nested list.
+    it('escapes every line of a paragraph, not only the first', () => {
+        const hardBreakThen = (line: string) => ({
+            type: 'paragraph',
+            content: [
+                { type: 'text', text: 'buy' },
+                { type: 'hardBreak' },
+                { type: 'text', text: line },
+            ],
+        });
+        expect(
+            render([
+                {
+                    type: 'taskList',
+                    content: [
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: false },
+                            content: [hardBreakThen('- milk')],
+                        },
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: false },
+                            content: [hardBreakThen('---')],
+                        },
+                    ],
+                },
+            ]),
+        ).toBe('-   [ ] buy  \n    \\- milk\n-   [ ] buy  \n    \\---\n');
+    });
+
+    // A reader drops up to three leading spaces and reads four as code.
+    it('keeps a paragraph that starts with spaces as words', () => {
+        expect(render([para('    four spaces'), para('\tone tab')])).toBe(
+            '&#32;   four spaces\n\n&#9;one tab\n',
+        );
+    });
+
+    // A chip is written `#name`, so words typed with a hash in front of them
+    // have to be told apart from one.
+    it('escapes a hash that would read as a tag, and leaves a tag chip as it is', () => {
+        expect(
+            render([
+                {
+                    type: 'paragraph',
+                    content: [
+                        { type: 'text', text: 'paint it #ff0000 in C# ' },
+                        { type: 'tag', attrs: { name: 'home' } },
+                    ],
+                },
+            ]),
+        ).toBe('paint it \\#ff0000 in C# #home\n');
+    });
+
+    it('escapes an underscore only where it could be emphasis', () => {
+        expect(render([para('call __init__ with _care_, not snake_case')])).toBe(
+            'call \\_\\_init\\_\\_ with \\_care\\_, not snake_case\n',
+        );
+    });
+
+    it('escapes what would read as strikethrough or a character reference', () => {
+        expect(render([para('a ~~b~~ c, AT&amp;T, &#35; and AT&T ~ok')])).toBe(
+            // `&#35;` needs only its hash escaped to stop being a reference.
+            'a \\~\\~b\\~\\~ c, AT\\&amp;T, &\\#35; and AT&T ~ok\n',
+        );
     });
 
     it('escapes characters that would otherwise be markup', () => {
@@ -261,6 +368,61 @@ describe('serializeDocument', () => {
     // CommonMark, and escaping them mangles every identifier in a note.
     it('leaves underscores alone', () => {
         expect(render([para('snake_case_name')])).toBe('snake_case_name\n');
+    });
+
+    it('keeps a heading to its line and its closing hashes as words', () => {
+        expect(
+            render([
+                {
+                    type: 'heading',
+                    attrs: { level: 2 },
+                    content: [
+                        { type: 'text', text: 'Issue #' },
+                        { type: 'hardBreak' },
+                        { type: 'text', text: 'two' },
+                    ],
+                },
+            ]),
+        ).toBe('## Issue # two\n');
+        expect(
+            render([
+                {
+                    type: 'heading',
+                    attrs: { level: 1 },
+                    content: [{ type: 'text', text: 'Issue #' }],
+                },
+            ]),
+        ).toBe('# Issue \\#\n');
+    });
+
+    // With nothing beside the checkbox, the first nested block would be read
+    // as the task's words.
+    it('puts the checkbox of a task with no words on a line of its own', () => {
+        expect(
+            render([
+                {
+                    type: 'taskList',
+                    content: [
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: true },
+                            content: [
+                                { type: 'paragraph' },
+                                {
+                                    type: 'bulletList',
+                                    content: [{ type: 'listItem', content: [para('train')] }],
+                                },
+                            ],
+                        },
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: false },
+                            content: [{ type: 'paragraph' }],
+                        },
+                    ],
+                },
+            ]),
+        ).toBe('-   [x]\n\n    -   train\n-   [ ]\n');
     });
 
     it('writes a hard break as a line that does not end the paragraph', () => {

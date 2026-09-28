@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import type { Document } from '../types';
+import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
 import { bumpIndexRevision } from '../stores/derivedIndex';
 import { toDocumentSummary } from './documents';
@@ -48,6 +49,41 @@ export async function createNote(title: string, pinned = false): Promise<Documen
     appStore.addDocument(toDocumentSummary(doc));
     announceCreated(doc);
     return doc;
+}
+
+// An imported note is made in two steps, with its content saved in between
+// (ADR 0029). The row comes first, under the id the other imported notes'
+// links were written with, and tells no one: the sidebar would list a note
+// with nothing in it yet, and a peer told now would pull content that is not
+// there.
+export async function createImportedNote(id: string, title: string): Promise<Document> {
+    return invoke<Document>('create_document', { docType: 'note', title, pinned: false, id });
+}
+
+export interface PublishedNote {
+    doc: Document;
+    hasContent: boolean;
+    /** What was indexed from its content, for the counts beside it. */
+    index: DocumentIndex | null;
+}
+
+// Once their content is saved: list a batch of imported notes at once, and
+// tell paired devices, each of which pulls a note's content on hearing of it.
+// One store update and one refresh of the derived views for the batch, rather
+// than one each per note, which on a large import redraws every list
+// thousands of times.
+export function publishImportedNotes(notes: PublishedNote[]): void {
+    if (notes.length === 0) return;
+    appStore.addDocuments(
+        notes.map(({ doc, hasContent, index }) => ({
+            ...toDocumentSummary(doc),
+            has_content: hasContent,
+            todo_count: index?.todoCount ?? 0,
+            completed_todo_count: index?.completedTodoCount ?? 0,
+        })),
+    );
+    bumpIndexRevision();
+    for (const { doc } of notes) announceCreated(doc);
 }
 
 export async function createJournalForDate(dateTitle: string): Promise<Document> {

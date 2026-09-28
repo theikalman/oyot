@@ -3,6 +3,8 @@
     import { indexRevision } from '$lib/stores/derivedIndex';
     import { openDocument, openTag } from '$lib/services/navigation';
     import { loadTagsByDocument } from '$lib/services/tags';
+    import { markdownImport } from '$lib/import';
+    import { onDestroy } from 'svelte';
     import { filterNotes, notesOf, noteStatus } from '$lib/notes/noteIndex';
     import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
     import type { DocumentSummary } from '$lib/types';
@@ -76,6 +78,19 @@
         deleting = note;
         openMenuId = null;
     }
+
+    // Markdown files in, a note each. The notes land at the top of this list
+    // as they are made; one on its own opens, as a new note does, since that
+    // is what there is to look at, unless the user has gone elsewhere since.
+    // Whether an import is running, and how far it has got, is shared with
+    // Settings, which can start one too.
+    let here = true;
+    onDestroy(() => (here = false));
+
+    async function handleImport() {
+        const result = await markdownImport.start();
+        if (here && result?.notes.length === 1) await openDocument(result.notes[0].id);
+    }
 </script>
 
 <svelte:window onclick={handleWindowClick} />
@@ -97,12 +112,22 @@
                         aria-label="Filter notes by title or tag"
                     />
                 {/if}
+                <button
+                    class="action-btn"
+                    onclick={handleImport}
+                    disabled={markdownImport.running}
+                    title="Make a note of each Markdown file you pick"
+                >
+                    {markdownImport.label}
+                </button>
                 <button class="action-btn" onclick={() => (creating = true)}>New note</button>
             </div>
         </div>
 
         {#if notes.length === 0}
-            <p class="note">No notes yet. Press New note to start one.</p>
+            <p class="note">
+                No notes yet. Press New note to start one, or Import to bring in Markdown files.
+            </p>
         {:else if shown.length === 0}
             <p class="note">No note matches "{filter.trim()}".</p>
         {:else}
@@ -252,8 +277,13 @@
         cursor: pointer;
     }
 
-    .action-btn:hover {
+    .action-btn:hover:not(:disabled) {
         background: var(--bg-hover);
+    }
+
+    .action-btn:disabled {
+        cursor: default;
+        color: var(--text-muted);
     }
 
     .note {

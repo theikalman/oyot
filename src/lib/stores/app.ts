@@ -66,6 +66,15 @@ function createAppStore() {
                     documents: [...s.documents, doc],
                 };
             }),
+        // Several at once, as an import adds them: every list reading the
+        // store sorts and redraws once for the lot rather than once each.
+        addDocuments: (docs: DocumentSummary[]) =>
+            update((s) => {
+                const known = new Set(s.documents.map((d) => d.id));
+                const added = docs.filter((doc) => !known.has(doc.id));
+                if (added.length === 0) return s;
+                return { ...s, documents: [...s.documents, ...added] };
+            }),
         removeDocument: (docId: string) =>
             update((s) => ({
                 ...s,

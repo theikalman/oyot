@@ -485,26 +485,31 @@ pub fn insert_document(
 /// what starting one from that list asks for. Absent means unpinned, so a
 /// caller with no opinion, such as the calendar making a journal, need not
 /// say so.
+///
+/// `id` is for a note whose id has to be known before the note exists: an
+/// import, where one file links to another and each link is written before
+/// the note it points at (ADR 0029). Absent, a new one is made.
 #[tauri::command]
 pub fn create_document(
     state: tauri::State<'_, AppState>,
     doc_type: String,
     title: String,
     pinned: Option<bool>,
+    id: Option<String>,
 ) -> Result<Document, String> {
-    // Journal ids are derived from the date so two devices creating the same
-    // day's entry converge on one row. That also means a deleted journal's
-    // tombstone still holds the id, so a plain INSERT would fail the primary
-    // key. Revive it instead.
-    let doc_id = if doc_type == "journal" {
-        format_journal_date(&title).unwrap_or_else(|| title.clone())
-    } else {
-        uuid_v4()
-    };
     let now = current_timestamp();
-
-    {
+    let doc_id = {
         let db = state.db.lock();
+        // Journal ids are derived from the date so two devices creating the
+        // same day's entry converge on one row. That also means a deleted
+        // journal's tombstone still holds the id, so a plain INSERT would fail
+        // the primary key. Revive it instead.
+        let doc_id = match (doc_type.as_str(), id) {
+            ("journal", Some(_)) => return Err("a journal's id comes from its date".to_string()),
+            ("journal", None) => format_journal_date(&title).unwrap_or_else(|| title.clone()),
+            (_, Some(id)) => unused_note_id(&db, &id)?,
+            (_, None) => uuid_v4(),
+        };
         insert_document(
             &db,
             &doc_id,
@@ -513,9 +518,35 @@ pub fn create_document(
             pinned.unwrap_or(false),
             now,
         )?;
-    }
+        doc_id
+    };
 
     get_document(state, doc_id)
+}
+
+/// A note id chosen by the caller, in the one spelling ids have, when no row
+/// holds it.
+///
+/// It has to be a UUID, as every note's is, and one no document has ever had,
+/// live or deleted: `insert_document` revives a tombstone that holds its id,
+/// and a chosen id must never bring back, or write over, a note it did not
+/// make. Checked under the same lock as the insert that follows.
+pub fn unused_note_id(db: &Connection, id: &str) -> Result<String, String> {
+    let id = uuid::Uuid::parse_str(id)
+        .map_err(|_| format!("{id:?} is not a note id"))?
+        .hyphenated()
+        .to_string();
+    let taken: bool = db
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM documents WHERE id = ?1)",
+            params![&id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if taken {
+        return Err(format!("a document already has the id {id}"));
+    }
+    Ok(id)
 }
 
 #[tauri::command]
@@ -1148,6 +1179,39 @@ mod tests {
     // built with format!. SQLite rejected it at prepare time, so every call
     // failed and no note ever showed a backlink. Nothing could catch it: the
     // SQL only ran inside a command, and no test could reach a command.
+    #[test]
+    fn a_chosen_note_id_is_taken_in_its_one_spelling() {
+        let db = db();
+        assert_eq!(
+            unused_note_id(&db, "1B4E28BA-2FA1-11D2-883F-0016D3CCA427").unwrap(),
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+        );
+    }
+
+    #[test]
+    fn a_chosen_note_id_has_to_be_a_uuid() {
+        let db = db();
+        assert!(unused_note_id(&db, "d2").is_err());
+        assert!(unused_note_id(&db, "../../etc/passwd").is_err());
+        assert!(unused_note_id(&db, "").is_err());
+    }
+
+    // `insert_document` revives a tombstone holding its id, so a chosen id
+    // that some document has ever had would bring that one back.
+    #[test]
+    fn a_chosen_note_id_is_refused_when_any_document_has_had_it() {
+        let db = db();
+        let live = "9a2f4d7e-8a51-4f0e-9c2b-3d6e1f0a7b21";
+        let deleted = "0c1d2e3f-4a5b-4c6d-8e7f-8091a2b3c4d5";
+        insert_document(&db, live, "note", "Live", false, 10).unwrap();
+        insert_document(&db, deleted, "note", "Gone", false, 10).unwrap();
+        tombstone_document(&db, deleted, 20).unwrap();
+
+        assert!(unused_note_id(&db, live).is_err());
+        assert!(unused_note_id(&db, deleted).is_err());
+        assert!(unused_note_id(&db, "5f0e1d2c-3b4a-4968-8776-655443322110").is_ok());
+    }
+
     #[test]
     fn a_note_lists_the_notes_that_link_to_it() {
         let db = db();

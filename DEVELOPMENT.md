@@ -134,6 +134,19 @@ validated rather than repaired: anything that is not recognisably one `.md`
 filename is refused, because a zip entry name is a path on whatever machine
 extracts it. See [ADR 0021](docs/decisions/0021-export-notes-as-a-markdown-archive.md).
 
+**Markdown files are read in Rust, and only the files the user picked.**
+`pick_markdown_files` opens the dialog, reads each chosen file as text, and
+hands the webview its text and its name; no path crosses IPC. A path written
+inside a file, an image beside a note for one, is never followed: that would
+let a file's content, or the webview, choose what is read from disk and sent
+to every paired device. Such an image stays in the note as its Markdown text.
+The webview builds each note against the editor's schema and merges it in as
+a peer's edit is merged. It chooses each imported note's id first, so links
+between the files can be written; `create_document` accepts only a UUID that
+no document has ever had, live or deleted, so a chosen id cannot revive or
+overwrite a note. See
+[ADR 0029](docs/decisions/0029-import-markdown-files-as-notes.md).
+
 **Backups are written and read in Rust, and a backup being imported is
 hostile until checked.** `create_local_backup` and `open_local_backup` open
 their dialogs in Rust, like the export. On Android and iOS the dialog returns a

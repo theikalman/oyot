@@ -53,7 +53,7 @@ pub struct ExportResult {
 /// A backstop, not a product limit. The bytes arrive over IPC from the
 /// untrusted surface, and they are held in memory while the archive is
 /// written, so "as much as the webview cares to send" is not an answer.
-const MAX_NOTE_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_NOTE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_NOTE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_NOTES: usize = 100_000;
 
