@@ -374,6 +374,11 @@
                         gets out of the way by itself once you pick something.
                     </li>
                     <li>
+                        <strong>Long titles.</strong> On a phone or a tablet, a title too long for the
+                        top of the page is cut short. Tap it to read all of it, and tap it again, or anywhere
+                        else, to cut it short again.
+                    </li>
+                    <li>
                         <strong>Days with nothing in them.</strong> Clicking a day in the calendar starts
                         a journal for it even if you write nothing. The Journals page can hide those days.
                     </li>
