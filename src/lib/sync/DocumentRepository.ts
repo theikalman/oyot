@@ -167,7 +167,30 @@ export class DocumentRepository {
     // what puts a peer's edit on screen. The editor is not told to reload
     // afterwards, because it is already holding the merged document.
     async mergeDelta(docId: string, updateB64: string): Promise<void> {
-        const updateBytes = base64ToBytes(updateB64);
+        await this.merge(docId, base64ToBytes(updateB64), 'remote', true);
+    }
+
+    /**
+     * Store content made outside the editor, an imported file's, as a peer's
+     * edit is stored: merged into whatever the document already holds, never
+     * written over it. The note may have been opened and typed in, or a peer
+     * may have sent it something, since it was created.
+     *
+     * Saved as local, since nothing needs telling to reload it, and without
+     * refreshing anything that reads derived rows: an import saves notes one
+     * after another and refreshes those once per batch (`$lib/import`).
+     * Returns the index written, for the import to show the counts with.
+     */
+    async importContent(docId: string, update: Uint8Array): Promise<DocumentIndex | null> {
+        return this.merge(docId, update, 'local', false);
+    }
+
+    private async merge(
+        docId: string,
+        updateBytes: Uint8Array,
+        origin: 'local' | 'remote',
+        refresh: boolean,
+    ): Promise<DocumentIndex | null> {
         return this.write(docId, async () => {
             // Resolved before the document is touched, so the merge below
             // stays synchronous from lookup to encode.
@@ -196,16 +219,20 @@ export class DocumentRepository {
                 update: bytesToBase64(updateBytes),
                 mergedState: bytesToBase64(merged),
                 contentHash: bytesToBase64(hash),
-                origin: 'remote',
+                origin,
                 index,
             });
-            appStore.markDocumentHasContent(docId);
-            if (index) {
-                appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
-                // A peer's edit is the one change nothing on this device asked
-                // for, so anything reading derived rows has to be told.
-                bumpIndexRevision();
+            if (refresh) {
+                appStore.markDocumentHasContent(docId);
+                if (index) {
+                    appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
+                    // A peer's edit is the one change nothing on this device
+                    // asked for, so anything reading derived rows has to be
+                    // told.
+                    bumpIndexRevision();
+                }
             }
+            return index;
         });
     }
 

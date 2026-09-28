@@ -87,6 +87,27 @@ describe('DocumentRepository', () => {
         unregisterOpenDoc('doc', live);
     });
 
+    // An imported note's content arrives after its row, and whatever reached
+    // the note in between, typed or synced, has to survive it (ADR 0029).
+    it('merges imported content into what the note holds, never over it', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(authored('typed while it ran')));
+
+        const index = await repo.importContent('doc', Y.encodeStateAsUpdate(authored('imported')));
+
+        const saved = calls.find((c) => c.cmd === 'save_yjs_update');
+        // Saved as the device's own change, so no editor is told to reload.
+        expect(saved?.args.origin).toBe('local');
+        const merged = new Y.Doc();
+        Y.applyUpdate(merged, base64ToBytes(saved?.args.mergedState as string));
+        const text = merged.getXmlFragment('content').toString();
+        expect(text).toContain('typed while it ran');
+        expect(text).toContain('imported');
+        // The index describes the merged note, and comes back for the counts.
+        expect(index?.text).toContain('typed while it ran');
+        expect(index?.text).toContain('imported');
+    });
+
     it('tags the merge so the editor does not rebroadcast it', async () => {
         const repo = new DocumentRepository();
         const live = docWith('base');

@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
-import { appStore } from '$lib/stores/app';
-import { createNote, deleteDocument } from '$lib/services/documentActions';
+import {
+    createImportedNote,
+    deleteDocument,
+    publishImportedNotes,
+} from '$lib/services/documentActions';
 import { toasts } from '$lib/services/toast';
-import { broadcastLocalUpdate, documentRepository } from '$lib/sync';
-import { bytesToBase64 } from '$lib/sync/protocol';
+import { documentRepository } from '$lib/sync';
+import type { Document } from '$lib/types';
 import type { ImportResult, ImportTarget, SkipReason } from './importFiles';
 import { describeImport } from './report';
 
@@ -22,36 +25,37 @@ interface RawPicked {
 }
 
 /**
- * The app's side of an import: the calls a note made in the editor goes
- * through, so an imported note is created, saved, indexed and sent to paired
- * devices exactly as one typed in would be.
+ * The app's side of an import, made afresh for each one: `documentActions`
+ * to make, list and announce the notes, and the repository to merge their
+ * content in, as it merges a peer's. It holds on to each note's row until the
+ * note is listed.
  */
-const appTarget: ImportTarget = {
-    async createNote(title) {
-        const doc = await createNote(title);
-        return { id: doc.id, title: doc.title };
-    },
-
-    // What `persistSnapshot` does with an editor's save, but for its toast:
-    // an import reports what it could not save once, in its summary. The
-    // whole state is the update a peer needs, since all of it is new.
-    async saveContent(docId, state, index) {
-        await documentRepository.saveLocalUpdate(docId, state, index);
-        broadcastLocalUpdate(docId, bytesToBase64(state));
-        appStore.markDocumentHasContent(docId);
-        appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
-    },
-
-    deleteNote: (docId) => deleteDocument(docId),
-
-    async heldAttachments(hashes) {
-        const held = new Set<string>();
-        for (const hash of hashes) {
-            if (await documentRepository.hasAttachment(hash)) held.add(hash);
-        }
-        return held;
-    },
-};
+function appTarget(): ImportTarget {
+    const rows = new Map<string, Document>();
+    return {
+        async createNote(id, title) {
+            rows.set(id, await createImportedNote(id, title));
+        },
+        saveContent: (id, update) => documentRepository.importContent(id, update),
+        publish(notes) {
+            publishImportedNotes(
+                notes.flatMap(({ id, hasContent, index }) => {
+                    const doc = rows.get(id);
+                    rows.delete(id);
+                    return doc ? [{ doc, hasContent, index }] : [];
+                }),
+            );
+        },
+        deleteNote: (id) => deleteDocument(id),
+        async heldAttachments(hashes) {
+            const held = new Set<string>();
+            for (const hash of hashes) {
+                if (await documentRepository.hasAttachment(hash)) held.add(hash);
+            }
+            return held;
+        },
+    };
+}
 
 let running = false;
 
@@ -76,7 +80,7 @@ export async function importMarkdownFiles(
         // Loaded here rather than with the page: the converter carries a
         // Markdown parser, and most sessions never import anything.
         const { importFiles } = await import('./importFiles');
-        const result = await importFiles(picked.files, appTarget, onProgress);
+        const result = await importFiles(picked.files, appTarget(), onProgress);
         return { ...result, skipped: [...picked.unread, ...result.skipped] };
     } finally {
         running = false;

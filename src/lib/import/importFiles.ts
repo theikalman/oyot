@@ -2,20 +2,25 @@ import * as Y from 'yjs';
 import { prosemirrorToYDoc } from '@tiptap/y-tiptap';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { CONTENT_FIELD } from '$lib/editor/contentField';
-import type { DocumentIndex } from '$lib/editor/documentIndex';
-import { contentSchema, indexFromYDoc } from '$lib/editor/headlessIndex';
+import { extractDocumentIndex, type DocumentIndex } from '$lib/editor/documentIndex';
+import { contentSchema } from '$lib/editor/headlessIndex';
 import type { NoteLinkTarget } from './markdown';
 import { isEmpty, noteDocument, prepareNote, type MarkdownFile, type PreparedNote } from './note';
 
 /**
  * Turning picked files into notes: all of an import but the IPC.
  *
- * Every file becomes an empty note first and is filled in after, because a
- * link from one file to another in the same import can only become a link to
- * that note once the note has an id. Each file's content is then built
- * against the editor's schema, made into the CRDT the editor would have made
- * from it, and saved through the calls an edit in the editor takes, so it is
- * indexed, counted and sent to paired devices the same way.
+ * Each note's id is chosen before any note is made, so a link from one file to
+ * another can be written as a link to that note however the two are ordered.
+ * Then each file in turn is read against the editor's schema, made into the
+ * CRDT the editor would have made from it, and written whole: the note, then
+ * its content, merged into whatever the note holds as a peer's edit would be.
+ * An import cut short by the app closing leaves at most the one note it was
+ * writing without its content.
+ *
+ * Finished notes are listed and announced to paired devices in batches, with
+ * one refresh of the views that read derived rows per batch, rather than one
+ * per note, which on a large import redraws every list thousands of times.
  *
  * The writes go through an interface rather than Tauri, as a backup import's
  * do, so this is testable without the app. See
@@ -24,14 +29,25 @@ import { isEmpty, noteDocument, prepareNote, type MarkdownFile, type PreparedNot
 
 /** What an import writes through: `documentActions` and the repository. */
 export interface ImportTarget {
-    /** Make an empty, unpinned note. */
-    createNote(title: string): Promise<NoteLinkTarget>;
-    /** Store a note's content as the editor's save does, and send it on. */
-    saveContent(docId: string, state: Uint8Array, index: DocumentIndex): Promise<void>;
-    /** Take back a note that could not be filled in. */
-    deleteNote(docId: string): Promise<void>;
+    /** Make a note, unpinned, under `id`. Nothing is told of it yet. */
+    createNote(id: string, title: string): Promise<void>;
+    /**
+     * Merge content into a note, as a peer's edit is merged. Returns what was
+     * indexed from the merged note, or null if it could not be indexed.
+     */
+    saveContent(id: string, update: Uint8Array): Promise<DocumentIndex | null>;
+    /** List finished notes and tell paired devices of them. */
+    publish(notes: PublishedNote[]): void;
+    /** Take back a note whose content could not be saved. */
+    deleteNote(id: string): Promise<void>;
     /** Which of these attachments this device holds. */
     heldAttachments(hashes: string[]): Promise<Set<string>>;
+}
+
+export interface PublishedNote {
+    id: string;
+    hasContent: boolean;
+    index: DocumentIndex | null;
 }
 
 /** Why a file did not become a note. The first three are Rust's. */
@@ -57,82 +73,91 @@ export interface ImportResult {
     missingImages: number;
 }
 
+/** How many finished notes are listed and announced at a time. */
+const PUBLISH_EVERY = 25;
+
 /**
  * Make a note of each file.
  *
- * A file that cannot be made into one is named in the result and the rest go
- * on: one bad file out of forty is not a reason to import none. A note whose
- * content could not be saved is deleted again rather than left empty under a
- * title that suggests otherwise.
+ * Each note's text is let go of once the note is written, since an import
+ * can be most of a library at once. The files themselves are the caller's,
+ * and left as they are.
+ *
+ * A file that cannot be made into a note is named in the result and the rest
+ * go on: one bad file out of forty is not a reason to import none. A note
+ * whose content could not be saved is deleted again rather than left empty
+ * under a title that suggests otherwise, and later files' links to it stay
+ * links.
  */
 export async function importFiles(
     files: MarkdownFile[],
     target: ImportTarget,
     onProgress: (done: number, total: number) => void = () => {},
+    newId: () => string = () => crypto.randomUUID(),
 ): Promise<ImportResult> {
     const skipped: SkippedFile[] = [];
     const schema = contentSchema();
 
-    // In the order of their names, as a folder lists them. The Notes page
-    // lists the newest first, so the notes are made last to first and the
-    // first file's note is the newest. Two made within the same millisecond
-    // tie, and the page breaks a tie by id, so this is the order a batch
-    // usually lands in rather than one it always does.
-    const ordered = [...files].sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
-    );
+    // In the order of their names, as a folder lists them.
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const ordered = [...files].sort((a, b) => collator.compare(a.name, b.name));
 
-    const prepared: PreparedNote[] = [];
+    const prepared: { note: PreparedNote; id: string }[] = [];
     for (const file of ordered) {
         try {
-            prepared.push(prepareNote(file));
+            prepared.push({ note: prepareNote(file), id: newId() });
         } catch (e) {
             console.warn(`[import] could not read ${file.name}:`, e);
             skipped.push({ name: file.name, reason: 'failed' });
         }
     }
 
-    const created = new Map<PreparedNote, NoteLinkTarget>();
-    for (const note of [...prepared].reverse()) {
-        try {
-            created.set(note, await target.createNote(note.title));
-        } catch (e) {
-            console.warn(`[import] could not create a note for ${note.name}:`, e);
-            skipped.push({ name: note.name, reason: 'failed' });
-        }
-    }
-
-    const noteLink = linksBetween(prepared, created);
-    const notes: NoteLinkTarget[] = [];
+    const links = linksBetween(prepared);
+    const made: NoteLinkTarget[] = [];
+    const batch: PublishedNote[] = [];
     const attachments = new Set<string>();
     let imagesKeptAsText = 0;
-    const total = created.size;
     let done = 0;
-    onProgress(done, total);
+    onProgress(done, prepared.length);
 
-    for (const note of prepared) {
-        const made = created.get(note);
-        if (!made) continue;
+    // Made last to first, so the first file's note is the newest and the
+    // Notes page, newest first, lists them in the order of their names.
+    for (const { note, id } of [...prepared].reverse()) {
         try {
-            const read = noteDocument(note, schema, { noteLink });
-            if (!isEmpty(read.doc)) {
-                const index = await save(made.id, read.doc, target);
-                for (const hash of index.attachmentHashes) attachments.add(hash);
+            // Read before anything is written: a file that cannot be read
+            // makes no note at all.
+            const read = noteDocument(note, schema, { noteLink: links.find });
+            await target.createNote(id, note.title);
+            let index: DocumentIndex | null = null;
+            const hasContent = !isEmpty(read.doc);
+            if (hasContent) {
+                try {
+                    index = await target.saveContent(id, stateOf(read.doc));
+                } catch (e) {
+                    await target.deleteNote(id).catch((error) => {
+                        console.warn(`[import] could not take back ${id}:`, error);
+                    });
+                    throw e;
+                }
+                const named = index ?? extractDocumentIndex(read.doc);
+                for (const hash of named.attachmentHashes) attachments.add(hash);
             }
             imagesKeptAsText += read.imagesKeptAsText;
-            notes.push(made);
+            made.push({ id, title: note.title });
+            batch.push({ id, hasContent, index });
+            if (batch.length >= PUBLISH_EVERY) target.publish(batch.splice(0));
         } catch (e) {
-            console.warn(`[import] could not fill in ${note.name}:`, e);
+            console.warn(`[import] could not import ${note.name}:`, e);
             skipped.push({ name: note.name, reason: 'failed' });
-            await target.deleteNote(made.id).catch((error) => {
-                console.warn(`[import] could not take back ${made.id}:`, error);
-            });
+            links.forget(note);
         }
-        onProgress(++done, total);
+        note.body = '';
+        onProgress(++done, prepared.length);
     }
+    if (batch.length > 0) target.publish(batch.splice(0));
 
     return {
-        notes,
+        notes: made.reverse(),
         skipped,
         imagesKeptAsText,
         missingImages: await countMissing([...attachments], target),
@@ -140,23 +165,13 @@ export async function importFiles(
 }
 
 /**
- * Save a document as the content of the note `docId`, and return its index.
- *
- * The CRDT is made from the document the way y-tiptap documents doing it for
- * content that has never been in an editor. The index is read back out of
- * the CRDT rather than the document it was made from, so it describes what
- * was stored.
+ * A document as the CRDT update that holds it, made the way y-tiptap
+ * documents doing it for content that has never been in an editor.
  */
-async function save(
-    docId: string,
-    doc: ProseMirrorNode,
-    target: ImportTarget,
-): Promise<DocumentIndex> {
+function stateOf(doc: ProseMirrorNode): Uint8Array {
     const ydoc = prosemirrorToYDoc(doc, CONTENT_FIELD);
     try {
-        const index = indexFromYDoc(ydoc);
-        await target.saveContent(docId, Y.encodeStateAsUpdate(ydoc), index);
-        return index;
+        return Y.encodeStateAsUpdate(ydoc);
     } finally {
         ydoc.destroy();
     }
@@ -169,22 +184,24 @@ async function save(
  * writes a link to another note as its file, and other tools link the same
  * way. The folders in a link are not compared, since everything picked in one
  * dialog is side by side. A name two files share links to neither, rather
- * than to whichever came first.
+ * than to whichever came first. A file that failed is forgotten, so the files
+ * after it keep their links to it as links.
  */
-function linksBetween(
-    prepared: PreparedNote[],
-    created: Map<PreparedNote, NoteLinkTarget>,
-): (href: string) => NoteLinkTarget | null {
+function linksBetween(prepared: { note: PreparedNote; id: string }[]) {
     const byName = new Map<string, NoteLinkTarget | null>();
-    for (const note of prepared) {
-        const made = created.get(note);
-        if (!made || !note.name) continue;
+    for (const { note, id } of prepared) {
+        if (!note.name) continue;
         const key = nameKey(note.name);
-        byName.set(key, byName.has(key) ? null : made);
+        byName.set(key, byName.has(key) ? null : { id, title: note.title });
     }
-    return (href) => {
-        const name = linkedFileName(href);
-        return name ? (byName.get(nameKey(name)) ?? null) : null;
+    return {
+        find(href: string): NoteLinkTarget | null {
+            const name = linkedFileName(href);
+            return name ? (byName.get(nameKey(name)) ?? null) : null;
+        },
+        forget(note: PreparedNote): void {
+            if (note.name) byName.set(nameKey(note.name), null);
+        },
     };
 }
 
