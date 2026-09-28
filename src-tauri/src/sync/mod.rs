@@ -12,14 +12,19 @@
 //! - `events`: what the engine tells the page, when there is one
 //! - `tls`: TLS 1.3 keyed by each device's node key
 //! - `manager`: the connections, their lifetimes, pairing and bounded runs
+//! - `routes`: where each paired device was last found on this network
+//! - `background`: a phone's bounded run, and `runs`, the record of each
 //! - `tauri_events`: `events`, emitted to the page
 
+pub mod background;
 pub mod events;
 pub mod frame;
 pub mod manager;
 pub mod protocol;
 pub mod reconcile;
 pub mod repo;
+pub mod routes;
+pub mod runs;
 pub mod session;
 pub mod tauri_events;
 pub mod tls;

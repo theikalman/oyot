@@ -284,6 +284,49 @@ mod backend {
             tasks: vec![browse, prune],
         })
     }
+
+    /// Listen for other devices for `duration`, without advertising this
+    /// one: a phone's background run, which must not invite connections it
+    /// will not be there to take (ADR 0034, decision 3).
+    pub(super) async fn browse_for(
+        peers: &Peers,
+        our_node_id: &str,
+        duration: std::time::Duration,
+    ) {
+        let daemon = match ServiceDaemon::new() {
+            Ok(daemon) => daemon,
+            Err(e) => return warn_log!("[LAN] could not start mDNS to browse: {e}"),
+        };
+        let receiver = match daemon.browse(SERVICE_TYPE) {
+            Ok(receiver) => receiver,
+            Err(e) => {
+                let _ = daemon.shutdown();
+                return warn_log!("[LAN] could not browse the network: {e}");
+            }
+        };
+        let deadline = tokio::time::Instant::now() + duration;
+        while let Ok(Ok(event)) = tokio::time::timeout_at(deadline, receiver.recv_async()).await {
+            if let ServiceEvent::ServiceResolved(info) = event {
+                let txt: HashMap<String, String> = info
+                    .txt_properties
+                    .iter()
+                    .map(|p| (p.key().to_lowercase(), p.val_str().to_string()))
+                    .collect();
+                let addrs = info.addresses.iter().map(|a| a.to_ip_addr()).collect();
+                if let Some(peer) = peer_from_advert(
+                    &txt,
+                    &info.fullname,
+                    addrs,
+                    info.port,
+                    our_node_id,
+                    crypto::now_ms(),
+                ) {
+                    peers.observe(peer);
+                }
+            }
+        }
+        let _ = daemon.shutdown();
+    }
 }
 
 /// The iOS stub.
@@ -323,6 +366,19 @@ mod backend {
                 .to_string(),
         )
     }
+
+    pub(super) async fn browse_for(
+        _peers: &Peers,
+        _our_node_id: &str,
+        _duration: std::time::Duration,
+    ) {
+    }
+}
+
+/// Listen for this user's other devices for `duration`, without advertising
+/// this one. Nothing on iOS until the `NWBrowser` backend exists.
+pub async fn browse_for(peers: &Peers, our_node_id: &str, duration: Duration) {
+    backend::browse_for(peers, our_node_id, duration).await
 }
 
 #[cfg(test)]

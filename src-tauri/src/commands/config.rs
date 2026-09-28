@@ -5,14 +5,20 @@
 //! already has them: an unrecognised key here has always been ignored, and
 //! clearing them is a migration rather than a read.
 
+use std::path::Path;
 use tauri::Manager;
 
 fn read_config(app: &tauri::AppHandle) -> serde_json::Value {
-    let config_path = match app.path().app_data_dir() {
-        Ok(dir) => dir.join("config.json"),
-        Err(_) => return serde_json::Value::Object(Default::default()),
-    };
-    let content = match std::fs::read_to_string(config_path).ok() {
+    match app.path().app_data_dir() {
+        Ok(dir) => read_config_at(&dir),
+        Err(_) => serde_json::Value::Object(Default::default()),
+    }
+}
+
+/// The file in a data directory, for a phone's background run, which has a
+/// data directory and no Tauri app to find it through (ADR 0034).
+fn read_config_at(data_dir: &Path) -> serde_json::Value {
+    let content = match std::fs::read_to_string(data_dir.join("config.json")).ok() {
         Some(c) => c,
         None => return serde_json::Value::Object(Default::default()),
     };
@@ -27,14 +33,15 @@ fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), S
 }
 
 /// A yes-or-no preference, or `default` when it was never set.
-///
-/// Only the desktop's own preferences are flags so far (ADR 0030).
-#[cfg_attr(mobile, allow(dead_code))]
 pub(crate) fn read_flag(app: &tauri::AppHandle, key: &str, default: bool) -> bool {
     flag(&read_config(app), key, default)
 }
 
-#[cfg_attr(mobile, allow(dead_code))]
+/// `read_flag`, from a data directory.
+pub(crate) fn read_flag_at(data_dir: &Path, key: &str, default: bool) -> bool {
+    flag(&read_config_at(data_dir), key, default)
+}
+
 pub(crate) fn write_flag(app: &tauri::AppHandle, key: &str, value: bool) -> Result<(), String> {
     let mut json = read_config(app);
     // A file holding something other than an object would make the assignment
@@ -48,7 +55,6 @@ pub(crate) fn write_flag(app: &tauri::AppHandle, key: &str, value: bool) -> Resu
 
 /// `key` read as a boolean. Missing, or anything that is not a boolean, is
 /// `default`: a hand-edited file should not change a behaviour by accident.
-#[cfg_attr(mobile, allow(dead_code))]
 fn flag(json: &serde_json::Value, key: &str, default: bool) -> bool {
     json.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }

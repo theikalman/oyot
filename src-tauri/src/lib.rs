@@ -155,6 +155,34 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             PRIMARY KEY (user_id, peer_node_id, host, port)
         );
 
+        -- Where each paired device was last found on this network, for a
+        -- phone's background run, which cannot count on hearing mDNS (ADR
+        -- 0034, decision 3). `addrs` is a comma-separated list.
+        CREATE TABLE IF NOT EXISTS lan_routes (
+            user_id TEXT NOT NULL,
+            peer_node_id TEXT NOT NULL,
+            addrs TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            seen_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, peer_node_id)
+        );
+
+        -- Every background run, and how it went (ADR 0034, decision 7). The
+        -- newest 200 are kept. `reached` is a JSON array of display names.
+        CREATE TABLE IF NOT EXISTS sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER NOT NULL,
+            reached TEXT NOT NULL,
+            docs_received INTEGER NOT NULL DEFAULT 0,
+            docs_sent INTEGER NOT NULL DEFAULT 0,
+            images_received INTEGER NOT NULL DEFAULT 0,
+            images_sent INTEGER NOT NULL DEFAULT 0,
+            outcome TEXT NOT NULL,
+            error TEXT
+        );
+
         -- Every backup attempt, finished or not (ADR 0026). What the settings
         -- page reads to say when the last backup was made, and where a
         -- failure is recorded. `location` is where a backup can be found
@@ -217,7 +245,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 14;
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -622,6 +650,36 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v15: where each paired device was last found on this network, and the
+    // record of every background run (ADR 0034, decisions 3 and 7).
+    if version < 15 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS lan_routes (
+                 user_id TEXT NOT NULL,
+                 peer_node_id TEXT NOT NULL,
+                 addrs TEXT NOT NULL,
+                 port INTEGER NOT NULL,
+                 seen_at INTEGER NOT NULL,
+                 PRIMARY KEY (user_id, peer_node_id)
+             );
+             CREATE TABLE IF NOT EXISTS sync_runs (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 trigger TEXT NOT NULL,
+                 started_at INTEGER NOT NULL,
+                 ended_at INTEGER NOT NULL,
+                 reached TEXT NOT NULL,
+                 docs_received INTEGER NOT NULL DEFAULT 0,
+                 docs_sent INTEGER NOT NULL DEFAULT 0,
+                 images_received INTEGER NOT NULL DEFAULT 0,
+                 images_sent INTEGER NOT NULL DEFAULT 0,
+                 outcome TEXT NOT NULL,
+                 error TEXT
+             );
+             PRAGMA user_version = 15;",
+        )
+        .map_err(|e| format!("Migration v15 failed: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -815,6 +873,9 @@ pub fn run() {
             reconnect_device,
             request_attachment,
             get_network_status,
+            get_background_sync,
+            set_background_sync,
+            set_background_sync_mobile_data,
             probe_stored_addresses,
             list_reachable_peers,
             list_export_attachments,
@@ -1588,5 +1649,22 @@ mod migration_tests {
             .query_row("SELECT disconnected FROM device_pairs", [], |r| r.get(0))
             .unwrap();
         assert_eq!(disconnected, 0);
+    }
+
+    #[test]
+    fn migrating_to_v15_adds_routes_and_the_run_record() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("DROP TABLE lan_routes; DROP TABLE sync_runs; PRAGMA user_version = 14;")
+            .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        assert!(table_exists(&db, "lan_routes"));
+        assert!(table_exists(&db, "sync_runs"));
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 15);
     }
 }

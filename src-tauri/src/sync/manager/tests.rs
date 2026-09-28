@@ -242,6 +242,49 @@ async fn paired_devices_sync_both_ways_over_tls() {
     assert!(a.manager.is_connected(&b.node_id));
 }
 
+// ADR 0034, decision 3: a phone's background run tries where discovery last
+// found a device. Only a paired device's place is worth keeping, and only
+// what discovery found: a typed address is kept already.
+#[tokio::test(flavor = "multi_thread")]
+async fn where_discovery_finds_a_paired_device_is_remembered() {
+    let (a, b, c) = (
+        device("phone").await,
+        device("desktop").await,
+        device("stranger").await,
+    );
+    pair(&a, &b);
+    a.manager.start();
+
+    let found = |node_id: &str, source: PeerSource, last: u8| Peer {
+        node_id: node_id.to_string(),
+        source,
+        boot_id: None,
+        addrs: vec![
+            format!("192.168.1.{last}").parse().unwrap(),
+            "fe80::1".parse().unwrap(),
+        ],
+        host: None,
+        port: 19701,
+        seen_at: now_ms(),
+        key: format!("{node_id}-{source:?}"),
+    };
+    a.peers.observe(found(&c.node_id, PeerSource::Mdns, 30));
+    a.peers.observe(found(&b.node_id, PeerSource::Mdns, 20));
+
+    eventually("the desktop's route", || {
+        !routes::load(&a.db.lock(), &a.user_id).unwrap().is_empty()
+    })
+    .await;
+    let kept = routes::load(&a.db.lock(), &a.user_id).unwrap();
+    assert_eq!(kept.len(), 1, "the stranger is not paired");
+    assert_eq!(kept[0].peer_node_id, b.node_id);
+    assert_eq!(
+        kept[0].addrs,
+        vec!["192.168.1.20".parse::<IpAddr>().unwrap()],
+        "a link-local address means nothing on a later visit"
+    );
+}
+
 // ADR 0032, decision 3: one port, so one firewall prompt and one number in a
 // stored address. A probe still gets its pong, and a TLS handshake on the
 // same port reaches the engine.

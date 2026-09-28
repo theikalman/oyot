@@ -1,4 +1,5 @@
 pub mod attachments;
+pub mod background_sync;
 pub mod backup;
 pub mod backup_remote;
 pub mod backup_schedule;
@@ -14,6 +15,7 @@ pub mod signaling;
 pub mod sync;
 
 pub use attachments::*;
+pub use background_sync::*;
 pub use backup::*;
 pub use backup_remote::*;
 pub use backup_schedule::*;

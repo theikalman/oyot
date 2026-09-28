@@ -182,7 +182,7 @@ fn by_peer(rows: Vec<DeviceEndpoint>) -> Vec<(String, Vec<DeviceEndpoint>)> {
 /// Stops at the first answer: a second address for the same device is an
 /// alternative, not an addition, and trying the rest would cost a connection
 /// each to learn nothing.
-async fn probe_peer(
+pub(crate) async fn probe_peer(
     manager: &Arc<SignalingManager>,
     boot_id: &str,
     node_id: &str,

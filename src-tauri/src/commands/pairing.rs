@@ -59,6 +59,7 @@ pub fn remove_pair(state: tauri::State<'_, AppState>, peer_node_id: String) -> R
         // so it goes with the pairing. Left behind, it would keep the removed
         // device answering probes and showing up as reachable.
         endpoints::remove_endpoints_for_peer(&db, &user_id, &peer_node_id)?;
+        crate::sync::routes::forget(&db, &user_id, &peer_node_id)?;
     }
     // The row is what lets the device in; the connection it already has
     // goes too, rather than syncing on until it next drops.

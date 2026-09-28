@@ -23,10 +23,11 @@ use super::events::{Events, PeerState};
 use super::frame::{self, Activity, ActivityReader};
 use super::protocol::Message;
 use super::repo::SqliteRepo;
+use super::routes::{self, LanRoute};
 use super::session::{Moved, Out, Phase, Session};
 use super::tls;
 use crate::crypto::now_ms;
-use crate::network::peers::Peers;
+use crate::network::peers::{PeerSource, Peers};
 use crate::pairing;
 use ed25519_dalek::SigningKey;
 use parking_lot::Mutex;
@@ -244,7 +245,10 @@ impl SyncManager {
         let task = tokio::spawn(async move {
             loop {
                 match found.recv().await {
-                    Ok(node_id) => manager.dial(&node_id),
+                    Ok(node_id) => {
+                        manager.inner.remember_route(&node_id);
+                        manager.dial(&node_id);
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => manager.sweep(),
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -526,6 +530,43 @@ impl Inner {
             entry.clone()
         };
         self.events.peer_state(&state);
+    }
+
+    /// Keep where discovery found a paired device, for a background run to
+    /// try when it cannot hear discovery itself (ADR 0034, decision 3).
+    fn remember_route(&self, node_id: &str) {
+        let Some(peer) = self.peers.best(node_id) else {
+            return;
+        };
+        if peer.source != PeerSource::Mdns {
+            return;
+        }
+        let addrs: Vec<IpAddr> = peer
+            .addrs
+            .iter()
+            .filter(|a| routes::worth_remembering(a))
+            .copied()
+            .collect();
+        if addrs.is_empty() {
+            return;
+        }
+        let db = self.db.lock();
+        let paired = pairing::get_pair_by_node_id(&db, &self.me.user_id, node_id)
+            .ok()
+            .flatten()
+            .is_some();
+        if !paired {
+            return;
+        }
+        let route = LanRoute {
+            peer_node_id: node_id.to_string(),
+            addrs,
+            port: peer.port,
+            seen_at: peer.seen_at,
+        };
+        if let Err(e) = routes::remember(&db, &self.me.user_id, &route) {
+            warn_log!("[sync] {e}");
+        }
     }
 
     fn should_redial(&self, node_id: &str) -> bool {
