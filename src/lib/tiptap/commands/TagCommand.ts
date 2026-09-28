@@ -1,4 +1,4 @@
-import type { Editor } from '@tiptap/core';
+import type { Content, Editor } from '@tiptap/core';
 import { exitSuggestion } from '@tiptap/suggestion';
 import { commandRegistry, type SlashCommand, type CommandSelectProps } from '../CommandRegistry';
 import { caretClientRect, closeAnyPicker, openPickerPopup, type PickerPopup } from '../pickerPopup';
@@ -17,13 +17,12 @@ const TAG_ICON =
 const NEW_TAG_ICON =
     '<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
 
-// The editor the open picker will insert into, and the rows it is showing.
+// The rows the open picker is showing.
 //
 // Module-level, like the registry the command lives in: the picker is mounted
 // outside the editor and hands back nothing but a row id, so the id has to be
-// resolvable against the list that produced it. Both are cleared when the
-// picker closes, so nothing here outlives the popup that needs it.
-let currentEditor: Editor | null = null;
+// resolvable against the list that produced it. Cleared when the picker
+// closes, so nothing here outlives the popup that needs it.
 let visible: TagPickerItem[] = [];
 let known: TagSummary[] = [];
 let picker: PickerPopup | null = null;
@@ -50,8 +49,8 @@ export function registerTagCommand(): void {
 
 function openTagPicker(editor: Editor, rect: DOMRect): void {
     // Before a thing is assigned. Opening a picker closes whatever was open,
-    // and closing is what forgets the editor and the rows, so state set first
-    // would be wiped by the very call that is meant to use it.
+    // and closing is what forgets the rows, so state set first would be wiped
+    // by the very call that is meant to use it.
     closeAnyPicker();
 
     // Whatever the open document already holds, straight away. The list from
@@ -59,9 +58,9 @@ function openTagPicker(editor: Editor, rect: DOMRect): void {
     // moment later reads as a stutter; the tags in front of the user are also
     // the ones most likely to be wanted again.
     known = mergeTagNames([], tagsInEditor(editor));
-    currentEditor = editor;
 
     picker = openPickerPopup({
+        editor,
         className: 'tag-suggestion-popup',
         rect,
         items: (query) => {
@@ -73,7 +72,7 @@ function openTagPicker(editor: Editor, rect: DOMRect): void {
                 icon: item.isNew ? NEW_TAG_ICON : TAG_ICON,
             }));
         },
-        onSelect: insertChosenTag,
+        contentFor: chosenTag,
         onClose: forgetPicker,
         // An empty list here is not a failed filter, it is a corpus with no
         // tags in it yet, which is every user's first time.
@@ -104,38 +103,29 @@ function tagsInEditor(editor: Editor): string[] {
     return extractDocumentIndex(editor.state.doc).tags;
 }
 
-function insertChosenTag(id: string): void {
+/** The chip for the row chosen, to replace the name typed to find it. */
+function chosenTag(id: string): Content {
     const item = visible.find((candidate) => candidate.id === id);
-    const editor = currentEditor;
 
-    // Both of these are the shape of bug that made choosing a document do
-    // nothing at all for as long as it did: the popup closes, nothing is
-    // inserted, and nothing anywhere says so.
+    // The shape of bug that made choosing a document do nothing at all for as
+    // long as it did: the popup closes, nothing is inserted, and nothing
+    // anywhere says so.
     if (!item) {
         console.error(`[tags] '${id}' is no longer in the list, nothing inserted`);
-        return;
-    }
-    if (!editor) {
-        console.error('[tags] no editor to insert into, the tag was dropped');
-        return;
+        return null;
     }
 
-    editor
-        .chain()
-        .focus()
-        .insertContent([
-            { type: TAG_NODE_NAME, attrs: { name: item.name } },
-            // A space after the chip, so the next thing typed is a word and not
-            // more of the tag. Without it the caret sits flush against an atom
-            // and the line reads as one token.
-            { type: 'text', text: ' ' },
-        ])
-        .run();
+    return [
+        { type: TAG_NODE_NAME, attrs: { name: item.name } },
+        // A space after the chip, so the next thing typed is a word and not
+        // more of the tag. Without it the caret sits flush against an atom
+        // and the line reads as one token.
+        { type: 'text', text: ' ' },
+    ];
 }
 
 function forgetPicker(): void {
     picker = null;
-    currentEditor = null;
     visible = [];
     known = [];
 }

@@ -6,6 +6,8 @@ import Suggestion, {
 } from '@tiptap/suggestion';
 import type { Editor, Range } from '@tiptap/core';
 import { commandRegistry, type CommandSuggestion } from './CommandRegistry';
+import { pickerPlugin } from './pickerPopup';
+import { pickerQueryKey } from './pickerQuery';
 import { placePopup } from './popupPlacement';
 import SlashSuggestionPopup, { type PopupItem } from '../components/SlashSuggestionPopup.svelte';
 import { mount, unmount } from 'svelte';
@@ -29,10 +31,18 @@ export const SlashCommand = Extension.create({
 
     addProseMirrorPlugins() {
         return [
+            // For the pickers some of these commands open, the tag and the
+            // document-link ones. Ahead of the menu, so a picker's query is
+            // up to date by the time the menu asks whether one is open.
+            pickerPlugin(this.editor),
             Suggestion({
                 editor: this.editor,
                 char: this.options.suggestion.char,
                 startOfLine: this.options.suggestion.startOfLine,
+                // Not while a picker is reading what is typed. A slash in a
+                // tag's name is part of the name, not a second menu over the
+                // picker's list.
+                allow: ({ state }) => !pickerQueryKey.getState(state),
                 items: ({ query }: { query: string }) => commandRegistry.filterCommands(query),
                 command: ({
                     editor,
