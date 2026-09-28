@@ -36,6 +36,22 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.23-alpha',
+        date: '2026-09-28',
+        summary:
+            'On a phone or a tablet, a long title takes a single line at the top of the page, and a tap shows the rest of it.',
+        changes: [
+            {
+                kind: 'improved',
+                text: "On a phone, a tablet or a narrow window, a title too long for the top of the page is cut short to one line, ending in an ellipsis. It used to wrap onto as many lines as it took, and a long one could fill a third of a phone's screen before a word of the note. Tap the title to read all of it, and tap it again, or anywhere else, to cut it short again.",
+            },
+            {
+                kind: 'improved',
+                text: 'In a wide window a title long enough to wrap still does, and the pin, Edit and the sync indicator beside it now line up with its first line, where they used to sit halfway down it.',
+            },
+        ],
+    },
+    {
         version: '0.0.22-alpha',
         date: '2026-09-28',
         summary:
