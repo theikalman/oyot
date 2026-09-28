@@ -6,3 +6,5 @@ package-lock.json
 src-tauri/target
 src-tauri/gen
 Makefile
+# Written by crdtInterop.test.ts and crdt.rs, and compared by value.
+src-tauri/tests/fixtures

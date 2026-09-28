@@ -105,6 +105,12 @@ export function isSyncMessage(v: unknown): v is SyncMessage {
 // this short carries no content, so it is not worth persisting or sending.
 export const EMPTY_UPDATE_LEN = 2;
 
+// The content hash of a document with nothing in it (ADR 0033, decision 4).
+// Rust computes every hash; this one is spelled out so the page can tell an
+// empty document from one whose hash is unknown, which is what a missing hash
+// means. crdt.rs and the interop test both pin it to the definition.
+export const EMPTY_CONTENT_HASH = 'ah3hKNJyMsJEp/6RKVqPp83Gx1jymaAbctmSIACZgio=';
+
 // --- base64 <-> bytes (shared by the repository and the framing layer) --------
 
 export function bytesToBase64(bytes: Uint8Array): string {

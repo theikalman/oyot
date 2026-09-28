@@ -3,6 +3,10 @@ mod logging;
 
 mod backup;
 mod commands;
+// Nothing merges through it until `save_yjs_update` does, in the next change
+// (ADR 0031, decision 3).
+#[allow(dead_code)]
+mod crdt;
 mod crypto;
 mod db;
 #[cfg(desktop)]
