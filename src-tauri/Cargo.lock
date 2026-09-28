@@ -2943,6 +2943,7 @@ dependencies = [
  "tauri-plugin-sign-in",
  "tauri-plugin-single-instance",
  "tokio",
+ "tokio-rustls",
  "url",
  "uuid",
  "webpki-root-certs",
