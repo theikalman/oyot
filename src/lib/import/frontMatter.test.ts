@@ -40,6 +40,17 @@ describe('splitFrontMatter', () => {
         expect(splitFrontMatter('---\n# a comment\ntitle: A\n---\n').values.get('title')).toBe('A');
     });
 
+    // Two rules with a line between them that happens to have a colon in it
+    // are still a document. Only the first line used to be checked.
+    it('only takes a block where every line is a key or under one', () => {
+        const text = '---\nAttendees: Ann, Bob\nWe agreed to cut the budget.\n\n---\n\nNext steps.';
+        expect(splitFrontMatter(text).body).toBe(text);
+        expect(splitFrontMatter('---\nDate: Monday\n\nWe met.\n---\n').values.size).toBe(0);
+        expect(
+            values('---\ntitle: A\n  continued: under title\ntags:\n- a\n# note\n---\n'),
+        ).toEqual({ title: 'A', tags: ['a'] });
+    });
+
     it('does not take a rule further down for front matter', () => {
         const text = 'intro\n---\ntitle: A\n---\n';
         expect(splitFrontMatter(text).body).toBe(text);
@@ -96,6 +107,35 @@ describe('front matter values', () => {
         expect(values('---\ntags:\n- work\n- home\n---\n').tags).toEqual(['work', 'home']);
     });
 
+    // How Prettier wraps a list too long for its line, which an export's
+    // front matter can be once it has been through an editor that formats.
+    it('reads a list written across lines', () => {
+        expect(values('---\ntags:\n  ["house move", packing]\n---\n').tags).toEqual([
+            'house move',
+            'packing',
+        ]);
+        expect(values('---\ntags:\n  [\n    travel,\n    japan,\n  ]\n---\n').tags).toEqual([
+            'travel',
+            'japan',
+        ]);
+        expect(values('---\ntags: [a,\n  b]\n---\n').tags).toEqual(['a', 'b']);
+    });
+
+    it('reads a list with a comment after it', () => {
+        expect(values('---\ntags: [work, home] # added later\n---\n').tags).toEqual([
+            'work',
+            'home',
+        ]);
+        expect(values('---\ntags: [work] and more\n---\n').tags).toBeNull();
+    });
+
+    it('reads a list a line to an item with blank lines and comments in it', () => {
+        expect(values('---\ntags:\n  - a\n# note\n  - b\n\n  - c\ntitle: T\n---\n')).toEqual({
+            tags: ['a', 'b', 'c'],
+            title: 'T',
+        });
+    });
+
     it('reads folded and literal blocks', () => {
         expect(values('---\ntitle: >\n  A long\n  title\nnext: x\n---\n')).toEqual({
             title: 'A long title',
@@ -130,5 +170,17 @@ describe('front matter values', () => {
 
     it('reads a value that is only a comment as nothing', () => {
         expect(values('---\ntitle: #not a title\n---\n').title).toBeNull();
+    });
+});
+
+// The file is written by anyone. A pattern that backtracks over a long run of
+// spaces would freeze the app on one crafted line.
+describe('reading front matter in linear time', () => {
+    it('reads a line with a long run of spaces quickly', () => {
+        const spaces = ' '.repeat(200_000);
+        const started = performance.now();
+        splitFrontMatter(`---\ntitle: a${spaces}b\ntags:\n- a${spaces}b\n---\nbody`);
+        splitFrontMatter(`---\nhello${spaces}world\n---\n`);
+        expect(performance.now() - started).toBeLessThan(500);
     });
 });
