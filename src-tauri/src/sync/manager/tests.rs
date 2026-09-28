@@ -406,10 +406,74 @@ async fn a_bounded_run_ends_once_both_sides_are_synced() {
         );
     }
     assert_eq!(text_of(&phone, "from the desktop"), "hello");
+    assert_eq!(report.moved.docs_sent, 10);
+    assert_eq!(report.moved.docs_received, 1);
     eventually("the run's connection closing", || {
         !phone.manager.is_connected(&desktop.node_id)
     })
     .await;
+}
+
+// ADR 0034, decision 6: when the system takes the time back, the run stops
+// and says so; what it finished stands.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bounded_run_stops_when_the_system_takes_its_time_back() {
+    let (phone, desktop) = (device("phone").await, device("desktop").await);
+    pair(&phone, &desktop);
+    route(&phone, &desktop);
+    desktop.manager.start();
+
+    let report = phone
+        .manager
+        .run_until(Duration::from_secs(20), std::future::ready(()))
+        .await;
+
+    assert!(report.cancelled, "{report:?}");
+    assert!(!report.timed_out);
+}
+
+// ADR 0034, decision 4: on mobile data a run's connections leave images
+// alone, both ways.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_without_images_leaves_them_where_they_are() {
+    let (phone, desktop) = (device("phone").await, device("desktop").await);
+    pair(&phone, &desktop);
+    route(&phone, &desktop);
+    write_note(&desktop, "from the desktop", "hello");
+    // An image the note embeds, which the desktop offers on every connection.
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend_from_slice(&[7; 32]);
+    let image = crate::commands::attachments::store_attachment_at(
+        &desktop.db,
+        &desktop.dir,
+        &png,
+        "image/png",
+    )
+    .unwrap();
+    desktop
+        .db
+        .lock()
+        .execute(
+            "INSERT INTO document_attachments (document_id, hash) VALUES ('from the desktop', ?1)",
+            [&image.hash],
+        )
+        .unwrap();
+    desktop.manager.start();
+    phone.manager.set_images(false);
+
+    let report = phone.manager.run_once(Duration::from_secs(20)).await;
+
+    assert_eq!(report.synced, vec![desktop.node_id.clone()]);
+    assert_eq!(text_of(&phone, "from the desktop"), "hello");
+    assert_eq!(report.moved.images_received + report.moved.images_sent, 0);
+    let held = crate::commands::attachments::has_attachment(&phone.db.lock(), &image.hash);
+    assert_eq!(held, Ok(false), "the phone did not fetch it");
+
+    // The same run with images allowed does fetch it, so the test above is
+    // not passing for want of an image to move.
+    phone.manager.set_images(true);
+    let report = phone.manager.run_once(Duration::from_secs(20)).await;
+    assert_eq!(report.moved.images_received, 1, "{report:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

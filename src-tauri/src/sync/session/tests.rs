@@ -361,8 +361,10 @@ fn route(outs: Vec<Out>, to_a: bool, queue: &mut VecDeque<(bool, Message)>, sync
 
 /// Run two sessions over an in-memory link until neither has anything to say.
 fn converge(a: &FakeRepo, b: &FakeRepo) -> Run {
-    let mut sa = Session::new();
-    let mut sb = Session::new();
+    converge_sessions(a, b, &mut Session::new(), &mut Session::new())
+}
+
+fn converge_sessions(a: &FakeRepo, b: &FakeRepo, sa: &mut Session, sb: &mut Session) -> Run {
     let mut queue = VecDeque::new();
     let mut run = Run::default();
 
@@ -726,6 +728,80 @@ fn attachment_transfer_does_not_block_the_document_finish_gate() {
     let run = converge(&a, &b);
     assert!(run.synced_a && run.synced_b);
     assert!(b.attachment("img").is_some());
+}
+
+// ADR 0034, decision 4: on mobile data a phone's run neither fetches images
+// nor offers its own, so the desktop does not pull the phone's photos over
+// it either.
+#[test]
+fn a_session_without_images_moves_notes_and_leaves_images_alone() {
+    let (phone, desktop) = (FakeRepo::default(), FakeRepo::default());
+    phone.add_attachment("photo", "image/jpeg", b"PHONE".to_vec());
+    desktop.seed("d1", "from the desktop", 1);
+    desktop.add_attachment("chart", "image/png", b"DESK".to_vec());
+
+    let mut on_mobile_data = Session::without_images();
+    let run = converge_sessions(&phone, &desktop, &mut on_mobile_data, &mut Session::new());
+
+    assert!(run.synced_a && run.synced_b);
+    assert_eq!(phone.text("d1"), "from the desktop");
+    assert!(phone.attachment("chart").is_none());
+    assert!(desktop.attachment("photo").is_none());
+    let offered_by_phone = run
+        .sent
+        .iter()
+        .any(|(to_a, m)| !to_a && matches!(m, Message::AttachManifest { .. }));
+    assert!(!offered_by_phone, "the phone offers none of its own");
+
+    // Asked for one anyway, it says it has none to give.
+    let outs = on_mobile_data.handle(
+        &phone,
+        Message::AttachNeed {
+            hash: "photo".into(),
+        },
+        0,
+    );
+    assert_eq!(
+        sends(&outs),
+        vec![&Message::AttachMissing {
+            hash: "photo".into()
+        }]
+    );
+    assert!(on_mobile_data
+        .request_attachment("chart".into(), 0)
+        .is_empty());
+}
+
+// ADR 0034, decision 7: a run's record says how much moved each way.
+#[test]
+fn what_moved_is_counted_each_way() {
+    let (a, b) = (FakeRepo::default(), FakeRepo::default());
+    a.seed("d1", "one", 1);
+    a.seed("d2", "two", 1);
+    b.seed("d3", "three", 1);
+    b.add_attachment("img", "image/png", b"PNG".to_vec());
+
+    let (mut sa, mut sb) = (Session::new(), Session::new());
+    converge_sessions(&a, &b, &mut sa, &mut sb);
+
+    assert_eq!(
+        sa.moved(),
+        Moved {
+            docs_received: 1,
+            docs_sent: 2,
+            images_received: 1,
+            images_sent: 0,
+        }
+    );
+    assert_eq!(
+        sb.moved(),
+        Moved {
+            docs_received: 2,
+            docs_sent: 1,
+            images_received: 0,
+            images_sent: 1,
+        }
+    );
 }
 
 #[test]

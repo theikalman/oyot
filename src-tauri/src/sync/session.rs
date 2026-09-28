@@ -17,6 +17,9 @@
 //! - **Image pieces.** An image arrives in pieces (ADR 0032, decision 7),
 //!   and every piece moves its deadline on, so a slow link that keeps
 //!   delivering is not given up on halfway.
+//! - **Sessions without images,** for a phone's background run on mobile
+//!   data (ADR 0034, decision 4), and a count of what moved, for the record
+//!   of each run (decision 7).
 
 use super::protocol::{pin_stamp, AttachmentEntry, ManifestEntry, Message};
 use super::reconcile::{reconcile, Reconciliation};
@@ -123,8 +126,41 @@ fn attach_timeout_for(size: Option<u64>) -> i64 {
     }
 }
 
+/// What a session moved, each way.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Moved {
+    pub docs_received: u64,
+    pub docs_sent: u64,
+    pub images_received: u64,
+    pub images_sent: u64,
+}
+
+impl Moved {
+    pub fn add(&mut self, other: Moved) {
+        self.docs_received += other.docs_received;
+        self.docs_sent += other.docs_sent;
+        self.images_received += other.images_received;
+        self.images_sent += other.images_sent;
+    }
+
+    /// What moved since `earlier`, a reading of the same counts.
+    pub fn since(self, earlier: Moved) -> Moved {
+        Moved {
+            docs_received: self.docs_received.saturating_sub(earlier.docs_received),
+            docs_sent: self.docs_sent.saturating_sub(earlier.docs_sent),
+            images_received: self.images_received.saturating_sub(earlier.images_received),
+            images_sent: self.images_sent.saturating_sub(earlier.images_sent),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Session {
+    /// Whether images move on this connection. A phone's background run on
+    /// mobile data neither fetches images nor offers its own.
+    no_images: bool,
+    moved: Moved,
+
     started: bool,
     local_done: bool,
     peer_done: bool,
@@ -147,6 +183,21 @@ pub struct Session {
 impl Session {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A session that moves notes and leaves images alone, both ways: it
+    /// offers none, asks for none, and answers every request for one as
+    /// missing (ADR 0034, decision 4).
+    pub fn without_images() -> Self {
+        Self {
+            no_images: true,
+            ..Self::default()
+        }
+    }
+
+    /// What this session has moved so far.
+    pub fn moved(&self) -> Moved {
+        self.moved
     }
 
     /// Whether both sides have everything they asked for.
@@ -182,10 +233,12 @@ impl Session {
                 self.out.push(Out::Phase(Phase::Error));
             }
         }
-        match repo.list_attachments() {
-            Ok(items) if !items.is_empty() => self.send(Message::AttachManifest { items }),
-            Ok(_) => {}
-            Err(e) => warn_log!("[sync] failed to send attachment manifest: {e}"),
+        if !self.no_images {
+            match repo.list_attachments() {
+                Ok(items) if !items.is_empty() => self.send(Message::AttachManifest { items }),
+                Ok(_) => {}
+                Err(e) => warn_log!("[sync] failed to send attachment manifest: {e}"),
+            }
         }
         self.take()
     }
@@ -229,11 +282,10 @@ impl Session {
             Message::DocDeleted { id, deleted_at } => {
                 log_err(repo.apply_delete(&id, deleted_at), &id)
             }
-            Message::LiveUpdate { id, update } => {
-                if let Err(e) = repo.merge_delta(&id, &update) {
-                    warn_log!("[sync] live-update merge failed for {id}: {e}");
-                }
-            }
+            Message::LiveUpdate { id, update } => match repo.merge_delta(&id, &update) {
+                Ok(()) => self.moved.docs_received += 1,
+                Err(e) => warn_log!("[sync] live-update merge failed for {id}: {e}"),
+            },
             Message::AttachManifest { items } => self.on_attach_manifest(repo, items, now),
             Message::AttachNeed { hash } => self.on_attach_need(repo, hash),
             Message::AttachPiece {
@@ -399,7 +451,10 @@ impl Session {
 
     fn on_need(&mut self, repo: &dyn Repo, id: String, sv: &[u8]) {
         match repo.compute_delta(&id, sv) {
-            Ok(Some(update)) => self.send(Message::SyncDelta { id, update }),
+            Ok(Some(update)) => {
+                self.moved.docs_sent += 1;
+                self.send(Message::SyncDelta { id, update });
+            }
             Ok(None) => self.send(Message::SyncNone { id }),
             Err(e) => {
                 // Still answer, so the asker does not wait out its timeouts.
@@ -419,8 +474,9 @@ impl Session {
 
     fn on_delta(&mut self, repo: &dyn Repo, id: &str, update: &[u8], now: i64) {
         let tracked = self.in_flight.remove(id).is_some();
-        if let Err(e) = repo.merge_delta(id, update) {
-            warn_log!("[sync] mergeDelta failed for {id}: {e}");
+        match repo.merge_delta(id, update) {
+            Ok(()) => self.moved.docs_received += 1,
+            Err(e) => warn_log!("[sync] mergeDelta failed for {id}: {e}"),
         }
         if tracked {
             self.settle(now);
@@ -443,6 +499,9 @@ impl Session {
     }
 
     fn on_attach_manifest(&mut self, repo: &dyn Repo, items: Vec<AttachmentEntry>, now: i64) {
+        if self.no_images {
+            return;
+        }
         for item in items {
             if self.is_attach_tracked(&item.hash) {
                 continue;
@@ -466,7 +525,7 @@ impl Session {
 
     /// Pull one image now: a peer has just said it holds one this device lacks.
     pub fn request_attachment(&mut self, hash: String, now: i64) -> Vec<Out> {
-        if !self.is_attach_tracked(&hash) {
+        if !self.no_images && !self.is_attach_tracked(&hash) {
             self.attach_queue.push_back(AttachItem {
                 hash,
                 attempts: 0,
@@ -493,8 +552,13 @@ impl Session {
     }
 
     fn on_attach_need(&mut self, repo: &dyn Repo, hash: String) {
+        if self.no_images {
+            self.send(Message::AttachMissing { hash });
+            return;
+        }
         match repo.read_attachment(&hash) {
             Ok(Some((mime, bytes))) => {
+                self.moved.images_sent += 1;
                 let total = bytes.len() as u64;
                 if bytes.is_empty() {
                     self.send(Message::AttachPiece {
@@ -574,8 +638,9 @@ impl Session {
 
         let done = self.incoming.remove(&hash).expect("present above");
         self.attach_in_flight.remove(&hash);
-        if let Err(e) = repo.save_attachment(&hash, &done.mime, &done.bytes) {
-            warn_log!("[sync] saveAttachment({hash}) failed: {e}");
+        match repo.save_attachment(&hash, &done.mime, &done.bytes) {
+            Ok(()) => self.moved.images_received += 1,
+            Err(e) => warn_log!("[sync] saveAttachment({hash}) failed: {e}"),
         }
         self.attach_pump(now);
     }

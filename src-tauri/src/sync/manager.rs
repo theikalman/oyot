@@ -23,7 +23,7 @@ use super::events::{Events, PeerState};
 use super::frame::{self, Activity, ActivityReader};
 use super::protocol::Message;
 use super::repo::SqliteRepo;
-use super::session::{Out, Phase, Session};
+use super::session::{Moved, Out, Phase, Session};
 use super::tls;
 use crate::crypto::now_ms;
 use crate::network::peers::Peers;
@@ -32,9 +32,10 @@ use ed25519_dalek::SigningKey;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -165,6 +166,10 @@ struct Inner {
     ids: AtomicU64,
     /// Woken whenever a connection's state changes, for `run_once`.
     changed: Notify,
+    /// Whether new connections move images (ADR 0034, decision 4).
+    images: AtomicBool,
+    /// What every connection has moved, for a run's record.
+    moved: Mutex<Moved>,
 }
 
 /// Who a connection is with, as the pair table has them.
@@ -189,6 +194,11 @@ pub struct RunReport {
     /// Devices that got to synced both ways before the run ended.
     pub synced: Vec<String>,
     pub timed_out: bool,
+    /// Stopped from outside before it finished: the system took its time
+    /// back.
+    pub cancelled: bool,
+    /// What moved during the run, each way.
+    pub moved: Moved,
 }
 
 impl SyncManager {
@@ -209,12 +219,21 @@ impl SyncManager {
                 state: Mutex::new(State::default()),
                 ids: AtomicU64::new(1),
                 changed: Notify::new(),
+                images: AtomicBool::new(true),
+                moved: Mutex::new(Moved::default()),
             }),
         }
     }
 
     pub fn set_display_name(&self, name: &str) {
         *self.inner.me.display_name.lock() = name.to_string();
+    }
+
+    /// Whether connections made from now on move images, which a phone's
+    /// background run on mobile data does not (ADR 0034, decision 4).
+    #[cfg_attr(desktop, allow(dead_code))]
+    pub fn set_images(&self, allowed: bool) {
+        self.inner.images.store(allowed, Ordering::Relaxed);
     }
 
     /// Keep connections to every paired device this device can reach, and
@@ -390,9 +409,18 @@ impl SyncManager {
     /// dial every paired device there is a route to, wait until each is
     /// synced both ways and has no images left to fetch, or until `budget`
     /// runs out, then close them all. Never listens.
-    #[cfg_attr(desktop, allow(dead_code))]
+    #[cfg(test)]
     pub async fn run_once(&self, budget: Duration) -> RunReport {
+        self.run_until(budget, std::future::pending()).await
+    }
+
+    /// `run_once`, ended early when `stop` completes: the system taking its
+    /// time back. What finished before then stands (ADR 0034, decision 2).
+    #[cfg_attr(desktop, allow(dead_code))]
+    pub async fn run_until(&self, budget: Duration, stop: impl Future<Output = ()>) -> RunReport {
         let deadline = tokio::time::Instant::now() + budget;
+        let moved_before = *self.inner.moved.lock();
+        let mut stop = std::pin::pin!(stop);
         let targets: Vec<String> = self
             .inner
             .pairs()
@@ -442,14 +470,22 @@ impl SyncManager {
             if !dialling && done.len() == connected.len() {
                 break;
             }
-            if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                report.timed_out = true;
-                break;
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep_until(deadline) => {
+                    report.timed_out = true;
+                    break;
+                }
+                _ = &mut stop => {
+                    report.cancelled = true;
+                    break;
+                }
             }
         }
         for node_id in &targets {
             self.close(node_id);
         }
+        report.moved = self.inner.moved.lock().since(moved_before);
         report
     }
 }
@@ -872,7 +908,12 @@ async fn run<S>(
         inner.data_dir.clone(),
         inner.events.clone(),
     );
-    let mut session = Session::new();
+    let mut session = if inner.images.load(Ordering::Relaxed) {
+        Session::new()
+    } else {
+        Session::without_images()
+    };
+    let mut counted = Moved::default();
     let mut established = false;
 
     for out in session.start(&repo, now_ms()) {
@@ -887,7 +928,7 @@ async fn run<S>(
         for out in session.handle(&repo, msg, now_ms()) {
             apply(&inner, &peer, out, &send);
         }
-        update_progress_flags(&inner, &peer.node_id, conn_id, &session);
+        update_progress_flags(&inner, &peer.node_id, conn_id, &session, &mut counted);
     }
 
     loop {
@@ -918,7 +959,7 @@ async fn run<S>(
                 for out in session.handle(&repo, msg, now_ms()) {
                     apply(&inner, &peer, out, &send);
                 }
-                update_progress_flags(&inner, &peer.node_id, conn_id, &session);
+                update_progress_flags(&inner, &peer.node_id, conn_id, &session, &mut counted);
             }
             command = commands.recv() => match command {
                 Some(Cmd::Send(msg)) => send(msg),
@@ -926,7 +967,7 @@ async fn run<S>(
                     for out in session.request_attachment(hash, now_ms()) {
                         apply(&inner, &peer, out, &send);
                     }
-                    update_progress_flags(&inner, &peer.node_id, conn_id, &session);
+                    update_progress_flags(&inner, &peer.node_id, conn_id, &session, &mut counted);
                 }
                 Some(Cmd::Close) | None => break,
             },
@@ -934,7 +975,7 @@ async fn run<S>(
                 for out in session.tick(now_ms()) {
                     apply(&inner, &peer, out, &send);
                 }
-                update_progress_flags(&inner, &peer.node_id, conn_id, &session);
+                update_progress_flags(&inner, &peer.node_id, conn_id, &session, &mut counted);
                 if now_ms() - activity.last() > DEAD_AFTER_MS {
                     trace!("[sync] {}: nothing heard for a minute, dropping", peer.node_id);
                     break;
@@ -1024,7 +1065,18 @@ fn establish(
     true
 }
 
-fn update_progress_flags(inner: &Inner, node_id: &str, conn_id: u64, session: &Session) {
+fn update_progress_flags(
+    inner: &Inner,
+    node_id: &str,
+    conn_id: u64,
+    session: &Session,
+    counted: &mut Moved,
+) {
+    let moved = session.moved();
+    if moved != *counted {
+        inner.moved.lock().add(moved.since(*counted));
+        *counted = moved;
+    }
     let mut changed = false;
     {
         let mut state = inner.state.lock();
