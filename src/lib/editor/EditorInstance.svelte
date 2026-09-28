@@ -635,6 +635,15 @@
         background: var(--bg-secondary);
     }
 
+    /* No space above or below a cell's text. The space that sets one
+       paragraph apart from the next is only empty room in a table, and it
+       made a row of one line 76px tall where its text and padding take 44px.
+       Two paragraphs in one cell, from Enter while typing in it, read as two
+       lines, as in a list. */
+    .editor-content :global(:is(th, td) > p) {
+        margin: 0;
+    }
+
     /* An attachment whose bytes have not arrived from the other device yet.
        The placeholder is a transparent 1x1 pixel, which on its own is
        indistinguishable from nothing being there at all. */
