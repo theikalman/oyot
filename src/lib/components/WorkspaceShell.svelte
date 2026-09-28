@@ -2,6 +2,7 @@
     import type { Snippet } from 'svelte';
     import { isLoading } from '$lib/stores/app';
     import Sidebar, { isSmallScreen } from './Sidebar.svelte';
+    import PageTitle from './PageTitle.svelte';
     import SyncStatus from './SyncStatus.svelte';
 
     // The chrome every workspace route shares: the sidebar beside a titled
@@ -58,8 +59,10 @@
                     {/if}
                     {#if title}
                         <div class="page-heading">
-                            <h1 class="page-title">{title}</h1>
-                            {@render actions?.()}
+                            <PageTitle {title} />
+                            {#if actions}
+                                <div class="title-actions">{@render actions()}</div>
+                            {/if}
                         </div>
                     {/if}
                 </div>
@@ -102,9 +105,14 @@
         background: var(--bg-primary);
     }
 
+    /* Everything in the header lines up with the first line of the title,
+       in a row 32px high, rather than with the middle of however many lines
+       the title takes. Shown in full, a long title runs on down past its
+       buttons instead of taking them to its middle, so they stay where they
+       are while it opens and closes. */
     .sync-status-container {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         padding: 12px 16px;
         border-bottom: 1px solid var(--border-color);
@@ -113,16 +121,29 @@
 
     .page-start {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
         min-width: 0;
     }
 
     .page-heading {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
         min-width: 0;
+    }
+
+    .title-actions {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+    }
+
+    /* A journal has no pin, and an empty row would still take a gap. */
+    .title-actions:empty {
+        display: none;
     }
 
     /* The same size as the « beside the sidebar's search box, which puts the
@@ -165,17 +186,12 @@
         }
     }
 
-    .page-title {
-        margin: 0;
-        font-size: 24px;
-        color: var(--text-primary);
-    }
-
     .page-tools {
         display: flex;
         align-items: center;
         gap: 8px;
         flex-shrink: 0;
+        height: 32px;
     }
 
     .loading-overlay {
