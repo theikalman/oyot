@@ -37,6 +37,11 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Export.** Settings > Data writes every note out as a Markdown file, with
   the images they embed, in one zip. Nothing here is a format you can only
   read from inside Oyot.
+- **Import.** The Notes page, or Settings > Data, makes a note of each
+  Markdown file you pick. The title comes from the front matter, a heading at
+  the top or the file's name, `#tags` become tags, and links between files
+  imported together become links between their notes. An export imported back
+  gives back the notes it held.
 - **Help built in.** The ? at the bottom of the sidebar, Cmd/Ctrl+/ from
   anywhere, or Settings > Help, says what the calendar's dots and the other
   colors mean, lists every keyboard shortcut as your keyboard labels it, and

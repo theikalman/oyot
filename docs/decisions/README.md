@@ -39,6 +39,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0026](0026-scheduled-backups-run-while-the-app-is-open.md)        | Scheduled backups run while the app is open, and every attempt is recorded           | Proposed                                                                         |
 | [0027](0027-pin-notes-to-the-sidebar-and-sync-the-pin.md)          | Pin notes to the sidebar, and sync the pin like a title                              | Proposed                                                                         |
 | [0028](0028-open-documents-for-reading.md)                         | Open documents for reading, and make editing a choice                                | Proposed                                                                         |
+| [0029](0029-import-markdown-files-as-notes.md)                     | Import Markdown files as notes, read in Rust and built in the webview                | Proposed                                                                         |
 
 ## Format
 
