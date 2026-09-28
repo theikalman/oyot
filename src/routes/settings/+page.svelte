@@ -6,6 +6,7 @@
     import type { Theme } from '$lib/types';
     import { invoke } from '@tauri-apps/api/core';
     import { exportAllNotes } from '$lib/export';
+    import { runMarkdownImport } from '$lib/import';
     import {
         getBackupSchedule,
         getBackupStatus,
@@ -14,7 +15,7 @@
     } from '$lib/backup';
     import { formatLastSync } from '$lib/stores/sync';
     import { toasts } from '$lib/services/toast';
-    import { openHelp } from '$lib/services/navigation';
+    import { openDocument, openHelp, openNotes } from '$lib/services/navigation';
     import { onMount } from 'svelte';
 
     let currentTheme = $derived($theme);
@@ -109,6 +110,35 @@
             toasts.error(`Export failed: ${message(error)}`);
         } finally {
             exporting = false;
+        }
+    }
+
+    // The way back in for what Export writes out, and for Markdown from
+    // anywhere else. Where the notes went is not on this page, so the import
+    // ends there: on the one note, or on the Notes page with the rest.
+    let importing = $state(false);
+    let importProgress = $state<{ done: number; total: number } | null>(null);
+    let importLabel = $derived(
+        !importing
+            ? 'Import'
+            : importProgress && importProgress.total > 1
+              ? `Importing ${importProgress.done} of ${importProgress.total}…`
+              : 'Importing…',
+    );
+
+    async function handleImport() {
+        if (importing) return;
+        importing = true;
+        try {
+            const result = await runMarkdownImport((done, total) => {
+                importProgress = { done, total };
+            });
+            if (!result || result.notes.length === 0) return;
+            if (result.notes.length === 1) await openDocument(result.notes[0].id);
+            else await openNotes();
+        } finally {
+            importing = false;
+            importProgress = null;
         }
     }
 
@@ -215,6 +245,18 @@
                     {exporting ? 'Exporting…' : 'Export'}
                 </button>
             </div>
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-label">Import notes</span>
+                    <span class="setting-desc">
+                        Make a note of each Markdown file you pick, exported from Oyot or written
+                        anywhere else
+                    </span>
+                </div>
+                <button class="action-btn" onclick={handleImport} disabled={importing}>
+                    {importLabel}
+                </button>
+            </div>
         </div>
     </section>
 
@@ -279,7 +321,12 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 12px;
         padding: 16px;
+    }
+
+    .setting-row + .setting-row {
+        border-top: 1px solid var(--border-color);
     }
 
     .setting-info {

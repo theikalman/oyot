@@ -358,6 +358,12 @@
                         <strong>Export.</strong> Settings, under Data, saves every note as a Markdown
                         file, with its images, in one zip.
                     </li>
+                    <li>
+                        <strong>Import.</strong> The Notes page, or Settings under Data, makes a note
+                        of each Markdown file you pick. Its title comes from the file's front matter,
+                        a heading at the top, or the file's name, and a #word becomes a tag. Links between
+                        files imported together become links between their notes.
+                    </li>
                 </ul>
             </section>
 
