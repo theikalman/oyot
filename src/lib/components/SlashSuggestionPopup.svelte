@@ -18,12 +18,6 @@
         selectedIndex: Writable<number>;
         onCommand: (id: string) => void;
         /**
-         * What the user has typed to narrow the list, when the caller supports
-         * filtering. Shown above the results so there is some sign of what is
-         * being filtered by; the caret is still in the editor.
-         */
-        queryLabel?: Writable<string>;
-        /**
          * What to say when there are no rows. The default answers "did my
          * filter match anything"; a caller whose empty list means something
          * else (nothing to list yet, type to make one) says so instead.
@@ -31,13 +25,7 @@
         emptyLabel?: string;
     }
 
-    let {
-        items,
-        selectedIndex,
-        onCommand,
-        queryLabel,
-        emptyLabel = 'No results',
-    }: Props = $props();
+    let { items, selectedIndex, onCommand, emptyLabel = 'No results' }: Props = $props();
 
     let listElement: HTMLUListElement | undefined = $state();
 
@@ -50,9 +38,6 @@
 </script>
 
 <div class="suggestion-popup">
-    {#if queryLabel && $queryLabel}
-        <div class="suggestion-query">Filtering: {$queryLabel}</div>
-    {/if}
     {#if $items.length === 0}
         <div class="suggestion-empty">{emptyLabel}</div>
     {:else}
@@ -90,16 +75,6 @@
 </div>
 
 <style>
-    .suggestion-query {
-        padding: 6px 12px;
-        font-size: 12px;
-        color: var(--text-muted);
-        border-bottom: 1px solid var(--border-color);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
     /* Not positioned itself: the host it is mounted in is, and this sits in
        that host's flow, so a popup placed above the caret grows upwards from
        it. The host also says how tall and how wide it can be (see
