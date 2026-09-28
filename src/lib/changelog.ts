@@ -36,6 +36,26 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.25-alpha',
+        date: '2026-09-28',
+        summary:
+            'The Todos page has a search box that finds a task by the words in it, and the sidebar no longer marks a journal or a note as open once you have left it.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'The Todos page has a search box beside Hide completed. As you type, the list narrows to the tasks with every word you typed in them, in any order and whatever the case or the accents, so "cafe zoe" finds "Book a table at Café Zoë". Part of a word finds it too, so "#urg" finds a task tagged #urgent. The words it found are highlighted in each task, and the line above the list says how many tasks it found, as in "2 open of 3 matching". Hide completed still applies, and when a search finds only finished tasks the page says so, and how to see them. Escape empties the box.',
+            },
+            {
+                kind: 'improved',
+                text: 'Going back to the Todos page from a task you opened finds it as you left it, with the same search and the same Hide completed, so the next task is a click away instead of a search typed again. Opening Todos from the sidebar starts afresh, with an empty search and finished tasks hidden.',
+            },
+            {
+                kind: 'fixed',
+                text: "The calendar outlines a day only while its journal is open, and a pinned note is highlighted only while it is open. On the Notes, Journals, Todos and Tags pages and on Help, where nothing is open, the outline used to stay on the last journal opened, which after launch is today's, and a pinned note stayed highlighted after you left it for one of them.",
+            },
+        ],
+    },
+    {
         version: '0.0.24-alpha',
         date: '2026-09-28',
         summary:
