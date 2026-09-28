@@ -1,6 +1,6 @@
 {
   "name": "oyot",
-  "version": "0.0.23-alpha",
+  "version": "0.0.24-alpha",
   "description": "A local-first note-taking app that syncs directly between your own devices.",
   "type": "module",
   "scripts": {
