@@ -7,12 +7,16 @@ pub struct DevicePair {
     pub peer_display_name: String,
     pub room_id: String,
     pub last_synchronized: Option<i64>,
+    /// The user disconnected it: neither dialled nor let in until they
+    /// reconnect it (ADR 0032, decision 10).
+    #[serde(default)]
+    pub disconnected: bool,
 }
 
 pub fn load_pairs(db: &rusqlite::Connection, user_id: &str) -> Result<Vec<DevicePair>, String> {
     let mut stmt = db
         .prepare(
-            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized
+            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized, disconnected
              FROM device_pairs WHERE user_id = ? ORDER BY last_synchronized DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -24,6 +28,7 @@ pub fn load_pairs(db: &rusqlite::Connection, user_id: &str) -> Result<Vec<Device
                 peer_display_name: row.get(1)?,
                 room_id: row.get(2)?,
                 last_synchronized: row.get(3).ok(),
+                disconnected: row.get::<_, i64>(4).unwrap_or(0) != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -82,6 +87,37 @@ pub fn update_last_sync(db: &rusqlite::Connection, room_id: &str) -> Result<(), 
     Ok(())
 }
 
+/// Whether the user disconnected this device (ADR 0032, decision 10): it is
+/// neither dialled nor let in until they reconnect it.
+pub fn is_disconnected(
+    db: &rusqlite::Connection,
+    user_id: &str,
+    peer_node_id: &str,
+) -> Result<bool, String> {
+    let flag: Option<i64> = db
+        .query_row(
+            "SELECT disconnected FROM device_pairs WHERE user_id = ? AND peer_node_id = ?",
+            params![user_id, peer_node_id],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(flag == Some(1))
+}
+
+pub fn set_disconnected(
+    db: &rusqlite::Connection,
+    user_id: &str,
+    peer_node_id: &str,
+    disconnected: bool,
+) -> Result<(), String> {
+    db.execute(
+        "UPDATE device_pairs SET disconnected = ? WHERE user_id = ? AND peer_node_id = ?",
+        params![disconnected, user_id, peer_node_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn get_pair_by_node_id(
     db: &rusqlite::Connection,
     user_id: &str,
@@ -89,7 +125,7 @@ pub fn get_pair_by_node_id(
 ) -> Result<Option<DevicePair>, String> {
     let mut stmt = db
         .prepare(
-            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized
+            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized, disconnected
              FROM device_pairs WHERE user_id = ? AND peer_node_id = ?",
         )
         .map_err(|e| e.to_string())?;
@@ -100,6 +136,7 @@ pub fn get_pair_by_node_id(
                 peer_display_name: row.get(1)?,
                 room_id: row.get(2)?,
                 last_synchronized: row.get(3).ok(),
+                disconnected: row.get::<_, i64>(4).unwrap_or(0) != 0,
             })
         })
         .ok();
@@ -113,7 +150,7 @@ pub fn get_pair_by_room(
 ) -> Result<Option<DevicePair>, String> {
     let mut stmt = db
         .prepare(
-            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized
+            "SELECT peer_node_id, peer_display_name, room_id, last_synchronized, disconnected
              FROM device_pairs WHERE room_id = ?",
         )
         .map_err(|e| e.to_string())?;
@@ -124,6 +161,7 @@ pub fn get_pair_by_room(
                 peer_display_name: row.get(1)?,
                 room_id: row.get(2)?,
                 last_synchronized: row.get(3).ok(),
+                disconnected: row.get::<_, i64>(4).unwrap_or(0) != 0,
             })
         })
         .ok();

@@ -137,6 +137,7 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             peer_display_name TEXT NOT NULL,
             room_id TEXT NOT NULL,
             last_synchronized INTEGER,
+            disconnected INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, peer_node_id)
         );
 
@@ -219,7 +220,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -603,6 +604,25 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
              PRAGMA user_version = 13;",
         )
         .map_err(|e| format!("Migration v13 failed: {}", e))?;
+    }
+
+    // v14: "Disconnect" is stored (ADR 0032, decision 10). It used to last
+    // until the app restarted, and a phone's background runs start fresh
+    // processes, which would forget it within the hour.
+    if version < 14 {
+        // A database from before pairing has no table to add it to; the base
+        // schema creates one with the column.
+        let has_column = db
+            .prepare("SELECT disconnected FROM device_pairs LIMIT 0")
+            .is_ok();
+        if table_exists(db, "device_pairs") && !has_column {
+            db.execute_batch(
+                "ALTER TABLE device_pairs ADD COLUMN disconnected INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(|e| format!("Migration v14 failed: {}", e))?;
+        }
+        db.execute_batch("PRAGMA user_version = 14;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
     Ok(())
@@ -1533,6 +1553,28 @@ mod migration_tests {
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migrating_to_v14_keeps_every_pair_connected() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE device_pairs (
+                 user_id TEXT NOT NULL, peer_node_id TEXT NOT NULL,
+                 peer_display_name TEXT NOT NULL, room_id TEXT NOT NULL,
+                 last_synchronized INTEGER, PRIMARY KEY (user_id, peer_node_id));
+             INSERT INTO device_pairs VALUES ('u', 'n', 'Laptop', 'r', NULL);",
+        )
+        .unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("PRAGMA user_version = 13;").unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let disconnected: i64 = db
+            .query_row("SELECT disconnected FROM device_pairs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(disconnected, 0);
     }
 }

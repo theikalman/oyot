@@ -11,9 +11,11 @@
 //! - `repo`: the session's view of this device's database
 //! - `events`: what the engine tells the page, when there is one
 //! - `tls`: TLS 1.3 keyed by each device's node key
+//! - `manager`: the connections, their lifetimes, pairing and bounded runs
 
 pub mod events;
 pub mod frame;
+pub mod manager;
 pub mod protocol;
 pub mod reconcile;
 pub mod repo;

@@ -34,7 +34,7 @@ const MAX_PAIR_REQUEST_SENDERS: usize = 64;
 
 /// Whether a pairing prompt from `from` should be shown, given when that
 /// sender last raised one. Records the time when it allows.
-fn allow_pair_prompt(seen: &mut Vec<(String, i64)>, from: &str, now: i64) -> bool {
+pub(crate) fn allow_pair_prompt(seen: &mut Vec<(String, i64)>, from: &str, now: i64) -> bool {
     if let Some(entry) = seen.iter_mut().find(|(id, _)| id == from) {
         if now - entry.1 < PAIR_REQUEST_COOLDOWN_MS {
             return false;

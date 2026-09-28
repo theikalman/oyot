@@ -211,6 +211,9 @@ impl PeerTable {
 pub struct Peers {
     app: Option<AppHandle>,
     table: ParkingMutex<PeerTable>,
+    /// The node_id of every peer that became reachable, for the sync engine
+    /// to dial it (ADR 0032, decision 1).
+    found: tokio::sync::broadcast::Sender<String>,
 }
 
 impl Peers {
@@ -218,7 +221,13 @@ impl Peers {
         Self {
             app,
             table: ParkingMutex::new(PeerTable::default()),
+            found: tokio::sync::broadcast::channel(64).0,
         }
+    }
+
+    /// Hear about every peer that becomes reachable, by node_id.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.found.subscribe()
     }
 
     /// Record one sighting and tell the frontend if it is news.
@@ -280,6 +289,8 @@ impl Peers {
     }
 
     fn emit_found(&self, peer: &Peer) {
+        // Nobody listening is fine: the engine is not running.
+        let _ = self.found.send(peer.node_id.clone());
         if let Some(app) = &self.app {
             let _ = app.emit("peer-found", serde_json::json!(peer));
         }
