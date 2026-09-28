@@ -29,7 +29,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
   Each note shows what links back to it.
 - **Full-text search.** Searches the text of your notes and journals, not just
   their titles.
-- **Task lists.** Task items are counted per note and shown in the sidebar.
+- **Task lists.** Every task in every note and journal is on the Todos page,
+  under the note or day it belongs to. Its search finds a task by the words in
+  it, and a click opens the note right at that task.
 - **Peer-to-peer sync.** Pair two devices on one network and they reconcile
   their whole document set, including images, with no internet and no server
   anywhere in the middle. A device somewhere else is reached at an address you
