@@ -119,23 +119,26 @@ to connected devices. A save that failed or went missing is folded into the
 next one, because each delta is computed against what the store says it
 holds, not against the last thing the editor sent.
 
-**5. Merges reach the open document as events.** Rust keeps track of which
-documents the page has open, each as one registration. Whatever merges into an
-open document, Rust sends the update to the page, and the page applies it with
-`REMOTE_ORIGIN`, so the editor does not send it back. That includes a peer, an
-import, a tag rename, and an earlier editor for the same note. The only merge
-not sent back is one that came from that same registration.
+**5. Merges reach the open document as events.** Whatever Rust merges from a
+peer, it sends to the page as an event carrying what the merge added. The page
+applies it to the open copy, if there is one, with `REMOTE_ORIGIN`, so the
+editor does not save it again. Everything else that changes a document (a
+save, an import, a tag rename) starts in the page, which applies it to the
+open copy itself.
 
-Pushing only peers' updates would not be enough. Two commands from the page
-are not guaranteed to run in order, so the save from an editor being closed
-can land after the open from the editor replacing it, and that save would
-never reach the new editor.
+The page keeps the order. Every step it takes on one document runs in turn,
+through `writeQueue.ts`, and an event is handled as one of those steps:
 
-Opening a document reads its state and registers it as open in one step,
-under the document's lock. The editor then asks for anything newer than the
-state it was given, so an update that lands while the page is still setting
-up is not missed. A page that loads clears the registrations of the page it
-replaced.
+- **Opening a document** reads its state and registers the open copy in one
+  step. An update Rust merged after the read arrives as an event queued behind
+  it, and finds the copy registered. One merged before the read is already in
+  what was read.
+- **The save from an editor being closed** is queued ahead of the open from
+  the editor replacing it, so the new editor opens on it.
+
+Registrations kept in Rust, one per open document, would do the same ordering
+there. With one page and one editor per document, the queue already does it,
+so they were left out.
 
 **6. Every other write goes through Rust too.** These all end in a Rust command
 that also tells connected devices:
