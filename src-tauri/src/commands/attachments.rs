@@ -1,6 +1,6 @@
 use crate::db::AppState;
 use crate::indexer;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use tauri::Emitter;
 
@@ -88,6 +88,18 @@ fn store_attachment(
     bytes: &[u8],
     mime_type: &str,
 ) -> Result<StoredImage, String> {
+    store_attachment_at(&state.db, &state.data_dir, bytes, mime_type)
+}
+
+/// `store_attachment`, given the database and the data directory rather than
+/// the app's state, for the sync engine, which runs without Tauri on a phone's
+/// background run (ADR 0031, decision 8).
+pub(crate) fn store_attachment_at(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+    bytes: &[u8],
+    mime_type: &str,
+) -> Result<StoredImage, String> {
     if bytes.is_empty() {
         return Err("image is empty".to_string());
     }
@@ -114,14 +126,14 @@ fn store_attachment(
     let hash = sha256_hex(bytes);
     let filename = filename_for(&hash, mime_type)?;
 
-    let attachments_dir = state.data_dir.join("attachments");
+    let attachments_dir = data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     std::fs::write(attachments_dir.join(&filename), bytes).map_err(|e| e.to_string())?;
 
     let relative_path = format!("attachments/{filename}");
     let now = current_timestamp();
 
-    let db = state.db.lock();
+    let db = db.lock();
     db.execute(
         "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
         params![&hash, mime_type, &relative_path, now],
@@ -464,15 +476,22 @@ pub fn referenced_attachments(db: &Connection) -> Result<Vec<(String, String, St
 pub fn list_attachment_manifest(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<AttachmentManifestEntry>, String> {
+    attachment_manifest(&state.db, &state.data_dir)
+}
+
+/// Every referenced image this device holds in full, with its size.
+pub(crate) fn attachment_manifest(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+) -> Result<Vec<AttachmentManifestEntry>, String> {
     let rows = {
-        let db = state.db.lock();
+        let db = db.lock();
         referenced_attachments(&db)?
     };
 
     let mut out = Vec::new();
     for (hash, mime_type, local_path) in rows {
-        let size = state
-            .data_dir
+        let size = data_dir
             .join(&local_path)
             .metadata()
             .map(|m| m.len() as i64)
@@ -504,29 +523,50 @@ pub fn get_attachment_bytes(
 ) -> Result<Option<AttachmentBytesResponse>, String> {
     use base64::Engine;
 
-    let row: Option<(String, String)> = {
-        let db = state.db.lock();
-        db.query_row(
-            "SELECT mime_type, local_path FROM attachments \
-             WHERE hash = ? AND is_fully_downloaded = 1 AND local_path IS NOT NULL",
-            params![&hash],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .ok()
-    };
-
-    let Some((mime_type, relative_path)) = row else {
+    let Some((mime_type, bytes)) = read_attachment_bytes(&state.db, &state.data_dir, &hash)? else {
         return Ok(None);
     };
-
-    let full_path = state.data_dir.join(relative_path);
-    let bytes = std::fs::read(&full_path).map_err(|e| e.to_string())?;
-
     Ok(Some(AttachmentBytesResponse {
         hash,
         mime_type,
         data: base64::engine::general_purpose::STANDARD.encode(&bytes),
     }))
+}
+
+/// An image's type and bytes, when this device holds it in full.
+pub(crate) fn read_attachment_bytes(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+    hash: &str,
+) -> Result<Option<(String, Vec<u8>)>, String> {
+    let row: Option<(String, String)> = {
+        let db = db.lock();
+        db.query_row(
+            "SELECT mime_type, local_path FROM attachments \
+             WHERE hash = ? AND is_fully_downloaded = 1 AND local_path IS NOT NULL",
+            params![hash],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok()
+    };
+    let Some((mime_type, relative_path)) = row else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(data_dir.join(relative_path)).map_err(|e| e.to_string())?;
+    Ok(Some((mime_type, bytes)))
+}
+
+/// Whether this device holds an image in full.
+pub(crate) fn has_attachment(db: &Connection, hash: &str) -> Result<bool, String> {
+    let downloaded: Option<i64> = db
+        .query_row(
+            "SELECT is_fully_downloaded FROM attachments WHERE hash = ?",
+            params![hash],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(downloaded == Some(1))
 }
 
 #[derive(Clone, serde::Serialize)]

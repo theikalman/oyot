@@ -398,15 +398,26 @@ pub fn apply_remote_rename(
     title_updated_at: i64,
 ) -> Result<bool, String> {
     let db = state.db.lock();
+    apply_rename_if_newer(&db, &doc_id, &title, title_updated_at)
+}
+
+/// Last-writer-wins on `title_updated_at` (ADR 0003, decision 4). True when
+/// the title changed.
+pub fn apply_rename_if_newer(
+    db: &Connection,
+    doc_id: &str,
+    title: &str,
+    title_updated_at: i64,
+) -> Result<bool, String> {
     let changed = db
         .execute(
             "UPDATE documents SET title = ?1, title_updated_at = ?2 \
              WHERE id = ?3 AND (title_updated_at IS NULL OR title_updated_at < ?2)",
-            params![&title, title_updated_at, &doc_id],
+            params![title, title_updated_at, doc_id],
         )
         .map_err(|e| e.to_string())?;
     if changed > 0 {
-        indexer::update_document_title(&db, &doc_id, &title)?;
+        indexer::update_document_title(db, doc_id, title)?;
     }
     Ok(changed > 0)
 }

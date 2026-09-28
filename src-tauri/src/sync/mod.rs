@@ -8,8 +8,12 @@
 //! - `frame`: how a message is put on the wire
 //! - `reconcile`: what to do about one document, given another copy's word
 //! - `session`: one connection's share of the exchange, sans-IO
+//! - `repo`: the session's view of this device's database
+//! - `events`: what the engine tells the page, when there is one
 
+pub mod events;
 pub mod frame;
 pub mod protocol;
 pub mod reconcile;
+pub mod repo;
 pub mod session;
