@@ -5,6 +5,8 @@ mod backup;
 mod commands;
 mod crypto;
 mod db;
+#[cfg(desktop)]
+mod desktop;
 mod endpoints;
 mod identity;
 mod indexer;
@@ -587,9 +589,50 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// Build the main window from its entry in tauri.conf.json.
+///
+/// The entry says `"create": false` so it is built here rather than by Tauri,
+/// last in `setup()`: a start at login can then stay in the tray without the
+/// window flashing up first (ADR 0030, decision 7), and the page never loads
+/// before the state its commands read is managed.
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .ok_or("tauri.conf.json has no main window")?;
+    let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+
+    #[cfg(desktop)]
+    let builder = builder.visible(!desktop::launched_hidden());
+
+    // Keep a hidden page running on macOS 14 and later, where WebKit would
+    // otherwise suspend it. Needed until sync moves out of the page (ADR 0030,
+    // decision 8, and ADR 0031).
+    #[cfg(target_os = "macos")]
+    let builder =
+        builder.background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+
+    builder.build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    // One copy at a time, and it has to be the first plugin registered: a
+    // second launch shows the running copy instead (ADR 0030, decision 6).
+    #[cfg(desktop)]
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            desktop::show_main_window(app)
+        }));
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default();
+
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // Registered for its Rust API: a backup is written to, and read from,
@@ -604,6 +647,17 @@ pub fn run() {
         // Signing in to Google Drive on a phone (ADR 0025, decision 7).
         // Rust calls it; no capability lets the webview.
         .plugin(tauri_plugin_sign_in::init());
+
+    // Starting at login, opt-in and in the tray (ADR 0030, decision 7). Rust
+    // calls it; no capability lets the webview. A LaunchAgent rather than an
+    // AppleScript login item, because only a LaunchAgent passes `--hidden`.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![desktop::HIDDEN_FLAG]),
+        ))
+        .on_window_event(desktop::close::on_window_event);
 
     builder
         .setup(|app| {
@@ -638,6 +692,18 @@ pub fn run() {
             ));
             // After everything it reads is managed (ADR 0026).
             start_scheduler(app.handle().clone());
+
+            #[cfg(desktop)]
+            {
+                app.manage(desktop::close::CloseState::default());
+                desktop::tray::install(app.handle())?;
+                if desktop::launched_hidden() {
+                    desktop::started_hidden();
+                }
+            }
+
+            // Last, once everything the page's commands read is managed.
+            create_main_window(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -717,9 +783,23 @@ pub fn run() {
             set_backup_schedule,
             choose_backup_folder,
             dismiss_backup_suggestion,
+            get_desktop_settings,
+            set_keep_running,
+            set_start_at_login,
+            answer_close_notice,
+            close_acknowledged,
+            finish_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // Clicking the Dock icon of an Oyot hidden to the menu bar brings
+            // its window back (ADR 0030, decision 3).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                desktop::show_main_window(_app);
+            }
+        });
 }
 
 #[cfg(test)]

@@ -2,7 +2,6 @@
     import { log } from '$lib/log';
     import { onMount, onDestroy } from 'svelte';
     import { listen } from '@tauri-apps/api/event';
-    import { getCurrentWindow } from '@tauri-apps/api/window';
     import { currentDocument } from '$lib/stores/app';
     import type { Editor as EditorType } from '@tiptap/core';
     import { Toolbar } from '$lib/editor';
@@ -15,6 +14,7 @@
         type EditorSaveService,
     } from './EditorSaveService';
     import { extractDocumentIndex } from './documentIndex';
+    import { registerPendingSave } from './pendingSaves';
     import * as Y from 'yjs';
 
     interface Props {
@@ -36,7 +36,14 @@
     // document changes what other documents' panels show, and this one's too if
     // the save also removed a link.
     let indexRevision = $state(0);
-    let unlistenCloseRequested: (() => void) | null = null;
+
+    // Closing the window saves through the layout, which flushes every
+    // editor registered here (ADR 0030, decision 5). The editor used to listen
+    // for the close itself, and that listener is what made Tauri destroy the
+    // window once it returned, even when Rust only meant to hide it.
+    const unregisterPendingSave = registerPendingSave(() =>
+        saveService?.hasPendingWrite() ? saveService.flushNow() : null,
+    );
 
     function handleEditorReady(editor: EditorType, doc: Y.Doc) {
         editorInstance = editor;
@@ -101,8 +108,8 @@
         }
     }
 
-    // Both Tauri listeners are registered asynchronously, so a component
-    // destroyed before they resolve would have had nothing to unregister and
+    // The Tauri listener is registered asynchronously, so a component
+    // destroyed before it resolves would have had nothing to unregister and
     // would have leaked a handler holding a stale editor. That happens
     // whenever the open document is deleted.
     let destroyed = false;
@@ -110,18 +117,6 @@
     onMount(async () => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('pagehide', handleVisibilityChange);
-
-        try {
-            const unlisten = await getCurrentWindow().onCloseRequested(() => {
-                if (saveService?.hasPendingWrite()) void saveService.flushNow();
-            });
-            if (destroyed) unlisten();
-            else unlistenCloseRequested = unlisten;
-        } catch (e) {
-            // Not running under Tauri (unit tests, browser preview): the
-            // visibilitychange and pagehide listeners above still cover it.
-            console.warn('[Editor] window close listener unavailable:', e);
-        }
 
         // A peer's edit is applied straight into the open document by the
         // sync layer, so there is nothing to fetch here and nothing to apply.
@@ -143,7 +138,7 @@
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('pagehide', handleVisibilityChange);
         unlistenSyncEvent?.();
-        unlistenCloseRequested?.();
+        unregisterPendingSave();
         if (saveService) {
             saveService.destroy();
         }

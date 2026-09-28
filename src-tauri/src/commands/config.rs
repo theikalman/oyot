@@ -26,6 +26,33 @@ fn write_config(app: &tauri::AppHandle, json: serde_json::Value) -> Result<(), S
     std::fs::write(config_path, json.to_string()).map_err(|e| e.to_string())
 }
 
+/// A yes-or-no preference, or `default` when it was never set.
+///
+/// Only the desktop's own preferences are flags so far (ADR 0030).
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn read_flag(app: &tauri::AppHandle, key: &str, default: bool) -> bool {
+    flag(&read_config(app), key, default)
+}
+
+#[cfg_attr(mobile, allow(dead_code))]
+pub(crate) fn write_flag(app: &tauri::AppHandle, key: &str, value: bool) -> Result<(), String> {
+    let mut json = read_config(app);
+    // A file holding something other than an object would make the assignment
+    // below panic; it has nothing worth keeping, so it starts again.
+    if !json.is_object() {
+        json = serde_json::Value::Object(Default::default());
+    }
+    json[key] = serde_json::json!(value);
+    write_config(app, json)
+}
+
+/// `key` read as a boolean. Missing, or anything that is not a boolean, is
+/// `default`: a hand-edited file should not change a behaviour by accident.
+#[cfg_attr(mobile, allow(dead_code))]
+fn flag(json: &serde_json::Value, key: &str, default: bool) -> bool {
+    json.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
 /// The stored theme, or `None` when the user has never chosen one.
 ///
 /// Defaulting to "light" here made "never chosen" and "chose light"
@@ -48,4 +75,35 @@ pub fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
     let mut json = read_config(&app);
     json["theme"] = serde_json::json!(theme);
     write_config(&app, json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flag;
+    use serde_json::json;
+
+    #[test]
+    fn a_missing_flag_reads_as_its_default() {
+        assert!(flag(&json!({}), "keep_running_on_close", true));
+        assert!(!flag(&json!({}), "close_notice_seen", false));
+    }
+
+    #[test]
+    fn a_stored_flag_wins_over_the_default() {
+        let config = json!({ "keep_running_on_close": false, "close_notice_seen": true });
+        assert!(!flag(&config, "keep_running_on_close", true));
+        assert!(flag(&config, "close_notice_seen", false));
+    }
+
+    #[test]
+    fn a_flag_that_is_not_a_boolean_reads_as_its_default() {
+        let config = json!({ "keep_running_on_close": "no", "close_notice_seen": 1 });
+        assert!(flag(&config, "keep_running_on_close", true));
+        assert!(!flag(&config, "close_notice_seen", false));
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_object_reads_as_defaults() {
+        assert!(flag(&json!([]), "keep_running_on_close", true));
+    }
 }

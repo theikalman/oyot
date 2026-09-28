@@ -336,8 +336,8 @@
 
             <p class="note">
                 {#if schedule.foldersSupported}
-                    Scheduled backups run while Oyot is open. One that was missed runs a few minutes
-                    after Oyot next opens.
+                    Scheduled backups run while Oyot is running, in the tray too. One that was
+                    missed runs a few minutes after Oyot next starts.
                 {:else}
                     Scheduled backups only run while Oyot is open on screen. One that was missed
                     runs a few minutes after Oyot is next opened.

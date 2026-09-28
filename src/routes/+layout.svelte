@@ -11,7 +11,9 @@
     import { watchScheduledBackups } from '$lib/backup';
     import { isHelpShortcut } from '$lib/help/helpShortcut';
     import { openHelp } from '$lib/services/navigation';
+    import { watchCloseRequests } from '$lib/desktop';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
+    import CloseNoticeDialog from '$lib/components/CloseNoticeDialog.svelte';
     import '../app.css';
 
     let { children }: { children: Snippet } = $props();
@@ -23,6 +25,11 @@
     // flashed the loading overlay, and put the user back on the journal
     // instead of the note they had been reading.
     let stopWatchingBackups: (() => void) | null = null;
+    let stopWatchingCloses: (() => void) | null = null;
+
+    // Set while the first-close notice is up: the function its buttons answer
+    // with.
+    let answerCloseNotice = $state<((keepRunning: boolean) => void) | null>(null);
 
     onMount(() => {
         initSync();
@@ -30,11 +37,23 @@
         // Here for the same reason: a failing backup schedule should be
         // heard of wherever the user is, not only on the settings page.
         stopWatchingBackups = watchScheduledBackups();
+        // And closing the window, which has to save the open note whatever
+        // page it is on (ADR 0030, decision 5). Only a desktop sends these.
+        stopWatchingCloses = watchCloseRequests(
+            () =>
+                new Promise<boolean>((resolve) => {
+                    answerCloseNotice = (keepRunning) => {
+                        answerCloseNotice = null;
+                        resolve(keepRunning);
+                    };
+                }),
+        );
     });
 
     onDestroy(() => {
         shutdownSync();
         stopWatchingBackups?.();
+        stopWatchingCloses?.();
     });
 
     // Every route, so the toggle on the settings page has a visible effect.
@@ -125,6 +144,10 @@
 {@render children()}
 
 <ToastContainer />
+
+{#if answerCloseNotice}
+    <CloseNoticeDialog onAnswer={answerCloseNotice} />
+{/if}
 
 <style>
     .app-header {
