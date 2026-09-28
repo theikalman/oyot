@@ -58,6 +58,30 @@ describe('prepareNote: the title', () => {
         expect(note.body.trim()).toBe('# This week\n\nmilk');
     });
 
+    // Older exports wrote the title into its heading unescaped.
+    it('takes out a heading that repeats the title as it was written', () => {
+        const note = prepared('---\ntitle: "Plan *draft*"\n---\n\n# Plan *draft*\n\nwords');
+        expect(note.title).toBe('Plan *draft*');
+        expect(note.body.trim()).toBe('words');
+    });
+
+    // A heading that became the title is gone from the note, and its tags
+    // would go with it.
+    it('keeps the tags of a heading that became the title', () => {
+        const note = prepared('# Meeting #work\n\nnotes');
+        expect(note.title).toBe('Meeting #work');
+        expect(note.tags).toEqual(['work']);
+        expect(content('# Meeting #work\n\nnotes')).toEqual([
+            { type: 'paragraph', content: [tag('work')] },
+            { type: 'paragraph', content: [text('notes')] },
+        ]);
+    });
+
+    // The exporter writes that heading from the title, which is plain words.
+    it('takes no tags from a heading that only repeats the title', () => {
+        expect(prepared('---\ntitle: "Trip #travel"\n---\n\n# Trip #travel\n').tags).toEqual([]);
+    });
+
     it('reads a heading with markup in it as plain words', () => {
         expect(prepared('# Trip to *Kyoto*\n').title).toBe('Trip to Kyoto');
     });
@@ -169,6 +193,25 @@ describe('the round trip through the exporter', () => {
                 ],
             },
         ]);
+    });
+
+    // Titles are plain words, and each of these is Markdown too.
+    it('brings back a title that reads as Markdown, with no heading left over', () => {
+        for (const title of [
+            'Use `git rebase`',
+            'Plan *draft*',
+            '__init__.py notes',
+            'Issue #',
+            'Q&amp;A',
+        ]) {
+            const exported = renderNote(
+                { id: 'x', title, docType: 'note', createdAt: 0, updatedAt: 0, tags: [] },
+                'words',
+            );
+            const note = prepared(exported, 'file.md');
+            expect(note.title).toBe(title);
+            expect(note.body.trim()).toBe('words');
+        }
     });
 
     it('brings back an untitled note as Untitled', () => {

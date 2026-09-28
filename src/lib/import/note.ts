@@ -1,8 +1,10 @@
 import type { Node as ProseMirrorNode, Schema } from '@tiptap/pm/model';
+import { extractDocumentIndex } from '$lib/editor/documentIndex';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 import { splitFrontMatter, type FrontMatterValue } from './frontMatter';
 import {
     leadingHeading,
+    oneLine,
     readMarkdown,
     type MarkdownDocument,
     type MarkdownReadOptions,
@@ -49,6 +51,11 @@ export interface PreparedNote {
  * both), comes out of the body: a note shows its title above its content, and
  * would otherwise open with its own name twice. A heading that says something
  * else is the note's own, and stays.
+ *
+ * A heading that became the title keeps its tags, which join the front
+ * matter's at the top of the note, since the heading itself is gone. One that
+ * only repeats the front matter's title gives none: that heading was written
+ * from the title, which is plain words.
  */
 export function prepareNote(file: MarkdownFile): PreparedNote {
     const text = file.text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
@@ -57,13 +64,18 @@ export function prepareNote(file: MarkdownFile): PreparedNote {
     const tags = tagsOf(valueOf(values, 'tags') ?? valueOf(values, 'tag'));
 
     const heading = leadingHeading(body, tags);
-    if (heading?.text && (!given || sameTitle(heading.text, given))) {
+    if (heading?.text && !given) {
         return {
             name: file.name,
-            title: given || heading.text,
+            title: heading.text,
             body: withoutLines(body, heading.lines),
-            tags,
+            tags: [...new Set([...tags, ...heading.tags])],
         };
+    }
+    // Compared as read and as written: an older export wrote the title into
+    // its heading unescaped, so `Plan *draft*` came back as emphasis.
+    if (heading && (sameTitle(heading.text, given) || sameTitle(heading.source, given))) {
+        return { name: file.name, title: given, body: withoutLines(body, heading.lines), tags };
     }
     return {
         name: file.name,
@@ -102,10 +114,9 @@ export function titleFromFileName(name: string): string {
 }
 
 function withTags(doc: ProseMirrorNode, tags: string[], schema: Schema): ProseMirrorNode {
-    const carried = new Set<string>();
-    doc.descendants((node) => {
-        if (node.type.name === TAG_NODE_NAME) carried.add(String(node.attrs.name ?? ''));
-    });
+    // Read the way the indexer reads them, which is also how the exporter
+    // decided which tags to list: the three cannot disagree about a chip.
+    const carried = new Set(extractDocumentIndex(doc).tags);
     const missing = tags.filter((name) => !carried.has(name));
     if (missing.length === 0) return doc;
 
@@ -165,8 +176,4 @@ function withoutLines(text: string, [from, to]: [number, number]): string {
     const lines = text.split('\n');
     lines.splice(from, to - from);
     return lines.join('\n');
-}
-
-function oneLine(text: string): string {
-    return text.replace(/\s+/g, ' ').trim();
 }
