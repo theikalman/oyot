@@ -161,9 +161,16 @@
     // Named in the tooltip, the way the Edit button names its own.
     const helpHint = `Help and keyboard shortcuts (${shortcutLabel(HELP_KEYS)})`;
 
-    let currentDocId = $derived($appStore.currentDocument?.id);
+    // The document on screen, which is not always the store's open document.
+    // The store keeps the last one after the user leaves it for an index
+    // page, so coming back to it needs no second load. Taken from the store
+    // alone, the calendar went on outlining that journal's day, or the pinned
+    // list lighting that note, on the Notes or Todos page, with no document
+    // on screen at all.
+    let shownDocument = $derived(page.route.id === '/doc/[id]' ? $appStore.currentDocument : null);
+    let currentDocId = $derived(shownDocument?.id);
     let currentJournalTitle = $derived(
-        $appStore.currentDocument?.doc_type === 'journal' ? $appStore.currentDocument.title : null,
+        shownDocument?.doc_type === 'journal' ? shownDocument.title : null,
     );
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     // What the journal index will list, which is not quite every journal row:
