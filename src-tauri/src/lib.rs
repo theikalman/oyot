@@ -697,6 +697,7 @@ pub fn run() {
             {
                 app.manage(desktop::close::CloseState::default());
                 desktop::tray::install(app.handle())?;
+                desktop::watcher::start(app.handle().clone());
                 if desktop::launched_hidden() {
                     desktop::started_hidden();
                 }

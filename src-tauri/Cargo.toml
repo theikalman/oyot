@@ -100,6 +100,9 @@ keyring = "4"
 # moving Tauri is a change of its own.
 tauri-plugin-single-instance = "~2.4.5"
 tauri-plugin-autostart = "~2.5.1"
+# Noticing a network change, by the interface addresses changing. Already in
+# the tree through mdns-sd.
+if-addrs = "0.15"
 
 # Opting a hidden Oyot out of App Nap (ADR 0030, decision 8). Both are already
 # in the tree through the window toolkit.

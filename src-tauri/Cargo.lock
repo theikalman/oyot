@@ -2889,6 +2889,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hostname",
+ "if-addrs",
  "keyring",
  "keyring-core",
  "mdns-sd",

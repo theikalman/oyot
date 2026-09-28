@@ -1177,6 +1177,15 @@ async function setupEventListeners(): Promise<void> {
         },
     );
 
+    // The machine woke from sleep, or its network changed (ADR 0030, decision
+    // 9). A connection that went quiet through either is gone or about to be,
+    // and waiting for its own timeout would leave the peer unsynced for the
+    // length of it. Rust has already asked the stored addresses to answer.
+    const unlistenNetworkChanged = await listen<string>('network-changed', (event) => {
+        log.debug(`[sync] event: network-changed (${event.payload})`);
+        void reconnectAllPairedDevices(`network-changed:${event.payload}`);
+    });
+
     cleanupFns = [
         unlistenPairRequest,
         unlistenPairResponse,
@@ -1186,6 +1195,7 @@ async function setupEventListeners(): Promise<void> {
         unlistenLanStatus,
         unlistenPeerFound,
         unlistenPeerLost,
+        unlistenNetworkChanged,
     ];
     log.debug('[sync] Event listeners registered');
 }

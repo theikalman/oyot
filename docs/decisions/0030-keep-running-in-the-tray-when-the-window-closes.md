@@ -96,11 +96,14 @@ going on macOS 14 and later until ADR 0031 makes that unnecessary.
 
 **9. Waking up and changing networks start a reconnect.** Tauri reports
 neither on desktop, and a WebRTC connection that went quiet for 30 seconds is
-gone by the time the machine wakes. A Rust task notices both: sleep, as the
-wall clock jumping further between two of its ticks than the tick itself, and
-network changes, as interface changes reported by `if-watch`. It probes the
-stored addresses at once and tells the page to run its reconnect sweep. Once
-ADR 0031 moves the engine into Rust, it tells the engine instead.
+gone by the time the machine wakes. A Rust task looks every ten seconds and
+notices both: sleep, as the wall clock jumping further between two of its
+ticks than the tick itself, and network changes, as this machine's interface
+addresses changing. `if-addrs` lists those, and is already in the tree through
+mdns-sd, where `if-watch` would have been a new dependency with a different
+backend on each OS. The task probes the stored addresses at once and tells the
+page to run its reconnect sweep. Once ADR 0031 moves the engine into Rust, it
+tells the engine instead.
 
 **10. The plugins match the Tauri in the tree.** autostart 2.5.1 and
 single-instance 2.4.5 are the last releases that work with Tauri 2.11; the

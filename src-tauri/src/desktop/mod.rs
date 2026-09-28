@@ -9,6 +9,7 @@
 mod app_nap;
 pub mod close;
 pub mod tray;
+pub mod watcher;
 
 use tauri::{AppHandle, Manager};
 
