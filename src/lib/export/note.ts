@@ -1,3 +1,5 @@
+import { escapeInline, headingText } from './markdown';
+
 /**
  * One exported file: what the app knows about a note, then the note.
  *
@@ -55,7 +57,9 @@ export function renderNote(meta: NoteMetadata, body: string): string {
 
     // The title again, as a heading. Front matter is metadata, and a reader
     // with a plain Markdown viewer should still see what the note is called.
-    lines.push(`# ${meta.title || 'Untitled'}`, '');
+    // Escaped like any other text: a title is plain words, and `Plan *draft*`
+    // or `Issue #` read as Markdown would be something else.
+    lines.push(`# ${headingText(escapeInline(meta.title || 'Untitled'))}`, '');
 
     const trimmed = body.trim();
     // The blank line after the heading is what keeps the first block of the

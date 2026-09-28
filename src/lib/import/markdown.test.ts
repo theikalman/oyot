@@ -629,4 +629,58 @@ describe('the round trip through the exporter', () => {
         const { doc } = readMarkdown(markdown, schema, importOptions);
         expect(serializeDocument(doc, exportOptions)).toBe(markdown);
     });
+
+    // Words that look like Markdown, which the exporter has to escape for
+    // them to come back as the words they are.
+    it('brings back words that look like Markdown as words', () => {
+        const hardBreakThen = (line: string) =>
+            para(text('buy'), { type: 'hardBreak' }, text(line));
+        const words = schema.nodeFromJSON({
+            type: 'doc',
+            content: [
+                para(text('1. not a step')),
+                para(text('## not a heading')),
+                para(text('---')),
+                para(text('    four leading spaces')),
+                para(text('paint it #ff0000, reply to (#support), in C#')),
+                para(text('call __init__ with _care_ and ~~this~~, AT&amp;T')),
+                {
+                    type: 'taskList',
+                    content: [
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: false },
+                            content: [hardBreakThen('- milk')],
+                        },
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: true },
+                            content: [hardBreakThen('===')],
+                        },
+                        {
+                            type: 'taskItem',
+                            attrs: { checked: false },
+                            content: [
+                                para(),
+                                {
+                                    type: 'taskList',
+                                    content: [
+                                        {
+                                            type: 'taskItem',
+                                            attrs: { checked: true },
+                                            content: [para(text('subtask'))],
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+                { type: 'heading', attrs: { level: 2 }, content: [text('Issue #')] },
+            ],
+        });
+        const markdown = serializeDocument(words, exportOptions);
+        const { doc } = readMarkdown(markdown, schema, importOptions);
+        expect(doc.toJSON()).toEqual(words.toJSON());
+    });
 });

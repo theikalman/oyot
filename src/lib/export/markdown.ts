@@ -58,11 +58,13 @@ function block(node: ProseMirrorNode, options: MarkdownOptions): string | null {
     switch (node.type.name) {
         case 'paragraph': {
             const text = inline(node, options);
-            return text ? escapeBlockStart(text) : '';
+            // Every line, not only the first: after a hard break a line opens a
+            // block as readily as a paragraph's first line does.
+            return text ? text.split('\n').map(escapeLineStart).join('\n') : '';
         }
         case 'heading': {
             const level = Math.min(Math.max(Number(node.attrs.level) || 1, 1), 6);
-            return `${'#'.repeat(level)} ${inline(node, options)}`;
+            return `${'#'.repeat(level)} ${headingText(inline(node, options))}`;
         }
         case 'blockquote':
             return prefixLines(blocks(node, options), '> ');
@@ -112,11 +114,33 @@ function list(node: ProseMirrorNode, options: MarkdownOptions): string {
         // item. For a task that is after the bullet, not after the checkbox:
         // `[ ]` is the start of the item's words to a Markdown reader, and
         // four spaces more than that is an indented code block.
-        const width = ordered ? marker.length : BULLET_MARKER.length;
-        items.push(marker + indentContinuation(content, ' '.repeat(width)));
+        const indent = ' '.repeat(ordered ? marker.length : BULLET_MARKER.length);
+
+        // A task with no words, only what is nested under it: the checkbox
+        // stands on a line of its own. Beside it, the first nested block
+        // would be read as the task's words, `-   [ ] -   train`.
+        if (item.type.name === 'taskItem' && !opensWithWords(item, options)) {
+            const nested = content ? `\n\n${indentLines(content, indent)}` : '';
+            items.push(marker.trimEnd() + nested);
+            return;
+        }
+        items.push(marker + indentContinuation(content, indent));
     });
 
     return items.join('\n');
+}
+
+/** Whether an item's first block is a paragraph with something in it. */
+function opensWithWords(item: ProseMirrorNode, options: MarkdownOptions): boolean {
+    const first = item.firstChild;
+    return first?.type.name === 'paragraph' && inline(first, options).trim().length > 0;
+}
+
+function indentLines(text: string, indent: string): string {
+    return text
+        .split('\n')
+        .map((line) => (line.length === 0 ? line : indent + line))
+        .join('\n');
 }
 
 function itemMarker(item: ProseMirrorNode): string {
@@ -298,26 +322,74 @@ function inlineCode(text: string): string {
     return `${fence}${pad}${text}${pad}${fence}`;
 }
 
+/** What a `#name` tag is made of, as the importer reads one. */
+const TAG_START = /#(?=[\p{L}\p{M}\p{N}_\-/])/gu;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
 /**
  * Characters that would otherwise be read as markup.
  *
- * Deliberately not `_`: intra-word underscores are not emphasis in CommonMark,
- * and escaping them turns every `snake_case` identifier in a note into
- * `snake\_case` for a reader who does not render the file.
+ * Each of these is text in the note, and a reader would take it for
+ * something else: emphasis, code, a link, HTML, a tag chip (`#word`, since a
+ * chip is written that way), strikethrough (`~~`), or a character reference
+ * (`&amp;`, which a reader turns into `&`).
+ *
+ * An underscore is escaped only where it could open or close emphasis.
+ * Between two letters or digits it cannot, and escaping it there would turn
+ * every `snake_case` identifier in a note into `snake\_case` for a reader who
+ * does not render the file.
  */
-function escapeInline(text: string): string {
-    return text.replace(/([\\`*[\]<>])/g, '\\$1');
+export function escapeInline(text: string): string {
+    return (
+        text
+            // First, so the backslashes the passes below add are not escaped.
+            .replace(/([\\`*[\]<>])/g, '\\$1')
+            .replace(TAG_START, '\\#')
+            .replace(/~{2,}/g, (run) => run.replace(/~/g, '\\~'))
+            .replace(/&(?=#?[a-z0-9]+;)/gi, '\\&')
+            .replace(/_+/g, (run: string, at: number, whole: string) => {
+                const inWord =
+                    WORD_CHAR.test(whole[at - 1] ?? '') &&
+                    WORD_CHAR.test(whole[at + run.length] ?? '');
+                return inWord ? run : run.replace(/_/g, '\\_');
+            })
+    );
 }
 
 /**
- * A line that would be read as the start of a block, when it is meant as
- * prose: a paragraph that happens to begin "1. " or "- " or "#".
+ * The start of a line that would open a block, when it is meant as prose: a
+ * paragraph line that happens to begin "1. ", "- ", "#", "---" or "===", or
+ * with spaces a reader would drop, four of which make a code block.
+ *
+ * `*`, `>`, `~~~` and a backtick fence need nothing here: `escapeInline` has
+ * already escaped them wherever they are.
  */
-function escapeBlockStart(text: string): string {
-    return text.replace(
-        /^(\s*)([#>|+-]|\d+[.)])(?=\s|$)/,
-        (_m, lead, marker) => `${lead}\\${marker}`,
+function escapeLineStart(line: string): string {
+    // Nothing but the spaces of a hard break, which have to stay spaces.
+    if (/^[ \t]*$/.test(line)) return line;
+    // A character reference is kept and does not count as indentation, so the
+    // first space or tab becomes one and the rest stay as they are.
+    if (line.startsWith(' ')) return `&#32;${line.slice(1)}`;
+    if (line.startsWith('\t')) return `&#9;${line.slice(1)}`;
+    // A rule, or the underline that makes the line above it a heading.
+    if (/^([-=])(?:[ \t]*\1)*[ \t]*$/.test(line)) return `\\${line}`;
+    return (
+        line
+            // A heading, a table row or a bullet.
+            .replace(/^(#{1,6}|[|+-])(?=[ \t]|$)/, '\\$1')
+            // An ordered item. The escape goes before the `.` or `)`: a
+            // backslash before a digit is not an escape, and stays in the text.
+            .replace(/^(\d{1,9})([.)])(?=[ \t]|$)/, '$1\\$2')
     );
+}
+
+/**
+ * A heading's words, which run to the end of their line: a hard break cannot
+ * be written inside one, and `#`s at its end would be read as the heading's
+ * closing sequence and dropped.
+ */
+export function headingText(text: string): string {
+    return text.replace(/ {2}\n/g, ' ').replace(/(^|[ \t])(#+)[ \t]*$/, '$1\\$2');
 }
 
 /**
