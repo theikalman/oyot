@@ -40,6 +40,11 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0027](0027-pin-notes-to-the-sidebar-and-sync-the-pin.md)          | Pin notes to the sidebar, and sync the pin like a title                              | Proposed                                                                         |
 | [0028](0028-open-documents-for-reading.md)                         | Open documents for reading, and make editing a choice                                | Proposed                                                                         |
 | [0029](0029-import-markdown-files-as-notes.md)                     | Import Markdown files as notes, read in Rust and built in the webview                | Proposed                                                                         |
+| [0030](0030-keep-running-in-the-tray-when-the-window-closes.md)    | Keep Oyot running in the tray when its window is closed                              | Proposed                                                                         |
+| [0031](0031-move-the-sync-engine-into-rust.md)                     | Move the sync engine into Rust, and make the webview its client                      | Proposed                                                                         |
+| [0032](0032-sync-over-one-tls-connection-per-device-pair.md)       | Sync over one TLS connection per device pair, not WebRTC                             | Proposed                                                                         |
+| [0033](0033-hash-what-a-document-holds-not-how-it-is-encoded.md)   | Hash what a document holds, not how it is encoded                                    | Proposed                                                                         |
+| [0034](0034-phones-sync-in-the-background-by-dialling-out.md)      | Phones sync in the background by dialling out on a schedule                          | Proposed                                                                         |
 
 ## Format
 
