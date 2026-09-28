@@ -1,20 +1,28 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as Y from 'yjs';
 
-// Every command the repository calls, recorded rather than performed. `state`
-// stands in for the `crdt_state` column.
+// Every command the repository calls, recorded rather than performed.
+// `storedState` stands in for the `crdt_state` column, which Rust merges each
+// saved update into (ADR 0031, decision 3).
 const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
 let storedState = '';
 let onSave: (() => void) | null = null;
+
+const fromB64 = (b64: string) => new Uint8Array(Buffer.from(b64, 'base64'));
+const toB64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
 
 vi.mock('@tauri-apps/api/core', () => ({
     invoke: async (cmd: string, args: Record<string, unknown>) => {
         calls.push({ cmd, args });
         if (cmd === 'get_yjs_state') return { doc_id: args.docId, state: storedState };
         if (cmd === 'save_yjs_update') {
-            storedState = args.mergedState as string;
+            const update = fromB64(args.update as string);
+            const merged = storedState ? Y.mergeUpdates([fromB64(storedState), update]) : update;
+            storedState = toB64(merged);
             onSave?.();
-            return undefined;
+            const doc = new Y.Doc();
+            Y.applyUpdate(doc, merged);
+            return { state_vector: toB64(Y.encodeStateVector(doc)) };
         }
         return undefined;
     },
@@ -81,8 +89,7 @@ describe('DocumentRepository', () => {
         expect(live.getText('content').toString()).toBe('hello world');
         expect(calls.some((c) => c.cmd === 'get_yjs_state')).toBe(false);
 
-        const saved = calls.find((c) => c.cmd === 'save_yjs_update');
-        expect(textOfB64(saved?.args.mergedState as string)).toBe('hello world');
+        expect(textOfB64(storedState)).toBe('hello world');
 
         unregisterOpenDoc('doc', live);
     });
@@ -99,7 +106,7 @@ describe('DocumentRepository', () => {
         // Saved as the device's own change, so no editor is told to reload.
         expect(saved?.args.origin).toBe('local');
         const merged = new Y.Doc();
-        Y.applyUpdate(merged, base64ToBytes(saved?.args.mergedState as string));
+        Y.applyUpdate(merged, base64ToBytes(storedState));
         const text = merged.getXmlFragment('content').toString();
         expect(text).toContain('typed while it ran');
         expect(text).toContain('imported');
@@ -219,6 +226,26 @@ describe('DocumentRepository', () => {
 
         const saved = calls.find((c) => c.cmd === 'save_yjs_update');
         expect((saved?.args.index as { text: string } | null)?.text).toBe('from a peer');
+        unregisterOpenDoc('doc', live);
+    });
+
+    // ADR 0031, decision 4: once the store has said what it holds, a save
+    // carries only what it is missing, not the whole note every time.
+    it('sends only what the store is missing once it knows what it holds', async () => {
+        const repo = new DocumentRepository();
+        const live = docWith('hello');
+        registerOpenDoc('doc', live);
+
+        await repo.saveLocalUpdate('doc', Y.encodeStateAsUpdate(live));
+        live.getText('content').insert(5, ' world');
+        await repo.saveLocalUpdate('doc', Y.encodeStateAsUpdate(live));
+
+        const saves = calls.filter((c) => c.cmd === 'save_yjs_update');
+        const second = new Y.Doc();
+        Y.applyUpdate(second, base64ToBytes(saves[1].args.update as string));
+        // Only " world", which cannot even be placed without "hello".
+        expect(second.getText('content').toString()).toBe('');
+        expect(textOfB64(storedState)).toBe('hello world');
         unregisterOpenDoc('doc', live);
     });
 

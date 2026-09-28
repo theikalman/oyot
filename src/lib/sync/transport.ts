@@ -1005,9 +1005,6 @@ export async function initSync(): Promise<void> {
 
         await setupEventListeners();
 
-        // One-time hash backfill for rows written before the hashing code existed.
-        void repo.backfillHashes().catch((e) => console.warn('[sync] hash backfill failed:', e));
-
         await startSignaling();
 
         await finishInit();

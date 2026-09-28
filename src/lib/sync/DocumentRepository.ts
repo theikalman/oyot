@@ -8,7 +8,6 @@ import { bumpIndexRevision } from '../stores/derivedIndex';
 import { getOpenDoc, registerOpenDoc } from '../editor/openDocs';
 import { REMOTE_ORIGIN } from '../editor/origin';
 import { renameTagInDoc } from '../tags/renameInDoc';
-import { contentHash } from './hash';
 import { createWriteQueue } from './writeQueue';
 import {
     base64ToBytes,
@@ -96,17 +95,49 @@ function toSummary(doc: Document): DocumentSummary {
     };
 }
 
+// What `save_yjs_update` hands back: the stored state vector after the merge,
+// base64, or empty when there was no live row to save into.
+interface SavedState {
+    state_vector: string;
+}
+
 // The single boundary between the sync protocol and (Tauri commands + Yjs). All
-// CRDT diffing/merging and every document mutation the sync layer performs goes
+// CRDT diffing and every document mutation the sync layer performs goes
 // through here, and the in-memory document store is kept in step so the sidebar
-// reflects a converging set live.
+// reflects a converging set live. Rust merges what is saved into the stored
+// state and hashes it (ADR 0031, decision 3; ADR 0033).
 export class DocumentRepository {
-    // Writes to one document are serialised. Both write paths below are
-    // read-modify-write over a column that `save_yjs_update` overwrites
-    // outright, and the data channel hands us messages without waiting for the
-    // previous one to finish, so without this two updates to the same document
-    // both start from the same base and one of them is silently dropped.
+    // Work on one document is serialised. Rust merges rather than overwrites,
+    // so a write can no longer erase another, but the steps the page takes
+    // around a write still have to happen in order: opening a document reads
+    // its state and registers it in one step, and a merge reads the index
+    // from the copy it just changed.
     private write = createWriteQueue();
+
+    // The stored state vector each document had after its last save here, so
+    // the editor's next save carries only what the store is missing (ADR 0031,
+    // decision 4). A save computed against one that has since moved on sends
+    // a little more than it needs to, never less.
+    private storedStateVectors = new Map<string, Uint8Array>();
+
+    private async save(
+        docId: string,
+        update: Uint8Array,
+        origin: 'local' | 'remote',
+        index: DocumentIndex | null,
+    ): Promise<void> {
+        const saved = await invoke<SavedState | undefined>('save_yjs_update', {
+            docId,
+            update: bytesToBase64(update),
+            origin,
+            index,
+        });
+        if (saved?.state_vector) {
+            this.storedStateVectors.set(docId, base64ToBytes(saved.state_vector));
+        } else {
+            this.storedStateVectors.delete(docId);
+        }
+    }
 
     // --- reads -------------------------------------------------------------
 
@@ -197,31 +228,22 @@ export class DocumentRepository {
             const indexer = await loadRemoteIndexer();
 
             const live = getOpenDoc(docId);
-            let merged: Uint8Array;
             let index: DocumentIndex | null;
             if (live) {
-                // No await between the lookup and the encode: both calls are
+                // No await between the lookup and the apply: both are
                 // synchronous, so the editor cannot swap the document out from
                 // under this merge.
                 Y.applyUpdate(live, updateBytes, REMOTE_ORIGIN);
-                merged = Y.encodeStateAsUpdate(live);
                 index = readIndex(indexer, live);
             } else {
+                // Loaded only to read the index from. The stored state is
+                // Rust's to merge into.
                 const current = await this.loadDoc(docId);
                 Y.applyUpdate(current, updateBytes);
-                merged = Y.encodeStateAsUpdate(current);
                 index = readIndex(indexer, current);
                 current.destroy();
             }
-            const hash = await contentHash(merged);
-            await invoke('save_yjs_update', {
-                docId,
-                update: bytesToBase64(updateBytes),
-                mergedState: bytesToBase64(merged),
-                contentHash: bytesToBase64(hash),
-                origin,
-                index,
-            });
+            await this.save(docId, updateBytes, origin, index);
             if (refresh) {
                 appStore.markDocumentHasContent(docId);
                 if (index) {
@@ -251,23 +273,16 @@ export class DocumentRepository {
         return this.write(docId, async () => {
             // `mergedState` was encoded by the caller before it queued, so a
             // merge that ran while it waited is missing from it. Fold it back
-            // into the live document and re-encode, and the write is the union
-            // of both rather than whichever copy was encoded last.
+            // into the live document, so the editor's copy is the union of
+            // both, and send what the store does not have yet.
             const live = getOpenDoc(docId);
-            let state = mergedState;
+            let update = mergedState;
             if (live) {
                 Y.applyUpdate(live, mergedState, REMOTE_ORIGIN);
-                state = Y.encodeStateAsUpdate(live);
+                const stored = this.storedStateVectors.get(docId);
+                update = stored ? Y.encodeStateAsUpdate(live, stored) : Y.encodeStateAsUpdate(live);
             }
-            const hash = await contentHash(state);
-            await invoke('save_yjs_update', {
-                docId,
-                update: bytesToBase64(state),
-                mergedState: bytesToBase64(state),
-                contentHash: bytesToBase64(hash),
-                origin: 'local',
-                index: index ?? null,
-            });
+            await this.save(docId, update, 'local', index ?? null);
             if (index) bumpIndexRevision();
         });
     }
@@ -319,19 +334,10 @@ export class DocumentRepository {
             // has the note already needs one attribute, and sending the whole
             // thing would undo nothing but cost everything.
             const delta = Y.encodeStateAsUpdate(current, before);
-            const merged = Y.encodeStateAsUpdate(current);
             const index = readIndex(indexer, current);
             current.destroy();
 
-            const hash = await contentHash(merged);
-            await invoke('save_yjs_update', {
-                docId,
-                update: bytesToBase64(delta),
-                mergedState: bytesToBase64(merged),
-                contentHash: bytesToBase64(hash),
-                origin: 'local',
-                index,
-            });
+            await this.save(docId, delta, 'local', index);
             bumpIndexRevision();
             return { changed, broadcast: bytesToBase64(delta) };
         });
@@ -488,26 +494,5 @@ export class DocumentRepository {
             }
         }
         return done;
-    }
-
-    // Backfill content hashes for rows written before the hashing code existed.
-    // Cheap, idempotent, runs once off the critical path after an upgrade.
-    async backfillHashes(): Promise<void> {
-        const rows = await this.listSyncState();
-        for (const row of rows) {
-            if (row.isDeleted || row.contentHash) continue;
-            try {
-                const ydoc = await this.loadDoc(row.id);
-                const state = Y.encodeStateAsUpdate(ydoc);
-                if (state.length <= EMPTY_UPDATE_LEN) continue;
-                const hash = await contentHash(state);
-                await invoke('set_content_hash', {
-                    docId: row.id,
-                    contentHash: bytesToBase64(hash),
-                });
-            } catch (e) {
-                console.warn(`[sync] hash backfill failed for ${row.id}:`, e);
-            }
-        }
     }
 }

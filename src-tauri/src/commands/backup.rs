@@ -541,7 +541,7 @@ pub async fn open_local_backup(
 pub(super) fn start_session(
     state: &AppState,
     backup: &BackupState,
-    reader: BackupReader,
+    mut reader: BackupReader,
     staged: StagedFile,
 ) -> Result<BackupPreview, String> {
     let held = {
@@ -549,7 +549,7 @@ pub(super) fn start_session(
         held_attachments(&db, &state.data_dir)?
     };
     let session_id = uuid::Uuid::new_v4().to_string();
-    let preview = match preview_of(&reader, &held, &session_id) {
+    let preview = match preview_of(&mut reader, &held, &session_id) {
         Ok(preview) => preview,
         Err(e) => {
             // The reader first, then the file it holds open.
@@ -585,22 +585,34 @@ fn copy_in(app: &AppHandle, source: &FilePath, staged: &Path) -> Result<(), Stri
 }
 
 fn preview_of(
-    reader: &BackupReader,
+    reader: &mut BackupReader,
     held: &std::collections::HashSet<String>,
     session_id: &str,
 ) -> Result<BackupPreview, String> {
-    let manifest = reader.manifest();
-    let documents = reader
-        .documents()
+    let empty_hash = crate::crdt::encode_hash(&crate::crdt::empty_hash());
+    let backed_up = reader.documents().to_vec();
+    let documents = backed_up
         .iter()
         .map(|doc| {
-            // The manifest's checksum of the state is the content hash; the
-            // sync layer spells it in base64.
-            let content_hash = reader
-                .content_hash(&doc.id)
-                .map(|hex| hex::decode(hex).map(|bytes| BASE64.encode(bytes)))
-                .transpose()
-                .map_err(|e| format!("this backup is damaged: {e}"))?;
+            // Hashed the way this device hashes its own documents (ADR 0033),
+            // so an unchanged note compares equal. The manifest's checksum of
+            // the state file is a hash of its bytes, which no longer matches.
+            let content_hash = if doc.is_deleted {
+                None
+            } else {
+                match reader.read_state(&doc.id)? {
+                    None => Some(empty_hash.clone()),
+                    Some(state) => match crate::crdt::hash_state(&state) {
+                        Ok(hash) => hash.map(|h| crate::crdt::encode_hash(&h)),
+                        Err(e) => {
+                            // Unknown, so the import exchanges it rather than
+                            // skipping it as unchanged.
+                            warn_log!("[backup] could not hash {} from the backup: {e}", doc.id);
+                            None
+                        }
+                    },
+                }
+            };
             Ok(DocSyncEntry {
                 id: doc.id.clone(),
                 doc_type: doc.doc_type.clone(),
@@ -618,6 +630,7 @@ fn preview_of(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let manifest = reader.manifest();
     let new_attachment_count = reader
         .attachment_hashes()
         .iter()

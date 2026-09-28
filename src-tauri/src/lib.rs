@@ -3,9 +3,6 @@ mod logging;
 
 mod backup;
 mod commands;
-// Nothing merges through it until `save_yjs_update` does, in the next change
-// (ADR 0031, decision 3).
-#[allow(dead_code)]
 mod crdt;
 mod crypto;
 mod db;
@@ -218,7 +215,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -590,6 +587,20 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v13: the content hash covers what a document holds, not its encoded
+    // bytes, and Rust computes it (ADR 0033). The old hashes match nothing
+    // the new ones can, so they are cleared, and `rehash_documents` rebuilds
+    // them after startup, one row at a time. Rebuilding them here would mean
+    // decoding every document inside this transaction, and one document yrs
+    // cannot read would stop the app from starting at all.
+    if version < 13 {
+        db.execute_batch(
+            "UPDATE documents SET content_hash = NULL;
+             PRAGMA user_version = 13;",
+        )
+        .map_err(|e| format!("Migration v13 failed: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -697,6 +708,13 @@ pub fn run() {
             // After everything it reads is managed (ADR 0026).
             start_scheduler(app.handle().clone());
 
+            // Hashes the v13 migration cleared, and any a failed read left
+            // out, rebuilt off the startup path (ADR 0033, decision 5).
+            let db = app.state::<AppState>().db.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::commands::sync::rehash_documents(&db)
+            });
+
             #[cfg(desktop)]
             {
                 app.manage(desktop::close::CloseState::default());
@@ -745,7 +763,6 @@ pub fn run() {
             save_attachment_bytes,
             get_yjs_state,
             save_yjs_update,
-            set_content_hash,
             get_identity,
             set_display_name,
             list_paired_devices,
@@ -1484,5 +1501,34 @@ mod migration_tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migrating_to_v13_clears_the_old_hashes_and_keeps_the_content() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents (id, type, title, crdt_state, content_hash, created_at, updated_at)
+             VALUES ('d1', 'note', 'n', x'0102', x'aa', 0, 0)",
+            [],
+        )
+        .unwrap();
+        db.execute_batch("PRAGMA user_version = 12;").unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let (state, hash): (Vec<u8>, Option<Vec<u8>>) = db
+            .query_row(
+                "SELECT crdt_state, content_hash FROM documents WHERE id = 'd1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, vec![1, 2]);
+        assert_eq!(hash, None);
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 13);
     }
 }

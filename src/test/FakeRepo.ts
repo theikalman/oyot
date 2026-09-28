@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { bytesToBase64, base64ToBytes, type ManifestEntry } from '$lib/sync/protocol';
-import { contentHashBase64 } from '$lib/sync/hash';
+import { contentDigest } from './contentDigest';
 
 // A DocumentRepository stand-in backed by real Y.Docs. Mirrors the semantics
 // the protocol relies on (deterministic update encoding, empty-update sentinel,
@@ -69,7 +69,6 @@ export class FakeRepo {
     async listSyncState(): Promise<ManifestEntry[]> {
         const out: ManifestEntry[] = [];
         for (const [id, d] of this.docs) {
-            const state = Y.encodeStateAsUpdate(d.ydoc);
             out.push({
                 id,
                 docType: d.docType,
@@ -81,7 +80,8 @@ export class FakeRepo {
                 lifecycleUpdatedAt: d.lifecycleUpdatedAt,
                 pinned: d.pinned,
                 pinnedUpdatedAt: d.pinnedUpdatedAt,
-                contentHash: state.length <= 2 ? null : await contentHashBase64(state),
+                // As Rust reports it: an empty document has a hash too (ADR 0033).
+                contentHash: contentDigest(d.ydoc),
             });
         }
         return out;

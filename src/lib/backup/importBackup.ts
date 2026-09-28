@@ -1,5 +1,5 @@
 import { reconcile, type Reconciliation } from '$lib/sync/reconcile';
-import { pinStamp, type ManifestEntry } from '$lib/sync/protocol';
+import { EMPTY_CONTENT_HASH, pinStamp, type ManifestEntry } from '$lib/sync/protocol';
 
 /**
  * Importing a backup: merging it into this library the way a peer's manifest
@@ -97,9 +97,11 @@ export function planImport(backup: ManifestEntry[], local: ManifestEntry[]): Imp
 
 function decide(entry: ManifestEntry, local: ManifestEntry | undefined): ImportStep {
     const decision = reconcile(entry, local);
-    // A backup names a document's content by its hash, and names none when it
-    // holds none: there is nothing to merge for a document nobody typed in.
-    const hasContent = entry.contentHash !== null;
+    // Nothing to merge for a document nobody typed in, which the backup's
+    // hash says (ADR 0033, decision 4). A missing hash is an unknown, not an
+    // empty document: its content is merged, and a backup with no state for it
+    // simply has nothing to give.
+    const hasContent = entry.contentHash !== EMPTY_CONTENT_HASH;
     const step = (outcome: ImportOutcome, merge = false, d: ImportDecision = decision) => ({
         entry,
         local,

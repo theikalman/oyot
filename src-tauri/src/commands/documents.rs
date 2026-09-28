@@ -194,13 +194,19 @@ pub struct DocSyncEntry {
 // rename). Unlike get_all_documents this is not scoped to the sidebar and does
 // not filter out content-less or deleted rows.
 // See docs/decisions/0003-full-document-set-sync.md.
+//
+// A live document with no content reports the empty document's hash rather
+// than none (ADR 0033, decision 4). None means "unknown, exchange", so every
+// empty journal used to be exchanged again on every connection.
 pub fn query_sync_state(db: &Connection) -> Result<Vec<DocSyncEntry>, String> {
+    let empty_hash = crate::crdt::encode_hash(&crate::crdt::empty_hash());
     let mut stmt = db
         .prepare(
             "SELECT id, type, title, created_at, updated_at, \
                     COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
                     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
-                    content_hash, pinned, pinned_updated_at \
+                    content_hash, pinned, pinned_updated_at, \
+                    crdt_state IS NULL OR length(crdt_state) <= 2 \
              FROM documents",
         )
         .map_err(|e| e.to_string())?;
@@ -209,6 +215,12 @@ pub fn query_sync_state(db: &Connection) -> Result<Vec<DocSyncEntry>, String> {
         .query_map([], |row| {
             let is_deleted_int: i64 = row.get(6)?;
             let pinned_int: i64 = row.get(10)?;
+            let no_content: bool = row.get(12)?;
+            let content_hash = match row.get::<_, Option<Vec<u8>>>(9)? {
+                Some(hash) => Some(BASE64.encode(hash)),
+                None if no_content && is_deleted_int == 0 => Some(empty_hash.clone()),
+                None => None,
+            };
             Ok(DocSyncEntry {
                 id: row.get(0)?,
                 doc_type: row.get(1)?,
@@ -221,7 +233,7 @@ pub fn query_sync_state(db: &Connection) -> Result<Vec<DocSyncEntry>, String> {
                 lifecycle_updated_at: row.get(8)?,
                 pinned: pinned_int != 0,
                 pinned_updated_at: row.get(11)?,
-                content_hash: row.get::<_, Option<Vec<u8>>>(9)?.map(|h| BASE64.encode(h)),
+                content_hash,
             })
         })
         .map_err(|e| e.to_string())?
@@ -2064,6 +2076,29 @@ mod tests {
         assert_eq!(entry("d2").pinned_updated_at, Some(900));
         assert!(!entry("d1").pinned);
         assert_eq!(entry("d1").pinned_updated_at, None);
+    }
+
+    // An empty note used to report no hash, which reads as "unknown", so every
+    // empty journal was exchanged again on every connection (ADR 0033).
+    #[test]
+    fn an_empty_document_carries_the_empty_hash_and_a_tombstone_none() {
+        let db = db();
+        add_doc(&db, "empty", "journal", "2026-09-28", 20);
+        add_doc(&db, "full", "note", "Full", 30);
+        db.execute(
+            "UPDATE documents SET crdt_state = x'0102030405', content_hash = x'aabb' WHERE id = 'full'",
+            [],
+        )
+        .unwrap();
+        add_doc(&db, "gone", "note", "Gone", 40);
+        tombstone_document(&db, "gone", 50).unwrap();
+
+        let entries = query_sync_state(&db).unwrap();
+        let entry = |id: &str| entries.iter().find(|e| e.id == id).unwrap();
+        let empty = crate::crdt::encode_hash(&crate::crdt::empty_hash());
+        assert_eq!(entry("empty").content_hash.as_deref(), Some(empty.as_str()));
+        assert_eq!(entry("full").content_hash.as_deref(), Some("qrs="));
+        assert_eq!(entry("gone").content_hash, None);
     }
 
     fn peer_entry(id: &str, pinned: bool, stamp: Option<i64>) -> EnsureDocumentRequest {
