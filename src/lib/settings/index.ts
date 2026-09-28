@@ -1,5 +1,6 @@
 export { default as IdentityCard } from './IdentityCard.svelte';
 export { default as LocalNetworkStatus } from './LocalNetworkStatus.svelte';
+export { default as BackgroundSyncCard } from './BackgroundSyncCard.svelte';
 export { default as PairDeviceForm } from './PairDeviceForm.svelte';
 export { default as PeerAddresses } from './PeerAddresses.svelte';
 export { default as UnpairedAddressList } from './UnpairedAddressList.svelte';

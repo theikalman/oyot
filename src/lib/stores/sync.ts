@@ -266,11 +266,9 @@ export const aggregateSyncPhase = derived(syncStore, ($s): RoomSyncPhase => {
     return order.find((p) => active.includes(p)) ?? 'synced';
 });
 
-export function formatLastSync(timestamp: number | null): string {
+export function formatLastSync(timestamp: number | null, now: number = Date.now()): string {
     if (!timestamp) return 'Never';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
+    const diffMs = now - timestamp;
     const diffMins = Math.floor(diffMs / 60000);
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;

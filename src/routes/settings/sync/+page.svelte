@@ -33,6 +33,7 @@
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
     import { LocalNetworkStatus } from '$lib/settings';
+    import { BackgroundSyncCard } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
     import { UnpairedAddressList } from '$lib/settings';
@@ -253,6 +254,8 @@
         anyStoredAddress={endpoints.length > 0}
         onCheckAddresses={handleCheckAddresses}
     />
+
+    <BackgroundSyncCard />
 
     <PairDeviceForm
         pairingState={pairState}
