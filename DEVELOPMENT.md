@@ -180,43 +180,52 @@ downloaded backup is checked exactly as a file from disk is. See
 cannot reach anything else.
 
 **The CSP allows only self and the IPC origin.** No remote script, style, or
-connection. Signaling is done from Rust and is not subject to it.
+connection. Sync runs in Rust and is not subject to it.
 
-**Signaling is authenticated end to end.** A device's `node_id` is its Ed25519
-public key, and every signaling message carries a timestamp, a nonce and a
-signature over all of its fields. `src-tauri/src/crypto.rs` holds the format and
-the verifier; every message is checked on arrival before anything reads the
-payload. The transport is therefore untrusted infrastructure: it carries
-messages it cannot forge, alter or replay. That is what let the broker be
-deleted without renegotiating anything about the envelope. See
-[ADR 0009](docs/decisions/0009-authenticated-signaling.md) and
-[ADR 0022](docs/decisions/0022-drop-the-broker-and-sync-only-on-the-local-network.md).
+**Sync connections are TLS 1.3, keyed by each device's node key.** A
+device's `node_id` is its Ed25519 public key, and a sync connection is TLS 1.3
+with raw public keys (RFC 7250): each side presents that key, so there are no
+certificates, no authorities and nothing to renew. The dialler checks that the
+key is the device it meant to reach. The listener lets an unknown key finish
+the handshake, since that is how pairing starts, and checks every handshake's
+key against `device_pairs` itself, not only in the verifier. Session
+resumption is off on both sides, because a resumed session skips the key
+check and would let a removed device back in. `src-tauri/src/sync/tls.rs`
+holds all of it. See
+[ADR 0032](docs/decisions/0032-sync-over-one-tls-connection-per-device-pair.md).
 
-The signature answers "is this really that device". Whether we want to talk to
-that device is still the pairing check against `device_pairs`, and both must
-pass.
+The key answers "is this really that device". Whether we want to talk to it is
+the pairing check, and both must pass. A device the user disconnected is
+refused until they reconnect it, and that is stored, so it outlasts a restart.
+
+**Probes are signed.** The only signaling left is the probe that proves a
+device is at a stored address: a `ping` and its `pong`, each carrying a
+timestamp, a nonce and a signature over all of its fields.
+`src-tauri/src/crypto.rs` holds the format and the verifier; a message is
+checked on arrival before anything reads the payload. See
+[ADR 0009](docs/decisions/0009-authenticated-signaling.md).
 
 Replay history is per sender, bounded at 32 senders and 256 nonces each. It
 was one shared list, which meant anyone holding any keypair could push enough
 valid messages to evict a real peer's history and replay one of its messages
 inside the 120 second window. Filling the sender map still takes 32 distinct
-keypairs, and the prize is one replayed signaling message, which the pairing
-check and perfect negotiation both absorb.
+keypairs, and the prize is one replayed probe, whose answer says only what the
+address already said.
 
-**Every route is untrusted, including the VPN.** The verifier and its replay
-history live on the `SignalingManager` rather than on any one route, so a
-message captured off the local network cannot be replayed in over a stored
-address inside the 120 second window. An envelope arriving over Tailscale is
-admitted on exactly the evidence one arriving over wifi is: right recipient,
-valid signature, recent, unseen nonce. Being on the tailnet is not a
-credential, and the app never treats it as one.
+**Every route is untrusted, including the VPN.** A connection arriving over
+Tailscale is admitted on exactly the evidence one arriving over wifi is: the
+key it presents, checked against the pair table. Being on the tailnet is not a
+credential, and the app never treats it as one. The probe verifier and its
+replay history live on the `SignalingManager` rather than on any one route, so
+a probe captured off the local network cannot be replayed in over a stored
+address inside the 120 second window.
 
 What the local network exposes: the mDNS TXT record carries this device's
-`node_id`, an id for this run of the process and a version, and deliberately
-not the device name, so joining a café network does not announce "Aji's
-laptop" to everyone on it. The envelope is signed but not encrypted, so anyone
-on the network can read the SDP inside. Note content travels inside WebRTC's
-DTLS and never appears there.
+`node_id`, an id for this run of the process and the sync protocol's version,
+and deliberately not the device name, so joining a café network does not
+announce "Aji's laptop" to everyone on it. A probe is signed but not
+encrypted, and carries only a run id and the protocol version. Everything
+else, pairing included, travels inside TLS and never appears on the network.
 
 The `node_id` is stable and is now broadcast on every network the device
 joins, which is a tracking vector that did not exist before: someone present
@@ -225,33 +234,30 @@ Advertising a hash of the id and the hour instead would stay recognisable to
 paired peers, who can compute it for each peer they know, and mean nothing to
 anyone else. Not done, and worth doing before this is on by default on mobile.
 
-The listener accepts a connection from anyone on the network, so it caps the
-frame size before allocating, times out a connection that does not deliver,
-and rate limits arrivals per source address. What it does not do is answer
-differently for a paired device than for a stranger, so it does not leak who
-this device is paired with.
+The listener accepts a connection from anyone on the network, so it caps a
+probe's frame size before allocating, times out a connection that does not
+deliver, drops a TLS handshake that has not finished in ten seconds, and rate
+limits arrivals per source address, handshakes included. An unpaired device
+that completes a handshake may send one pair request and nothing else.
 
-A pairing prompt from one sender is rate limited to one per 30 seconds.
-Anyone on the network can reach the listener, and a valid request puts a modal
-in front of the user, so without this an unpaired device could make the app
+A pairing prompt from one device is rate limited to one per 30 seconds.
+Anyone on the network can reach the listener, and a request puts a prompt in
+front of the user, so without this an unpaired device could make the app
 unusable by asking repeatedly.
 
-A `ping` is answered for any correctly signed and correctly addressed sender,
-paired or not, because an address is how an unpaired device is reached in the
-first place (ADR 0023). The reply discloses that this node is at this address,
-to someone who already knew its `node_id` and could already reach the port.
-Rewriting an obfuscated ICE candidate also discloses one of this device's own
-addresses to the peer it is negotiating with, which is strictly less than the
-mDNS advertisement gives away to everyone on a café network.
+A `ping` is answered for any correctly signed and correctly addressed sender
+on this protocol version, paired or not, because an address is how an unpaired
+device is reached in the first place (ADR 0023). The reply discloses that this
+node is at this address, to someone who already knew its `node_id` and could
+already reach the port.
 
-**Pairing is decided in the webview, not in Rust.** `save_pair` persists any
-`peer_node_id` the frontend gives it, and `signaling_accept_pair_request` takes
-the peer's `user_id` from the frontend too. Rust checks that a message really came
-from the key it claims; it does not own the state machine that decides a
-pairing was agreed. That is a real gap between this section's framing and the
-code: everything above treats the webview as untrusted, and this one decision
-trusts it. Closing it means moving the pair-request exchange into Rust, which
-has not been done.
+**Pairing is decided in Rust.** The request travels inside TLS, and the
+answer goes back on the same connection, which then carries on as the pair's
+sync connection. Rust keeps the request it raised the prompt for, so accepting
+names only the device: who it says it is comes from the request, never from
+the page, and Rust records the pair on both sides itself. It used to be the
+webview's call, which was the one place this model trusted the page (ADR 0032,
+decision 5).
 
 The secret key lives in the app database rather than the OS keychain. Anything
 that can read it can already read the notes, so this is coherent rather than
@@ -260,18 +266,23 @@ ideal; moving it is tracked as follow-up work in the ADR.
 ## How a device is found
 
 There are two ways, and only two. Everything after being found is the same
-WebRTC data channel and the same document protocol either way, which is what
-[ADR 0018](docs/decisions/0018-local-network-sync-as-a-second-signaling-transport.md)
-was careful to arrange when the local network was one transport of two.
+TLS connection and the same sync protocol either way.
 
 `network/peers.rs` is where both answers land: one table, each entry tagged
 with the source that found it, and `best()` preferring the local one when a
 device is reachable both ways. `lan_discovery.rs` fills it from mDNS.
-`remote_peers.rs` fills it by probing stored addresses.
-`lan_signaling.rs` listens on 19701 where it can, and carries the signed
-envelope from `message.rs`, one message per connection - except a `ping`,
-which is answered on the same connection because there is nowhere else to send
-the answer.
+`remote_peers.rs` fills it by probing stored addresses. A device appearing in
+it is what the sync engine (`src-tauri/src/sync/manager.rs`) dials.
+`lan_signaling.rs` listens on 19701 where it can, and reads the first byte of
+each connection: a TLS handshake goes to the sync engine, and anything else is
+a signed probe from `message.rs`, answered on the same connection.
+
+The engine runs in Rust for the life of the process, with or without a window
+(ADR 0031). It keeps one connection per paired device, dialled by whichever
+device can reach the other, redials a dropped one on a backoff from one to
+thirty seconds, and drops a connection that has heard nothing for a minute.
+The page only shows what it is doing and asks for what the user does
+(`src/lib/sync/client.ts`).
 
 A device that neither finds nor has an address is not reachable at all. There
 is no queue and no deferred delivery: the peer reads as offline, and pairing
@@ -279,9 +290,14 @@ with it refuses with a sentence saying why.
 
 ### Trying it
 
-You need two devices. Two instances on one machine will not do: they share an
-app data directory, so they share an identity, and a device ignores its own
-advertisement.
+You need two devices, or two copies of a build that do not share anything:
+two instances started normally share an app data directory, so they share an
+identity, and a device ignores its own advertisement. On a Mac, a second
+build with another identifier (`npx tauri build --debug --no-bundle --config
+'{"identifier":"com.ajiyakin.oyot.test"}'`), each copy started with its own
+`HOME`, gives two devices that find each other on this machine. The identifier
+matters as much as the home: the single-instance plugin keys its socket in
+`/tmp` on it, so a second copy with the same one hands off to the first.
 
 1. Put both on the same wifi and open Oyot on each. There is nothing to
    configure; discovery starts with the app.
@@ -293,9 +309,8 @@ quickest check that discovery works on the network you are actually on. The
 count includes devices you have not paired with, because "is anything being
 found at all" is the question when it does not work.
 
-In a dev build the Rust side traces to stderr, so `[LAN]`, `[peers]` and
-`[remote]` lines appear in the terminal running `make dev`, and the frontend's
-`[sync]` lines in the webview console.
+In a dev build the Rust side traces to stderr, so `[LAN]`, `[peers]`,
+`[remote]` and `[sync]` lines appear in the terminal running `make dev`.
 
 ### The firewall prompt
 
@@ -312,16 +327,16 @@ there first, since a new binary can be treated as a new application.
 Access point client isolation, which is common on guest and café networks,
 passes mDNS and blocks device-to-device traffic. The symptom is specific and
 worth recognising: the peer appears in the nearby count, so discovery is
-plainly working, and the connection never forms. The 30 second negotiation
-watchdog rebuilds the session, which fails the same way. There is nothing to
-fall back to, so the honest advice is a different network.
+plainly working, and the connection never forms. The engine redials on its
+backoff, which fails the same way. There is nothing to fall back to, so the
+honest advice is a different network.
 
 Platform support is not even, and this ships in stages:
 
 | Platform              | Discovery                                                                                                                                                                                                                                                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS, Linux, Windows | `mdns-sd`. This is the path to develop against.                                                                                                                                                                                                                                                                           |
-| Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. Backgrounded it still advertises and still accepts connections, but hears nothing, and discovery finds the network again on its own when it comes back. Not yet run on a real device.                                             |
+| Android               | `mdns-sd`, with the `MulticastLock` taken in `MainActivity` while the app is on screen. It listens and advertises only while on screen (ADR 0034); a background run holds a lock of its own for its few seconds of listening. Not yet run on a real device.                                                               |
 | iOS                   | Not built. `mdns-sd` binds a raw multicast socket, which iOS gates behind an entitlement Apple reviews by hand, so iOS needs an `NWBrowser` plugin instead. Since ADR 0023 that is no longer the whole story: an iOS device syncs with any device it has been given an address for, and finds nothing on its own network. |
 
 ### Still to do: the iOS backend
@@ -338,13 +353,13 @@ and it needs to:
 - Browse and advertise through `NWBrowser` and `NWListener` in a small Tauri
   plugin. These are permitted where a raw multicast socket is not, which is
   the whole reason for the split.
-- Declare `NSLocalNetworkUsageDescription` and `NSBonjourServices` (listing
-  `_oyot._tcp`) in `Info.plist`. The first is the wording of the permission
-  prompt the user sees. Without the second, iOS will not resolve the service
-  at all.
-- Feed what it finds into the same `Peers` table, as source `Mdns`, and start
-  the existing `lan_signaling` listener, which is plain TCP and needs nothing
-  special from the platform.
+- Use `NSLocalNetworkUsageDescription` and `NSBonjourServices` (listing
+  `_oyot._tcp`), which `Info.plist` already declares for background sync. The
+  first is the wording of the permission prompt the user sees. Without the
+  second, iOS will not resolve the service at all.
+- Feed what it finds into the same `Peers` table, as source `Mdns`, which the
+  sync engine dials from, and which remembers where each paired device was
+  found for background runs.
 
 What it must not need is `com.apple.developer.networking.multicast`. That is
 the entitlement `mdns-sd` would require, granted only by a request Apple
@@ -375,20 +390,11 @@ coming from the node we addressed; otherwise anything occupying an address
 could answer for any device the user has an address for. A peer already found
 on this network is skipped, because there is nothing an address could add.
 
-**Rewritten ICE candidates.** This is the part that would otherwise silently
-not work. Chromium-family WebViews replace the address in a host candidate with
-an `<uuid>.local` mDNS name; on one network the peer resolves it, and over a
-VPN it resolves to nothing, so the connection never forms with no error saying
-why. `local_address_toward` answers "which of our addresses would that peer
-reach us at" with a connected UDP socket, which sends no packet and reports the
-source address the kernel would use. `sync/iceRewrite.ts` publishes a copy of
-each obfuscated candidate naming it, alongside the original, and only for a
-peer that is not on this network.
-
-If candidate rewriting ever turns out not to work on some platform, the
-documented fallback is carrying the data channel over the Rust TCP connection
-for that route and dropping WebRTC there, which ADR 0023 records as the
-alternative it was weighed against.
+**Only the dialling side needs a route.** The device with the address dials,
+and the one TLS connection that results carries sync both ways, pairing
+included (ADR 0032). Under WebRTC each side had to reach the other's listener
+for signaling, so both needed an address, and ICE candidates needed
+rewriting for a VPN. Neither is true any more.
 
 ### Trying it over a tailnet
 
@@ -401,10 +407,11 @@ available and you would be testing the wrong thing.
    (`laptop.tailnet-name.ts.net`), and press Pair. The port is optional. The
    address is stored and probed before the request goes out, so a wrong one is
    reported as a wrong address rather than as a device that did not answer.
-2. Accept the prompt on the other device.
-3. On that device, find the first one under "Paired Devices" and use "Add an
-   address" on its row. **Both directions need one**: either device may be the
-   one that starts a reconnect, and the one without an address cannot.
+2. Accept the prompt on the other device. That is all: the device with the
+   address dials, and the connection syncs both ways. Adding an address on
+   the other device too, with "Add an address" on the first one's row under
+   "Paired Devices", lets either device start a connection, which matters
+   when the one with the address is a phone that is asleep.
 
 An address reading "has never answered" means the address itself, the other
 device being asleep, or a tailnet ACL that does not allow port 19701 between
@@ -423,6 +430,56 @@ row already says which device this is. The only addresses not shown there are
 ones belonging to a pairing that never completed, since an address is stored
 before the request goes out; `UnpairedAddressList.svelte` is where those can be
 removed, and it renders nothing at all when there are none.
+
+## Syncing in the background
+
+A desktop keeps syncing when its window is closed, from the tray or the menu
+bar, and can start at login, hidden
+([ADR 0030](docs/decisions/0030-keep-running-in-the-tray-when-the-window-closes.md)).
+A phone cannot stay reachable in the background, so it dials out instead, on
+the platform's schedule, to a device that is awake
+([ADR 0034](docs/decisions/0034-phones-sync-in-the-background-by-dialling-out.md)).
+
+On a phone the engine follows the screen (`src-tauri/src/mobile.rs`): it
+listens and advertises only while the app is on screen. When the app leaves
+the screen it stops being reachable at once and lets a sync in progress
+finish, for 5 seconds on Android and 25 on iOS, inside background time it asks
+for. A background run (`src-tauri/src/sync/background.rs`) needs no Tauri app
+and no page: it opens the database from the data directory, probes the
+addresses typed for each paired device and then where discovery last found
+it, syncs with each one it reaches until both sides are done or time runs out,
+and records the run in `sync_runs`. The page indexes what the run merged when
+it next comes on screen.
+
+The native halves are in `src-tauri/plugins/background-sync`:
+
+- **Android:** a periodic WorkManager `Worker` (`SyncWorker.kt`), every 30
+  minutes when the system allows, calling Rust through JNI (`Native.kt`). It
+  returns at once while the app is on screen.
+- **iOS:** an app refresh task and a processing task, registered when the
+  plugin is created, calling Rust through C (`oyot_background.h`).
+
+Runs are scheduled only while "Sync in the background" is on and a device is
+paired. Settings > Sync on a phone shows the last run, and the `sync_runs`
+table has every one: what started it, which devices it reached, what moved,
+and how it ended.
+
+### Forcing a run
+
+Neither system runs a job on demand, but both can be made to:
+
+- **Android:** find the job's id with
+  `adb shell dumpsys jobscheduler | grep -A2 com.ajiyakin.oyot`, then run it
+  with `adb shell cmd jobscheduler run -f com.ajiyakin.oyot <id>`.
+  `adb logcat -s OyotSync` shows each run's record.
+- **iOS:** on a device (the simulator does not run background tasks), pause
+  the app in Xcode and run this in the debugger, then continue:
+  `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.ajiyakin.oyot.sync.refresh"]`.
+
+Neither has been run on a phone yet. ADR 0034 lists what to confirm first: a
+WorkManager job calling Rust with no activity running, an iOS task doing the
+same with and without the scene life cycle, and registering the tasks when the
+plugin is created being early enough.
 
 ## Google Drive backups
 
@@ -520,7 +577,7 @@ oyot/
 │   │   ├── settings/        # Pairing, addresses and sync settings UI
 │   │   ├── services/        # Document actions, theme, toasts
 │   │   ├── stores/          # Svelte stores (app state, sync state)
-│   │   ├── sync/            # Peer sync: transport, protocol, framing, ICE
+│   │   ├── sync/            # The page's side of sync: events, pairing, stores
 │   │   ├── tiptap/          # Editor extensions, slash commands, nodes
 │   │   ├── changelog.ts     # Release notes shown in the About dialog
 │   │   ├── version.ts       # Running version, injected at build time
@@ -529,9 +586,12 @@ oyot/
 ├── src-tauri/               # Rust backend
 │   ├── src/
 │   │   ├── commands/        # Tauri commands, the only frontend surface
-│   │   ├── network/         # Signaling: peer table, discovery, probe, listener
+│   │   ├── network/         # Peer table, discovery, probe, listener
+│   │   ├── sync/            # The sync engine: protocol, sessions, TLS, runs
+│   │   ├── mobile.rs        # A phone's engine following the screen
 │   │   ├── db.rs            # Connection setup and AppState
 │   │   └── lib.rs           # Schema, migrations, command registration
+│   ├── plugins/             # In-repo plugins: phone sign-in, background sync
 │   ├── capabilities/        # Plugin ACLs for the webview
 │   ├── gen/android/         # Generated Android project (committed)
 │   ├── gen/apple/           # Generated iOS/Xcode project (committed)
@@ -542,13 +602,11 @@ oyot/
 └── Makefile                 # Build commands
 ```
 
-WebRTC lives entirely in the frontend (`src/lib/sync/transport.ts`). Rust owns
-the database, the attachment store, identity, and signaling: finding peers,
-whether by announcement or by probe, and delivering signed envelopes to them.
-It does not participate in the peer connection itself, with one exception it is
-worth knowing about: it answers which of this device's addresses a given peer
-would reach it at, because only the operating system knows, and the frontend
-needs it to make a host ICE candidate usable off this network (ADR 0023).
+Sync lives entirely in Rust (`src-tauri/src/sync`, ADRs 0031 and 0032): the
+connections, the protocol, merging with `yrs`, pairing, and a phone's
+background runs. The page shows what it is doing and asks for what the user
+does (`src/lib/sync/client.ts`), applies a peer's update to the note on
+screen, and builds the search index, which only it can render.
 
 ### Keeping the help page current
 
@@ -567,7 +625,8 @@ screen-reader label on a calendar day, which the type checker insists on.
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap (rich text editing)
 - **Backend**: Rust, Tauri 2.0
 - **Database**: SQLite (rusqlite)
-- **Rust Crates**: rusqlite, mdns-sd, ed25519-dalek, serde, chrono, sha2
+- **Rust Crates**: rusqlite, yrs, rustls, tokio-rustls, mdns-sd, ed25519-dalek,
+  serde, chrono, sha2
 
 ---
 
