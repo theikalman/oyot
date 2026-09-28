@@ -10,7 +10,13 @@ import { CONTENT_FIELD } from './contentField';
 // sync path where a first pair can merge hundreds of documents in a row.
 let cached: Schema | null = null;
 
-function schema(): Schema {
+/**
+ * The editor's schema, without an editor.
+ *
+ * Exported for the Markdown importer, which builds documents against it the
+ * way this module reads them: there is one schema and one cache of it.
+ */
+export function contentSchema(): Schema {
     cached ??= getSchema(createContentExtensions());
     return cached;
 }
@@ -37,5 +43,5 @@ export function indexFromYDoc(ydoc: Y.Doc): DocumentIndex {
  * is one schema and one cache of it to do that with.
  */
 export function rootFromYDoc(ydoc: Y.Doc): ProseMirrorNode {
-    return yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(CONTENT_FIELD), schema());
+    return yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(CONTENT_FIELD), contentSchema());
 }
