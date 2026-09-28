@@ -7,6 +7,7 @@
     import { findTerms, searchSections, searchTerms } from '$lib/todos/todoSearch';
     import { markSegments, todoSegments, type MarkedRun } from '$lib/todos/todoText';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
+    import type { Snapshot } from './$types';
 
     // Every task item in every note and journal, on one page.
     //
@@ -47,6 +48,19 @@
     function handleSearchKeydown(event: KeyboardEvent) {
         if (event.key === 'Escape') query = '';
     }
+
+    // Back from a todo this page opened, it is as it was left: the same
+    // search over the same rows, rather than the whole list again and the
+    // words to type a second time. SvelteKit keeps this for each entry in
+    // the history, so opening the page from the sidebar, which is a new
+    // entry, starts afresh.
+    export const snapshot: Snapshot<{ query: string; hideCompleted: boolean }> = {
+        capture: () => ({ query, hideCompleted }),
+        restore: (saved) => {
+            query = saved.query;
+            hideCompleted = saved.hideCompleted;
+        },
+    };
 
     // Held in state rather than read at render time, so a page left open
     // overnight stops calling yesterday's journal "Today".
