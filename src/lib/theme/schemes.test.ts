@@ -65,9 +65,19 @@ describe('colour schemes', () => {
         }
     });
 
-    it('makes the default the scheme :root stands for', () => {
-        const css = read('src/lib/theme/schemes.css');
-        expect(css).toMatch(new RegExp(`:root,\\s*\\[data-scheme='${DEFAULT_COLOR_SCHEME}'\\]`));
+    it('makes the default stand in for the root element without outranking a scheme', () => {
+        const css = read('src/lib/theme/schemes.css').replace(/\/\*[\s\S]*?\*\//g, '');
+        expect(css).toMatch(
+            new RegExp(`:where\\(:root\\),\\s*\\[data-scheme='${DEFAULT_COLOR_SCHEME}'\\]`),
+        );
+        // A bare :root in a block that sets colours is as specific as a
+        // scheme's own selector, so it would win over every scheme listed
+        // before it. The one it may appear in sets only the aliases.
+        for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+            if (!/(^|[\s,]):root/.test(selector)) continue;
+            const names = [...body.matchAll(/(--[a-z-]+):/g)].map((m) => m[1]);
+            expect(names, selector.trim()).toEqual(['--status-synced', '--status-offline']);
+        }
     });
 
     // The pairs the app draws text or small marks with. 4.5:1 for words,

@@ -19,8 +19,10 @@
  * dot, Solarized's base00 on base2 - it is nudged towards the text colour
  * until it reads, so a few values are not in either palette.
  *
- * Catppuccin Macchiato also stands in for :root, the look before a scheme is
- * applied and on a device that never chose one.
+ * Catppuccin Macchiato also stands in for the root element before a scheme is
+ * applied. That selector is :where(:root), which counts for nothing: a bare
+ * :root is as specific as [data-scheme='...'], so on the root element it
+ * would beat every scheme whose block comes before this one.
  */
 
 /* Catppuccin Latte */
@@ -130,7 +132,7 @@
 }
 
 /* Catppuccin Macchiato */
-:root,
+:where(:root),
 [data-scheme='catppuccin-macchiato'] {
     color-scheme: dark;
 
