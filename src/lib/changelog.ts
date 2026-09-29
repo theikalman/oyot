@@ -36,6 +36,30 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.27-alpha',
+        date: '2026-09-29',
+        summary:
+            'Oyot comes in six colour schemes, with Catppuccin Macchiato the new default, and its keyboard shortcuts can be given keys of your own.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Settings > Appearance has six colour schemes to choose from in place of the light and dark switch: Catppuccin Latte, Frappé, Macchiato and Mocha, and Solarized Light and Dark. Every part of the app takes its colours from the one you pick, and where a colour from a published palette was too faint to read, it is a shade stronger.',
+            },
+            {
+                kind: 'added',
+                text: 'Settings > Keyboard shortcuts lets you give a shortcut keys of your own, or none, on this device: Help, switching between reading and editing, the text styles, headings, lists, quote, code block, undo and redo. Taking keys another shortcut has asks first, a changed shortcut says what it normally is and can be reset, and the toolbar, the Edit button and the help page all name the keys in use.',
+            },
+            {
+                kind: 'improved',
+                text: "On the Todos page, the heading of today's journal, Today, is in the accent colour, as the calendar marks today, and it moves to the new day at midnight.",
+            },
+            {
+                kind: 'removed',
+                text: 'Oyot no longer follows the system between light and dark. A device that never chose a scheme gets Catppuccin Macchiato, and one that chose light or dark before gets Latte or Macchiato, since the old grey colours are gone.',
+            },
+        ],
+    },
+    {
         version: '0.0.26-alpha',
         date: '2026-09-29',
         summary:
