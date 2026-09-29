@@ -592,9 +592,11 @@ not five.
 make bump VERSION=0.1.0
 ```
 
-That writes the four mechanical places: `package.json`,
+That writes every mechanical place: `package.json`, the two version fields of
+`package-lock.json` (its root, and the entry for the app itself),
 `src-tauri/tauri.conf.json` (both the version and `bundle.android.versionCode`),
-`src-tauri/Cargo.toml`, and `Cargo.lock`.
+`src-tauri/Cargo.toml`, and `Cargo.lock`. The two lockfile fields are edited
+in place rather than by npm, so nothing else in the lockfile changes.
 
 The versionCode is derived as `1000 + major*10000 + minor*100 + patch`, which
 keeps it increasing as long as minor and patch stay below 100. Play refuses an
