@@ -36,6 +36,54 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.26-alpha',
+        date: '2026-09-29',
+        summary:
+            'A computer keeps syncing with its window closed, from the tray, and a phone catches up in the background with a device that is awake. Sync now runs in the app itself, over one encrypted connection per pair of devices. Update every device: this version and older ones no longer see each other.',
+        changes: [
+            {
+                kind: 'added',
+                text: "Closing Oyot's window on a computer leaves it running in the tray, or the menu bar on a Mac, still syncing. Its menu opens Oyot, says when it last synced and quits it. The first time you close the window, Oyot says so and asks whether to keep running, and Settings has the same choice under Desktop, along with starting Oyot in the tray when you log in, without opening a window.",
+            },
+            {
+                kind: 'added',
+                text: 'Phones sync in the background. Every so often, when Android or iOS allows it, a phone reaches out to a device that is awake, such as a computer running Oyot, and catches up with it. Android does this about every 30 minutes, and less often for an app you rarely open; iOS decides for itself, and on some days not at all. It waits for Wi-Fi unless you allow mobile data, and images always wait for Wi-Fi. Settings > Sync on a phone can turn it off, allow mobile data, and says when it last ran and with which device.',
+            },
+            {
+                kind: 'improved',
+                text: 'Sync runs in the app itself rather than in its window, over one encrypted connection per pair of devices, so it carries on with the window closed, and on a phone in the background. A connection that goes quiet is noticed within a minute and made again, and notes go ahead of images, so a photo never holds up a note.',
+            },
+            {
+                kind: 'improved',
+                text: 'A computer that wakes from sleep, or moves to another network, looks for your devices again at once, instead of at its next retry.',
+            },
+            {
+                kind: 'improved',
+                text: 'A device somewhere else needs its address on one side only. The device with the address makes the connection, and it carries sync both ways. The address on both devices, as pairing used to ask for, still works, and lets either side start.',
+            },
+            {
+                kind: 'improved',
+                text: 'Notes that hold the same on two devices are recognised as the same however each device stored them, so fewer are exchanged each time devices connect, and empty journals no longer are at all.',
+            },
+            {
+                kind: 'improved',
+                text: 'Disconnect, under Paired Devices, lasts until you press Reconnect, even after Oyot restarts, and Settings > Sync shows the device as Disconnected rather than Offline.',
+            },
+            {
+                kind: 'security',
+                text: "A device's ID is now the key its connection is made with, so nothing on the network can pose as a device you paired with or read what passes between them. Pairing happens inside that connection, and is decided and recorded by Oyot's core rather than the page it shows.",
+            },
+            {
+                kind: 'removed',
+                text: "Connecting to a device no longer asks Google's servers how this device looks from the internet, which the old connections needed and these do not.",
+            },
+            {
+                kind: 'removed',
+                text: 'This version and older ones no longer see each other, so update all your devices. Nothing is lost in between: each keeps its notes, and they sync again once they are on the same version.',
+            },
+        ],
+    },
+    {
         version: '0.0.25-alpha',
         date: '2026-09-28',
         summary:
