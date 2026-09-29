@@ -1,7 +1,7 @@
 <script lang="ts">
     import { indexRevision } from '$lib/stores/derivedIndex';
     import { openDocumentAtTodo } from '$lib/services/navigation';
-    import { formatJournalTitle } from '$lib/calendar/calendar';
+    import { formatJournalTitle, journalTitleFor } from '$lib/calendar/calendar';
     import { createTodoIndex } from '$lib/todos/todoStore.svelte';
     import { countAll, countOpen, type TodoGroup, type TodoHit } from '$lib/todos/grouping';
     import { findTerms, searchSections, searchTerms } from '$lib/todos/todoSearch';
@@ -93,6 +93,12 @@
         return group.docType === 'journal' ? formatJournalTitle(group.title, today) : group.title;
     }
 
+    // Today's journal is where the eye should land first, so its heading is
+    // drawn in the accent colour, as the calendar draws today's cell.
+    function isToday(group: TodoGroup): boolean {
+        return group.docType === 'journal' && group.title === journalTitleFor(today);
+    }
+
     // A row's text as it is drawn: its chips, with what the search found
     // marked, so a todo found by part of a word shows which part.
     function drawn(todo: TodoHit, group: TodoGroup) {
@@ -179,7 +185,9 @@
                         <h2 class="section-title">{section.label}</h2>
                         {#each section.groups as group (group.docId)}
                             <div class="group">
-                                <h3 class="group-title">{heading(group)}</h3>
+                                <h3 class="group-title" class:today={isToday(group)}>
+                                    {heading(group)}
+                                </h3>
                                 <ul class="todo-list">
                                     {#each visible(group) as todo (todo.ordinal)}
                                         <li>
@@ -327,6 +335,10 @@
         font-size: 14px;
         font-weight: 600;
         color: var(--text-primary);
+    }
+
+    .group-title.today {
+        color: var(--accent-color);
     }
 
     .todo-list {
