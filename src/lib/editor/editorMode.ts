@@ -1,4 +1,4 @@
-import { modIsCommand, shortcutLabel, type KeyPress } from '$lib/keyboard/keys';
+import { matchesKeys, modIsCommand, shortcutLabel, type KeyPress } from '$lib/keyboard/keys';
 
 // Which mode a document opens in: reading, with one exception, a note the
 // user has just created. Creating a note is asking to write in it, and
@@ -36,9 +36,7 @@ export function opensForEditing(docId: string): boolean {
 
 /** Whether a key press is the shortcut that switches between reading and editing. */
 export function isEditShortcut(event: KeyPress, command: boolean = modIsCommand()): boolean {
-    const mod = command ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-    // Either case: with Shift held some browsers report the capital.
-    return mod && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'e';
+    return matchesKeys('Mod-Shift-e', event, command);
 }
 
 /** The Edit button's shortcut the way the keyboard in front of the user labels it. */
