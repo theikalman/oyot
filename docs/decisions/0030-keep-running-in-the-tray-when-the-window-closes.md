@@ -1,6 +1,6 @@
 # 0030: Keep Oyot running in the tray when its window is closed
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-28
 - **Extends:** [0026](0026-scheduled-backups-run-while-the-app-is-open.md)
 

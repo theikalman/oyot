@@ -1,6 +1,12 @@
 # 0003: Reconcile the whole document set with a manifest + delta protocol
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by
+  [0031](0031-move-the-sync-engine-into-rust.md), which moves diffing into
+  Rust (decision 3),
+  [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which frames
+  messages for TLS (decision 6), and
+  [0033](0033-hash-what-a-document-holds-not-how-it-is-encoded.md), which
+  hashes what a document holds (decision 2)
 - **Date:** 2026-08-29
 - **Amended by:** [0008](0008-deletion-as-last-writer-wins.md) (decision 5), [0010](0010-apply-remote-updates-into-the-open-document.md) (decision 8), [0012](0012-deletion-propagates-transitively.md) (decision 5 again), [0013](0013-derived-rows-are-built-wherever-content-arrives.md), [0014](0014-the-merged-blob-is-the-only-content-store.md)
 

@@ -1,6 +1,6 @@
 # 0033: Hash what a document holds, not how it is encoded
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-28
 - **Amends:** [0003](0003-full-document-set-sync.md) decision 2 (the content
   hash)

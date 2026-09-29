@@ -1,6 +1,6 @@
 # 0032: Sync over one TLS connection per device pair, not WebRTC
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-28
 - **Supersedes:** [0002](0002-signaling-retry-and-perfect-negotiation.md)
   decisions 3 and 4 (perfect negotiation, epochs),

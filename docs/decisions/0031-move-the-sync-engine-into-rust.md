@@ -1,6 +1,6 @@
 # 0031: Move the sync engine into Rust, and make the webview its client
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-28
 - **Supersedes:** [0003](0003-full-document-set-sync.md) decision 3 ("CRDT
   diffing stays in TypeScript")

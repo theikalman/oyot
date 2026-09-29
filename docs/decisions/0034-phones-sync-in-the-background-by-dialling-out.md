@@ -1,6 +1,6 @@
 # 0034: Phones sync in the background by dialling out on a schedule
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-28
 - **Extends:** [0023](0023-reach-a-peer-at-an-address-you-already-know.md),
   [0026](0026-scheduled-backups-run-while-the-app-is-open.md) (the WorkManager

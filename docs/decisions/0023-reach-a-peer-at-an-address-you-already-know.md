@@ -1,6 +1,8 @@
 # 0023: Reach a peer at an address you already know, over a VPN the user already runs
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which
+  drops rewriting ICE candidates (decision 6): only the dialling side needs a
+  route now
 - **Date:** 2026-09-22
 - **Amends:** [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md),
   whose fifth decision was that a device not on this network is unreachable and

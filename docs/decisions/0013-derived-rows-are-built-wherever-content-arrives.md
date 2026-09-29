@@ -1,6 +1,7 @@
 # 0013: Build derived rows wherever content arrives, not only where it is typed
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0031](0031-move-the-sync-engine-into-rust.md), which
+  indexes a document Rust merged once the page can render it (decision 1)
 - **Date:** 2026-09-14
 - **Extends:** [0003](0003-full-document-set-sync.md)
 - **Amends:** [0005](0005-attachment-sync.md) (the deferred reference scan)
