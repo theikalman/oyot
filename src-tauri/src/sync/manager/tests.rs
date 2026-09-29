@@ -457,6 +457,32 @@ async fn a_bounded_run_ends_once_both_sides_are_synced() {
     .await;
 }
 
+// Runs can come back to back: a phone leaving the screen, then a scheduled
+// run. The second must not be turned away by what is left of the first
+// one's connection, on either side, or take it for up and synced.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_straight_after_another_connects_afresh() {
+    let (phone, desktop) = (device("phone").await, device("desktop").await);
+    pair(&phone, &desktop);
+    route(&phone, &desktop);
+    write_note(&desktop, "first", "for the first run");
+    desktop.manager.start();
+
+    let first = phone.manager.run_once(Duration::from_secs(20)).await;
+    assert_eq!(first.synced, vec![desktop.node_id.clone()], "{first:?}");
+    assert_eq!(first.moved.docs_received, 1, "{first:?}");
+    assert!(
+        !phone.manager.is_connected(&desktop.node_id),
+        "a run leaves no connection behind"
+    );
+
+    write_note(&desktop, "second", "for the second run");
+    let second = phone.manager.run_once(Duration::from_secs(20)).await;
+    assert_eq!(second.synced, vec![desktop.node_id.clone()], "{second:?}");
+    assert_eq!(second.moved.docs_received, 1, "{second:?}");
+    assert_eq!(text_of(&phone, "second"), "for the second run");
+}
+
 // ADR 0034, decision 6: a phone leaving the screen stops reaching out, lets a
 // sync in progress finish, then closes and stays closed.
 #[tokio::test(flavor = "multi_thread")]
@@ -651,4 +677,12 @@ fn two_live_connections_keep_the_one_the_lower_node_dialled() {
 #[test]
 fn a_quiet_connection_gives_way_to_a_new_one() {
     assert!(keep_new_connection("a", "a", "b", false));
+}
+
+#[test]
+fn a_device_that_dials_again_replaces_its_own_connection() {
+    // It dials only a device it has no connection with, so it gave the old
+    // one up, however lately that one was heard from. Whichever node it is.
+    assert!(keep_new_connection("a", "a", "a", true));
+    assert!(keep_new_connection("a", "b", "b", true));
 }

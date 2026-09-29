@@ -7,9 +7,10 @@
 //! - **Two connections at once** (both dialled): the one dialled by the lower
 //!   node_id is kept, so both sides keep the same one, unless the existing one
 //!   has gone quiet, in which case it is probably dead and the new one wins.
-//!   A connection counts once the other side's first frame arrives, since in
-//!   TLS 1.3 the dialler finishes its handshake before the listener has
-//!   checked its key.
+//!   A device that dials again has given up on the connection it had, so its
+//!   new one wins too. A connection counts once the other side's first frame
+//!   arrives, since in TLS 1.3 the dialler finishes its handshake before the
+//!   listener has checked its key.
 //! - **On each connection:** notes before images, a heartbeat after 20
 //!   seconds with nothing else to send, and dropped after 60 seconds without
 //!   a byte.
@@ -32,7 +33,7 @@ use crate::pairing;
 use ed25519_dalek::SigningKey;
 use parking_lot::Mutex;
 use rusqlite::Connection;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -92,12 +93,15 @@ pub fn keep_new_connection(
     new_dialled_by: &str,
     existing_alive: bool,
 ) -> bool {
-    if !existing_alive {
+    // A device dials only a device it has no connection with, so one that
+    // dialled again has given up on the one it had: a phone's second
+    // background run straight after its first, say.
+    if !existing_alive || new_dialled_by == existing_dialled_by {
         return true;
     }
     // Both dialled at once. Keep the one the lower node_id dialled, which
     // both sides work out the same way.
-    new_dialled_by == lower_node_id && existing_dialled_by != lower_node_id
+    new_dialled_by == lower_node_id
 }
 
 /// Whether a pairing prompt from `from` should be shown, given when that
@@ -149,7 +153,8 @@ struct PendingPair {
 struct State {
     running: bool,
     conns: HashMap<String, Conn>,
-    dialling: HashSet<String>,
+    /// Devices being dialled, each with the dial that marked it.
+    dialling: HashMap<String, u64>,
     attempts: HashMap<String, u32>,
     status: HashMap<String, PeerState>,
     pending_pairs: HashMap<String, PendingPair>,
@@ -266,16 +271,16 @@ impl SyncManager {
 
     /// Close everything and stop reconnecting.
     pub fn stop(&self) {
-        let conns: Vec<mpsc::UnboundedSender<Cmd>> = {
+        let connected: Vec<String> = {
             let mut state = self.inner.state.lock();
             state.running = false;
             if let Some(task) = state.found_task.take() {
                 task.abort();
             }
-            state.conns.values().map(|c| c.commands.clone()).collect()
+            state.conns.keys().cloned().collect()
         };
-        for commands in conns {
-            let _ = commands.send(Cmd::Close);
+        for node_id in connected {
+            self.close(&node_id);
         }
     }
 
@@ -345,17 +350,21 @@ impl SyncManager {
         self.inner.state.lock().status.remove(node_id);
     }
 
+    /// Close the connection to `node_id`, if there is one. It leaves `conns`
+    /// now, not once its socket has wound down, so a dial or a bounded run
+    /// that comes straight after is not turned away by it, nor counts it as
+    /// up and synced.
     fn close(&self, node_id: &str) {
-        let commands = self
-            .inner
-            .state
-            .lock()
-            .conns
-            .get(node_id)
-            .map(|c| c.commands.clone());
-        if let Some(commands) = commands {
-            let _ = commands.send(Cmd::Close);
-        }
+        let conn = self.inner.state.lock().conns.remove(node_id);
+        let Some(conn) = conn else {
+            return;
+        };
+        let _ = conn.commands.send(Cmd::Close);
+        self.inner.set_status(node_id, |s| {
+            s.connected = false;
+            s.phase = "idle".to_string();
+        });
+        self.inner.changed.notify_waiters();
     }
 
     /// Tell every connected device about a change made here.
@@ -496,7 +505,7 @@ impl SyncManager {
                     })
                     .cloned()
                     .collect();
-                let dialling = targets.iter().any(|n| state.dialling.contains(n));
+                let dialling = targets.iter().any(|n| state.dialling.contains_key(n));
                 (connected, done, dialling)
             };
             for node_id in &connected {
@@ -681,11 +690,13 @@ fn start_dial(inner: &Arc<Inner>, node_id: &str) {
     if inner.is_disconnected(node_id) || inner.peers.best(node_id).is_none() {
         return;
     }
+    let dial_id = inner.ids.fetch_add(1, Ordering::Relaxed);
     {
         let mut state = inner.state.lock();
-        if state.conns.contains_key(node_id) || !state.dialling.insert(node_id.to_string()) {
+        if state.conns.contains_key(node_id) || state.dialling.contains_key(node_id) {
             return;
         }
+        state.dialling.insert(node_id.to_string(), dial_id);
     }
     inner.set_status(node_id, |s| {
         s.reconnecting = true;
@@ -694,15 +705,22 @@ fn start_dial(inner: &Arc<Inner>, node_id: &str) {
     inner.changed.notify_waiters();
     let inner = inner.clone();
     let node_id = node_id.to_string();
-    tokio::spawn(async move { dial(inner, node_id, pair).await });
+    tokio::spawn(async move { dial(inner, node_id, pair, dial_id).await });
 }
 
-fn finish_dial(inner: &Inner, node_id: &str) {
-    inner.state.lock().dialling.remove(node_id);
+/// Clear the mark `start_dial` set for this dial, and no other: by the time
+/// a connection it made has ended, the device may be being dialled again.
+fn finish_dial(inner: &Inner, node_id: &str, dial_id: u64) {
+    {
+        let mut state = inner.state.lock();
+        if state.dialling.get(node_id) == Some(&dial_id) {
+            state.dialling.remove(node_id);
+        }
+    }
     inner.changed.notify_waiters();
 }
 
-async fn dial(inner: Arc<Inner>, node_id: String, pair: pairing::DevicePair) {
+async fn dial(inner: Arc<Inner>, node_id: String, pair: pairing::DevicePair, dial_id: u64) {
     let result = connect_tls(&inner, &node_id).await;
     match result {
         Ok(stream) => {
@@ -715,7 +733,7 @@ async fn dial(inner: Arc<Inner>, node_id: String, pair: pairing::DevicePair) {
         }
         Err(e) => trace!("[sync] could not reach {node_id}: {e}"),
     }
-    finish_dial(&inner, &node_id);
+    finish_dial(&inner, &node_id, dial_id);
     schedule_redial(inner, node_id);
 }
 
@@ -1072,6 +1090,8 @@ async fn run<S>(
     drop(bulk_tx);
     let _ = writer_task.await;
 
+    // Not when it was closed from here or replaced: either took it out of
+    // `conns` already, and may have put a newer one in its place.
     let was_current = {
         let mut state = inner.state.lock();
         if state
