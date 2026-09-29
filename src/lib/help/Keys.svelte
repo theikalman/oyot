@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { shortcutLabel } from '$lib/editor/editorMode';
+    import { shortcutLabel } from '$lib/keyboard/keys';
 
     // A shortcut's keys, written the way the tooltips write them, so the
     // help page and a button's tooltip never name one key two ways. More

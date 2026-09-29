@@ -9,3 +9,4 @@ export { default as PairingDialog } from './PairingDialog.svelte';
 export { default as ImportBackupDialog } from './ImportBackupDialog.svelte';
 export { default as BackupProviderCard } from './BackupProviderCard.svelte';
 export { default as BackupScheduleCard } from './BackupScheduleCard.svelte';
+export { default as ShortcutRow } from './ShortcutRow.svelte';

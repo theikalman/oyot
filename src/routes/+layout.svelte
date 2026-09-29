@@ -10,7 +10,7 @@
     import { startApp } from '$lib/services/startup';
     import { catchUpIndex } from '$lib/services/documents';
     import { watchScheduledBackups } from '$lib/backup';
-    import { isHelpShortcut } from '$lib/help/helpShortcut';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { openHelp } from '$lib/services/navigation';
     import { watchCloseRequests } from '$lib/desktop';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
@@ -87,7 +87,7 @@
     // whatever the route, settings included. Not while a dialog is open: it
     // is something half done, and leaving the page would throw it away.
     function handleKeydown(event: KeyboardEvent) {
-        if (!isHelpShortcut(event)) return;
+        if (!customShortcuts.matches('help', event)) return;
         event.preventDefault();
         if (document.querySelector('[aria-modal="true"]')) return;
         if (currentPath !== '/help') void openHelp();
@@ -101,6 +101,8 @@
                 return 'Sync';
             case '/settings/backup':
                 return 'Backup';
+            case '/settings/shortcuts':
+                return 'Keyboard shortcuts';
             default:
                 return '';
         }

@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Editor } from '@tiptap/core';
     import { FORMATTING, HISTORY, TOOLS, pressedTools, type Tool } from './toolbarTools';
-    import { shortcutLabel } from './editorMode';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
 
     interface Props {
         editor: Editor | null;
@@ -10,9 +10,12 @@
     let { editor }: Props = $props();
 
     // A tool's tooltip names its shortcut too, the way the Edit button's
-    // does, so the toolbar teaches the faster way in as it is used.
+    // does, so the toolbar teaches the faster way in as it is used. The keys
+    // in use, which the user may have changed; a tool shares its id with
+    // its shortcut.
     function tooltip(tool: Tool): string {
-        return tool.keys ? `${tool.label} (${shortcutLabel(tool.keys)})` : tool.label;
+        const keys = customShortcuts.labelFor(tool.id);
+        return keys ? `${tool.label} (${keys})` : tool.label;
     }
 
     // Whether the formatting tools run on past either end of their strip,

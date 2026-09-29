@@ -25,6 +25,8 @@
     import { locateTaskItem } from './taskItems';
     import { JumpTarget, markJumpTarget } from './jumpTarget';
     import { TickWhileReading } from './tickWhileReading';
+    import { CustomShortcuts } from './customShortcuts';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
 
@@ -146,6 +148,11 @@
                 ReadOnlyState,
                 JumpTarget,
                 TickWhileReading,
+                // The keys the user gave shortcuts, ahead of the editor's own.
+                CustomShortcuts.configure({
+                    bindings: () => customShortcuts.bindings,
+                    command: customShortcuts.command,
+                }),
             ],
             // No initial content. The collaboration binding replaces the
             // document with the Yjs fragment as soon as the editor is

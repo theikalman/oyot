@@ -37,8 +37,7 @@
     import SidebarDeviceList from './SidebarDeviceList.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
-    import { shortcutLabel } from '../editor/editorMode';
-    import { HELP_KEYS } from '../help/helpShortcut';
+    import { customShortcuts } from '../keyboard/customShortcuts.svelte';
     import { indexRevision } from '../stores/derivedIndex';
     import { refreshTagCount, tagCount } from '../tags/tagCount';
     import { journalEntries } from '../journals/journalIndex';
@@ -159,7 +158,8 @@
     }
 
     // Named in the tooltip, the way the Edit button names its own.
-    const helpHint = `Help and keyboard shortcuts (${shortcutLabel(HELP_KEYS)})`;
+    let helpKeys = $derived(customShortcuts.labelFor('help'));
+    let helpHint = $derived(`Help and keyboard shortcuts${helpKeys ? ` (${helpKeys})` : ''}`);
 
     // The document on screen, which is not always the store's open document.
     // The store keeps the last one after the user leaves it for an index
