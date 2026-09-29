@@ -6,21 +6,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>Oyot - Simple Note Taking App that Simply Works</title>
         <script>
-            // Pick the theme before anything renders. The stored preference
-            // lives in Rust, which cannot be read synchronously, so the last
-            // applied value is mirrored here to avoid a flash of the wrong
-            // theme on every launch while that round trip happens.
-            try {
-                var t = localStorage.getItem('oyot:theme');
-                if (t !== 'light' && t !== 'dark') {
-                    t = window.matchMedia('(prefers-color-scheme: dark)').matches
-                        ? 'dark'
-                        : 'light';
+            // Pick the colour scheme before anything renders. The stored
+            // choice lives in Rust, which cannot be read synchronously, so the
+            // last applied one is mirrored here to avoid a flash of the wrong
+            // colours on every launch while that round trip happens. The ids
+            // and their appearance are COLOR_SCHEMES in $lib/theme/schemes,
+            // and light and dark are what was stored before there were
+            // schemes; schemes.test.ts keeps the three lists in step.
+            (function () {
+                var schemes = {
+                    'catppuccin-latte': 'light',
+                    'catppuccin-frappe': 'dark',
+                    'catppuccin-macchiato': 'dark',
+                    'catppuccin-mocha': 'dark',
+                    'solarized-light': 'light',
+                    'solarized-dark': 'dark',
+                };
+                var legacy = { light: 'catppuccin-latte', dark: 'catppuccin-macchiato' };
+                var id = 'catppuccin-macchiato';
+                try {
+                    var stored = localStorage.getItem('oyot:theme');
+                    if (stored && legacy.hasOwnProperty(stored)) stored = legacy[stored];
+                    if (stored && schemes.hasOwnProperty(stored)) id = stored;
+                } catch (e) {
+                    // No storage; the default it is.
                 }
-                document.documentElement.dataset.theme = t;
-            } catch (e) {
-                document.documentElement.dataset.theme = 'light';
-            }
+                document.documentElement.dataset.scheme = id;
+                document.documentElement.dataset.theme = schemes[id];
+            })();
         </script>
         <script>
             // Android's status and gesture bars, measured by MainActivity

@@ -60,26 +60,57 @@ fn flag(json: &serde_json::Value, key: &str, default: bool) -> bool {
     json.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
-/// The stored theme, or `None` when the user has never chosen one.
+/// The colour schemes this build knows (ADR 0036), as `COLOR_SCHEMES` in
+/// `src/lib/theme/schemes.ts` lists them. The page draws them; this only
+/// keeps a stored choice to one of them.
+pub(crate) const COLOR_SCHEMES: [&str; 6] = [
+    "catppuccin-latte",
+    "catppuccin-frappe",
+    "catppuccin-macchiato",
+    "catppuccin-mocha",
+    "solarized-light",
+    "solarized-dark",
+];
+
+/// `value` as a colour scheme this build knows, or `None`. Light and dark,
+/// which were the choice before there were schemes and are still in older
+/// config files and backups, read as the schemes that took their place.
+pub(crate) fn known_theme(value: &str) -> Option<&'static str> {
+    match value {
+        "light" => Some("catppuccin-latte"),
+        "dark" => Some("catppuccin-macchiato"),
+        _ => COLOR_SCHEMES.iter().copied().find(|id| *id == value),
+    }
+}
+
+/// The stored colour scheme, or `None` when the user has never chosen one.
 ///
-/// Defaulting to "light" here made "never chosen" and "chose light"
-/// indistinguishable, so the device's own preference could never be honoured
-/// on a first run.
+/// Defaulting here made "never chosen" and "chose the default"
+/// indistinguishable, and a backup's scheme is only taken on a device that
+/// never chose one.
 #[tauri::command]
 pub fn get_theme(app: tauri::AppHandle) -> Option<String> {
-    let json = read_config(&app);
+    theme(&read_config(&app))
+}
+
+fn theme(json: &serde_json::Value) -> Option<String> {
     json.get("theme")
         .and_then(|v| v.as_str())
-        .filter(|s| *s == "light" || *s == "dark")
+        .and_then(known_theme)
         .map(|s| s.to_string())
 }
 
 #[tauri::command]
 pub fn save_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
-    if theme != "light" && theme != "dark" {
-        return Err(format!("Invalid theme: {}", theme));
+    if !COLOR_SCHEMES.contains(&theme.as_str()) {
+        return Err(format!("Invalid colour scheme: {}", theme));
     }
     let mut json = read_config(&app);
+    // As in write_flag: a file holding something other than an object has
+    // nothing worth keeping.
+    if !json.is_object() {
+        json = serde_json::Value::Object(Default::default());
+    }
     json["theme"] = serde_json::json!(theme);
     write_config(&app, json)
 }
@@ -205,7 +236,7 @@ fn invisible(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::flag;
+    use super::{flag, theme, COLOR_SCHEMES};
     use serde_json::json;
 
     #[test]
@@ -246,6 +277,33 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn a_stored_colour_scheme_reads_back() {
+        for id in COLOR_SCHEMES {
+            assert_eq!(theme(&json!({ "theme": id })).as_deref(), Some(id));
+        }
+    }
+
+    #[test]
+    fn light_and_dark_read_as_the_schemes_that_replaced_them() {
+        assert_eq!(
+            theme(&json!({ "theme": "light" })).as_deref(),
+            Some("catppuccin-latte")
+        );
+        assert_eq!(
+            theme(&json!({ "theme": "dark" })).as_deref(),
+            Some("catppuccin-macchiato")
+        );
+    }
+
+    #[test]
+    fn no_scheme_or_one_this_build_does_not_know_reads_as_never_chosen() {
+        assert_eq!(theme(&json!({})), None);
+        assert_eq!(theme(&json!({ "theme": "solarized" })), None);
+        assert_eq!(theme(&json!({ "theme": 1 })), None);
+        assert_eq!(theme(&json!([])), None);
     }
 
     #[test]

@@ -202,10 +202,11 @@ impl BackupReader {
                 // A value this build does not know, perhaps from a newer one,
                 // is dropped rather than applied. Preferences are a
                 // convenience; none of them is worth refusing a backup over.
-                if !matches!(
-                    preferences.theme.as_deref(),
-                    None | Some("light") | Some("dark")
-                ) {
+                if preferences
+                    .theme
+                    .as_deref()
+                    .is_some_and(|t| crate::commands::config::known_theme(t).is_none())
+                {
                     preferences.theme = None;
                 }
                 Some(preferences)
@@ -752,6 +753,26 @@ mod tests {
         });
         let reader = BackupReader::open(&path).unwrap();
         assert_eq!(reader.preferences(), Some(&Preferences::default()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_a_colour_scheme_it_knows() {
+        let dir = scratch();
+        let path = backup(&dir);
+        rewrite(&path, |entries| {
+            let slot = entries
+                .iter_mut()
+                .find(|(n, _)| n == PREFERENCES_ENTRY)
+                .unwrap();
+            slot.1 = br#"{"theme":"solarized-dark"}"#.to_vec();
+            reseal(entries);
+        });
+        let reader = BackupReader::open(&path).unwrap();
+        assert_eq!(
+            reader.preferences().and_then(|p| p.theme.as_deref()),
+            Some("solarized-dark")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
