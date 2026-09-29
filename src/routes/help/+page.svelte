@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { modIsCommand } from '$lib/editor/editorMode';
+    import { modIsCommand } from '$lib/keyboard/keys';
     import { SYNC_TONE_COLORS, syncBadge, type BadgeInputs } from '$lib/sync/syncBadge';
     import { isMobile } from '$lib/utils/platform';
     import {
@@ -7,9 +7,9 @@
         DIVIDER,
         INSERT_COMMANDS,
         LINE_STARTS,
-        SHORTCUT_GROUPS,
         SYMBOLS,
     } from '$lib/help/shortcuts';
+    import { SHORTCUT_GROUPS } from '$lib/keyboard/shortcuts';
     import { HELP_KEYS } from '$lib/help/helpShortcut';
     import CalendarLegend from '$lib/help/CalendarLegend.svelte';
     import Keys from '$lib/help/Keys.svelte';

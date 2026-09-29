@@ -1,4 +1,4 @@
-import { modIsCommand, type KeyPress } from '$lib/editor/editorMode';
+import { modIsCommand, type KeyPress } from '$lib/keyboard/keys';
 
 // The keyboard shortcut for the help page: Mod-/, from anywhere in the app.
 // Mod-/ because the editor leaves it free, and it is where a number of apps

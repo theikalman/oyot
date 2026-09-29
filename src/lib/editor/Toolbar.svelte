@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Editor } from '@tiptap/core';
     import { FORMATTING, HISTORY, TOOLS, pressedTools, type Tool } from './toolbarTools';
-    import { shortcutLabel } from './editorMode';
+    import { shortcutLabel } from '$lib/keyboard/keys';
 
     interface Props {
         editor: Editor | null;

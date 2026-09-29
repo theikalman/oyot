@@ -37,7 +37,7 @@
     import SidebarDeviceList from './SidebarDeviceList.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
-    import { shortcutLabel } from '../editor/editorMode';
+    import { shortcutLabel } from '../keyboard/keys';
     import { HELP_KEYS } from '../help/helpShortcut';
     import { indexRevision } from '../stores/derivedIndex';
     import { refreshTagCount, tagCount } from '../tags/tagCount';
