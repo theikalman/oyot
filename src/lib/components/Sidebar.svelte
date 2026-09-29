@@ -697,7 +697,7 @@
         color: var(--text-muted);
     }
     .search-note.error {
-        color: #d9534f;
+        color: var(--error-text);
     }
     .search-hit {
         display: flex;

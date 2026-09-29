@@ -107,7 +107,7 @@
     .btn-accept {
         padding: 8px 16px;
         background: var(--accent-color);
-        color: white;
+        color: var(--on-accent);
         border: none;
         border-radius: 6px;
         cursor: pointer;

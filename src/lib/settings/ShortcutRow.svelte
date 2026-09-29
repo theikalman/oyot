@@ -366,7 +366,7 @@
     .row-btn.primary {
         background: var(--btn-primary-bg);
         border-color: var(--btn-primary-bg);
-        color: white;
+        color: var(--on-accent);
     }
 
     .row-btn.primary:hover {

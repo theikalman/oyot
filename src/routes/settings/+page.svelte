@@ -1,10 +1,7 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import { appStore, theme } from '$lib/stores/app';
     import { canSignal, connectedPeers } from '$lib/stores/sync';
-    import type { Theme } from '$lib/types';
-    import { invoke } from '@tauri-apps/api/core';
     import { exportAllNotes } from '$lib/export';
     import { markdownImport } from '$lib/import';
     import {
@@ -24,9 +21,9 @@
     import { toasts } from '$lib/services/toast';
     import { openDocument, openHelp, openNotes } from '$lib/services/navigation';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
+    import ColorSchemePicker from '$lib/settings/ColorSchemePicker.svelte';
     import { onDestroy, onMount } from 'svelte';
 
-    let currentTheme = $derived($theme);
     let syncSummary = $derived(
         $connectedPeers.length > 0
             ? `${$connectedPeers.length} device${$connectedPeers.length !== 1 ? 's' : ''} connected`
@@ -36,16 +33,6 @@
               ? 'Ready to pair'
               : 'Offline',
     );
-
-    async function handleThemeToggle() {
-        const next: Theme = currentTheme === 'light' ? 'dark' : 'light';
-        appStore.setTheme(next);
-        try {
-            await invoke('save_theme', { theme: next });
-        } catch (error) {
-            console.error('Failed to save theme:', error);
-        }
-    }
 
     function goToSyncSettings() {
         goto(resolve('/settings/sync'));
@@ -212,19 +199,11 @@
         <div class="section-card">
             <div class="setting-row">
                 <div class="setting-info">
-                    <span class="setting-label">Theme</span>
-                    <span class="setting-desc">Switch between light and dark mode</span>
+                    <span class="setting-label">Color scheme</span>
+                    <span class="setting-desc">The colors of the whole app, light or dark</span>
                 </div>
-                <button
-                    class="theme-toggle-btn"
-                    onclick={handleThemeToggle}
-                    title={currentTheme === 'light'
-                        ? 'Switch to dark mode'
-                        : 'Switch to light mode'}
-                >
-                    {currentTheme === 'light' ? '☾' : '☀'}
-                </button>
             </div>
+            <ColorSchemePicker />
         </div>
     </section>
 
@@ -467,25 +446,6 @@
         height: 18px;
         flex-shrink: 0;
         cursor: pointer;
-    }
-
-    .theme-toggle-btn {
-        width: 44px;
-        height: 44px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        font-size: 20px;
-        cursor: pointer;
-        color: var(--text-primary);
-        transition: background-color 0.15s;
-    }
-
-    .theme-toggle-btn:hover {
-        background: var(--bg-hover);
     }
 
     .action-btn {

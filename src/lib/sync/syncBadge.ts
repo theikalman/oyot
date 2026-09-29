@@ -8,10 +8,10 @@ export type SyncTone = 'synced' | 'syncing' | 'offline' | 'error';
  * so the help page's key to the colours uses the same ones.
  */
 export const SYNC_TONE_COLORS: Record<SyncTone, string> = {
-    synced: 'var(--status-synced, #22c55e)',
-    syncing: 'var(--status-syncing, #eab308)',
-    error: 'var(--status-error, #ef4444)',
-    offline: 'var(--status-offline, #9ca3af)',
+    synced: 'var(--status-synced)',
+    syncing: 'var(--status-syncing)',
+    error: 'var(--status-error)',
+    offline: 'var(--status-offline)',
 };
 
 export interface BadgeInputs {

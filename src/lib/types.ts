@@ -1,3 +1,5 @@
+import type { ColorSchemeId } from './theme/schemes';
+
 export interface Document {
     id: string;
     doc_type: 'journal' | 'note';
@@ -30,4 +32,5 @@ export interface IndexData {
     documents: DocumentSummary[];
 }
 
-export type Theme = 'light' | 'dark';
+/** The colour scheme the user chose, by its id in $lib/theme/schemes (ADR 0036). */
+export type Theme = ColorSchemeId;

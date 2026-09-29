@@ -441,7 +441,7 @@
     }
 
     .row-menu-item.danger {
-        color: #ef4444;
+        color: var(--error-text);
     }
 
     /* On a phone the title and what goes beside it do not fit on one line, so

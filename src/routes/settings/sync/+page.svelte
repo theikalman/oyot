@@ -329,7 +329,7 @@
     .btn-danger {
         padding: 8px 16px;
         background: var(--status-error);
-        color: white;
+        color: var(--on-danger);
         border: none;
         border-radius: 6px;
         cursor: pointer;

@@ -135,16 +135,16 @@
         flex-shrink: 0;
     }
     .status-dot.active {
-        background: var(--status-ok, #22c55e);
+        background: var(--status-ok);
     }
     .status-dot.starting {
-        background: var(--status-pending, #f59e0b);
+        background: var(--status-pending);
     }
     .status-dot.off {
-        background: var(--status-idle, #9ca3af);
+        background: var(--status-idle);
     }
     .status-dot.error {
-        background: var(--status-error, #ef4444);
+        background: var(--status-error);
     }
     .status-label {
         font-size: 12px;

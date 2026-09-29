@@ -1,0 +1,352 @@
+/* The colour schemes, one block each (ADR 0036).
+ *
+ * The root element carries the chosen scheme as data-scheme, set by the
+ * bootstrap script in app.html before the first paint and by applyTheme after.
+ * Each block defines every colour the app uses, and nothing outside this file
+ * names a colour of its own, so a scheme is a whole look rather than a few
+ * overrides. A block also works on any element inside the page: the settings
+ * page draws each scheme's preview that way.
+ *
+ * Adding a scheme is a block here with every variable below, an entry in
+ * schemes.ts, and its id in app.html. schemes.test.ts checks all three, and
+ * the contrast of the pairs that carry text.
+ *
+ * Catppuccin: https://catppuccin.com/palette, used as its style guide says:
+ * base, mantle and crust for surfaces, text and subtext for words, blue for
+ * the accent. Solarized: https://ethanschoonover.com/solarized, base03 to
+ * base3 for surfaces and words, blue for the accent. Where a published colour
+ * is too faint to read at the size the app uses it - Latte's peach as a 4px
+ * dot, Solarized's base00 on base2 - it is nudged towards the text colour
+ * until it reads, so a few values are not in either palette.
+ *
+ * Catppuccin Macchiato also stands in for the root element before a scheme is
+ * applied. That selector is :where(:root), which counts for nothing: a bare
+ * :root is as specific as [data-scheme='...'], so on the root element it
+ * would beat every scheme whose block comes before this one.
+ */
+
+/* Catppuccin Latte */
+[data-scheme='catppuccin-latte'] {
+    color-scheme: light;
+
+    /* Surfaces */
+    --bg-primary: #eff1f5;
+    --bg-secondary: #e6e9ef;
+    --bg-hover: #dce0e8;
+    --bg-accent: #d2def5;
+    --code-bg: #e6e9ef;
+    --loading-overlay-bg: rgba(239, 241, 245, 0.9);
+
+    /* Text */
+    --text-primary: #4c4f69;
+    --text-secondary: #64677e;
+    --text-muted: #8c8fa1;
+
+    /* Lines */
+    --border-color: #ccd0da;
+    --border-light: #bcc0cc;
+
+    /* The accent: links, selection, today, and the main button */
+    --accent-color: #1e66f5;
+    --accent-hover: #2a60d2;
+    --accent-bg: #d2def5;
+    --accent-bg-hover: #c1d2f5;
+    --btn-primary-bg: #1d62eb;
+    --btn-primary-hover: #2a60d2;
+    --on-accent: #eff1f5;
+
+    /* Status dots and marks */
+    --status-ok: #40a02b;
+    --status-pending: #df8e1d;
+    --status-syncing: #df8e1d;
+    --status-idle: #8c8fa1;
+    --status-error: #d20f39;
+    --todo-open: #d55409;
+
+    /* Buttons that delete */
+    --danger-hover: #b11f45;
+    --on-danger: #eff1f5;
+
+    /* Messages and badges: a pale fill with text that reads on it */
+    --ok-bg: #d7e6d9;
+    --ok-text: #3d6d3e;
+    --warn-bg: #ede3d7;
+    --warn-text: #7e5d38;
+    --error-bg: #ecd6de;
+    --error-text: #b71c43;
+    --info-bg: #d6e0f5;
+    --info-text: #275ac5;
+}
+
+/* Catppuccin Frappé */
+[data-scheme='catppuccin-frappe'] {
+    color-scheme: dark;
+
+    /* Surfaces */
+    --bg-primary: #303446;
+    --bg-secondary: #292c3c;
+    --bg-hover: #414559;
+    --bg-accent: #444e6b;
+    --code-bg: #292c3c;
+    --loading-overlay-bg: rgba(48, 52, 70, 0.9);
+
+    /* Text */
+    --text-primary: #c6d0f5;
+    --text-secondary: #a5adce;
+    --text-muted: #838ba7;
+
+    /* Lines */
+    --border-color: #414559;
+    --border-light: #51576d;
+
+    /* The accent: links, selection, today, and the main button */
+    --accent-color: #8caaee;
+    --accent-hover: #babbf1;
+    --accent-bg: #444e6b;
+    --accent-bg-hover: #4d5a7c;
+    --btn-primary-bg: #8caaee;
+    --btn-primary-hover: #babbf1;
+    --on-accent: #232634;
+
+    /* Status dots and marks */
+    --status-ok: #a6d189;
+    --status-pending: #e5c890;
+    --status-syncing: #e5c890;
+    --status-idle: #838ba7;
+    --status-error: #e78284;
+    --todo-open: #ef9f76;
+
+    /* Buttons that delete */
+    --danger-hover: #dd99a6;
+    --on-danger: #232634;
+
+    /* Messages and badges: a pale fill with text that reads on it */
+    --ok-bg: #455052;
+    --ok-text: #a6d189;
+    --warn-bg: #514f53;
+    --warn-text: #e5c890;
+    --error-bg: #514251;
+    --error-text: #eda3a4;
+    --info-bg: #414964;
+    --info-text: #a3bbf1;
+}
+
+/* Catppuccin Macchiato */
+:where(:root),
+[data-scheme='catppuccin-macchiato'] {
+    color-scheme: dark;
+
+    /* Surfaces */
+    --bg-primary: #24273a;
+    --bg-secondary: #1e2030;
+    --bg-hover: #363a4f;
+    --bg-accent: #3a4463;
+    --code-bg: #1e2030;
+    --loading-overlay-bg: rgba(36, 39, 58, 0.9);
+
+    /* Text */
+    --text-primary: #cad3f5;
+    --text-secondary: #a5adcb;
+    --text-muted: #8087a2;
+
+    /* Lines */
+    --border-color: #363a4f;
+    --border-light: #494d64;
+
+    /* The accent: links, selection, today, and the main button */
+    --accent-color: #8aadf4;
+    --accent-hover: #b7bdf8;
+    --accent-bg: #3a4463;
+    --accent-bg-hover: #455276;
+    --btn-primary-bg: #8aadf4;
+    --btn-primary-hover: #b7bdf8;
+    --on-accent: #181926;
+
+    /* Status dots and marks */
+    --status-ok: #a6da95;
+    --status-pending: #eed49f;
+    --status-syncing: #eed49f;
+    --status-idle: #8087a2;
+    --status-error: #ed8796;
+    --todo-open: #f5a97f;
+
+    /* Buttons that delete */
+    --danger-hover: #e29eb3;
+    --on-danger: #181926;
+
+    /* Messages and badges: a pale fill with text that reads on it */
+    --ok-bg: #3b474a;
+    --ok-text: #a6da95;
+    --warn-bg: #48464c;
+    --warn-text: #eed49f;
+    --error-bg: #48384b;
+    --error-text: #ee8e9c;
+    --info-bg: #363f5b;
+    --info-text: #8aadf4;
+}
+
+/* Catppuccin Mocha */
+[data-scheme='catppuccin-mocha'] {
+    color-scheme: dark;
+
+    /* Surfaces */
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #181825;
+    --bg-hover: #313244;
+    --bg-accent: #363f5b;
+    --code-bg: #181825;
+    --loading-overlay-bg: rgba(30, 30, 46, 0.9);
+
+    /* Text */
+    --text-primary: #cdd6f4;
+    --text-secondary: #a6adc8;
+    --text-muted: #7f849c;
+
+    /* Lines */
+    --border-color: #313244;
+    --border-light: #45475a;
+
+    /* The accent: links, selection, today, and the main button */
+    --accent-color: #89b4fa;
+    --accent-hover: #b4befe;
+    --accent-bg: #363f5b;
+    --accent-bg-hover: #404e6f;
+    --btn-primary-bg: #89b4fa;
+    --btn-primary-hover: #b4befe;
+    --on-accent: #11111b;
+
+    /* Status dots and marks */
+    --status-ok: #a6e3a1;
+    --status-pending: #f9e2af;
+    --status-syncing: #f9e2af;
+    --status-idle: #7f849c;
+    --status-error: #f38ba8;
+    --todo-open: #fab387;
+
+    /* Buttons that delete */
+    --danger-hover: #e8a2bf;
+    --on-danger: #11111b;
+
+    /* Messages and badges: a pale fill with text that reads on it */
+    --ok-bg: #364143;
+    --ok-text: #a6e3a1;
+    --warn-bg: #454145;
+    --warn-text: #f9e2af;
+    --error-bg: #443244;
+    --error-text: #f38ba8;
+    --info-bg: #313953;
+    --info-text: #89b4fa;
+}
+
+/* Solarized Light */
+[data-scheme='solarized-light'] {
+    color-scheme: light;
+
+    /* Surfaces */
+    --bg-primary: #fdf6e3;
+    --bg-secondary: #eee8d5;
+    --bg-hover: #dcdacb;
+    --bg-accent: #dfe7e1;
+    --code-bg: #eee8d5;
+    --loading-overlay-bg: rgba(253, 246, 227, 0.9);
+
+    /* Text */
+    --text-primary: #073642;
+    --text-secondary: #556c73;
+    --text-muted: #8d9d9d;
+
+    /* Lines */
+    --border-color: #cecfc3;
+    --border-light: #bcc1b8;
+
+    /* The accent: links, selection, today, and the main button */
+    --accent-color: #2483c5;
+    --accent-hover: #1d73ab;
+    --accent-bg: #dfe7e1;
+    --accent-bg-hover: #cededf;
+    --btn-primary-bg: #1d73ac;
+    --btn-primary-hover: #19699b;
+    --on-accent: #fdf6e3;
+
+    /* Status dots and marks */
+    --status-ok: #859900;
+    --status-pending: #b58900;
+    --status-syncing: #b58900;
+    --status-idle: #93a1a1;
+    --status-error: #dc322f;
+    --todo-open: #cb4b16;
+
+    /* Buttons that delete */
+    --danger-hover: #a53031;
+    --on-danger: #fdf6e3;
+
+    /* Messages and badges: a pale fill with text that reads on it */
+    --ok-bg: #ece9c3;
+    --ok-text: #5b6c20;
+    --warn-bg: #f3e7c3;
+    --warn-text: #766621;
+    --error-bg: #f9decd;
+    --error-text: #b23938;
+    --info-bg: #e3e9e1;
+    --info-text: #296a96;
+}
+
+/* Solarized Dark */
+[data-scheme='solarized-dark'] {
+    color-scheme: dark;
+
+    /* Surfaces */
+    --bg-primary: #002b36;
+    --bg-secondary: #002029;
+    --bg-hover: #073642;
+    --bg-accent: #0a435d;
+    --code-bg: #073642;
+    --loading-overlay-bg: rgba(0, 43, 54, 0.9);
+
+    /* Text */
+    --text-primary: #93a1a1;
+    --text-secondary: #839496;
+    --text-muted: #586e75;
+
+    /* Lines */
+    --border-color: #1f4751;
+    --border-light: #30525c;
+
+    /* The accent: links, selection, today, and the main button */
+    --accent-color: #3794d6;
+    --accent-hover: #4c93c1;
+    --accent-bg: #0a435d;
+    --accent-bg-hover: #0d4d6d;
+    --btn-primary-bg: #3c97d7;
+    --btn-primary-hover: #5397c3;
+    --on-accent: #002b36;
+
+    /* Status dots and marks */
+    --status-ok: #859900;
+    --status-pending: #b58900;
+    --status-syncing: #b58900;
+    --status-idle: #586e75;
+    --status-error: #dc322f;
+    --todo-open: #d46b40;
+
+    /* Buttons that delete */
+    --danger-hover: #c65351;
+    --on-danger: #002b36;
+
+    /* Messages and badges: a pale fill with text that reads on it */
+    --ok-bg: #1b412b;
+    --ok-text: #9dad48;
+    --warn-bg: #243e2b;
+    --warn-text: #bda248;
+    --error-bg: #2c2c35;
+    --error-text: #d5807e;
+    --info-bg: #083e55;
+    --info-text: #73acd1;
+}
+
+/* Names the sync badge uses for the same colours. */
+:root,
+[data-scheme] {
+    --status-synced: var(--status-ok);
+    --status-offline: var(--status-idle);
+}

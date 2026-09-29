@@ -1,12 +1,13 @@
 import { writable, derived } from 'svelte/store';
 import type { Document, DocumentSummary, Theme } from '../types';
+import { DEFAULT_COLOR_SCHEME } from '../theme/schemes';
 
 function createAppStore() {
     const { subscribe, set, update } = writable({
         documents: [] as DocumentSummary[],
         currentDocument: null as Document | null,
         isLoading: false,
-        theme: 'light' as Theme,
+        theme: DEFAULT_COLOR_SCHEME as Theme,
     });
 
     return {
@@ -86,7 +87,7 @@ function createAppStore() {
                 documents: [],
                 currentDocument: null,
                 isLoading: false,
-                theme: 'light',
+                theme: DEFAULT_COLOR_SCHEME,
             }),
     };
 }

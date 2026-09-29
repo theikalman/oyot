@@ -46,6 +46,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0033](0033-hash-what-a-document-holds-not-how-it-is-encoded.md)   | Hash what a document holds, not how it is encoded                                    | Accepted                                                                         |
 | [0034](0034-phones-sync-in-the-background-by-dialling-out.md)      | Phones sync in the background by dialling out on a schedule                          | Accepted                                                                         |
 | [0035](0035-keyboard-shortcuts-the-user-can-change.md)             | Keyboard shortcuts the user can change, kept per device                              | Proposed                                                                         |
+| [0036](0036-colour-schemes-the-user-can-choose.md)                 | Colour schemes the user can choose, Catppuccin Macchiato by default                  | Proposed                                                                         |
 
 ## Format
 

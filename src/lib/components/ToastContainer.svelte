@@ -3,17 +3,30 @@
 
     let activeToasts = $derived($toasts);
 
+    // The colour scheme's, so a toast matches the rest of the page.
     function getTypeStyles(type: Toast['type']): { bg: string; border: string; text: string } {
         switch (type) {
             case 'success':
-                return { bg: '#f0fdf4', border: '#22c55e', text: '#166534' };
+                return { bg: 'var(--ok-bg)', border: 'var(--status-ok)', text: 'var(--ok-text)' };
             case 'error':
-                return { bg: '#fef2f2', border: '#ef4444', text: '#991b1b' };
+                return {
+                    bg: 'var(--error-bg)',
+                    border: 'var(--status-error)',
+                    text: 'var(--error-text)',
+                };
             case 'warning':
-                return { bg: '#fffbeb', border: '#f59e0b', text: '#92400e' };
+                return {
+                    bg: 'var(--warn-bg)',
+                    border: 'var(--status-pending)',
+                    text: 'var(--warn-text)',
+                };
             case 'info':
             default:
-                return { bg: '#eff6ff', border: '#3b82f6', text: '#1e40af' };
+                return {
+                    bg: 'var(--info-bg)',
+                    border: 'var(--accent-color)',
+                    text: 'var(--info-text)',
+                };
         }
     }
 

@@ -325,33 +325,20 @@
     }
 
     .kind-fixed {
-        background: rgba(34, 139, 84, 0.14);
-        color: #2f8f5b;
+        background: var(--ok-bg);
+        color: var(--ok-text);
     }
 
     .kind-security {
-        background: rgba(217, 119, 6, 0.14);
-        color: #b45309;
+        background: var(--warn-bg);
+        color: var(--warn-text);
     }
 
     /* Deliberately not red. A removal is news, not a fault, and the error
        colour would read as something having gone wrong. */
     .kind-removed {
-        background: rgba(120, 113, 108, 0.16);
-        color: #6b6460;
-    }
-
-    /* The status colours need lifting on the dark theme to stay readable. */
-    :global([data-theme='dark']) .kind-fixed {
-        color: #5fbf8a;
-    }
-
-    :global([data-theme='dark']) .kind-security {
-        color: #e0a355;
-    }
-
-    :global([data-theme='dark']) .kind-removed {
-        color: #b3aaa4;
+        background: var(--info-bg);
+        color: var(--info-text);
     }
 
     .change-text {

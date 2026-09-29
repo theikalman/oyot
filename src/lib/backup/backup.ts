@@ -5,6 +5,7 @@ import type { ManifestEntry } from '$lib/sync/protocol';
 import { appStore } from '$lib/stores/app';
 import { saveTheme } from '$lib/services/theme';
 import type { Theme } from '$lib/types';
+import { parseColorScheme } from '$lib/theme/schemes';
 import { applyImport, planImport, type ImportPlan, type ImportResult } from './importBackup';
 
 /**
@@ -185,7 +186,7 @@ export function toPreview(raw: RawBackupPreview): BackupPreview {
         documentCount: raw.document_count,
         attachmentCount: raw.attachment_count,
         newAttachmentCount: raw.new_attachment_count,
-        theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : null,
+        theme: parseColorScheme(raw.theme),
         documents: raw.documents.map(toManifestEntry),
     };
 }
@@ -199,7 +200,7 @@ export async function planBackupImport(preview: BackupPreview): Promise<ImportPl
 export interface BackupImportResult extends ImportResult {
     imagesImported: number;
     imagesFailed: number;
-    /** Whether the backup's theme was taken, which it is only on a device that never chose one. */
+    /** Whether the backup's colour scheme was taken, which it is only on a device that never chose one. */
     themeApplied: boolean;
 }
 
@@ -248,7 +249,7 @@ export async function closeBackup(preview: BackupPreview): Promise<void> {
 }
 
 /**
- * Take the backup's theme, but only on a device where nobody has chosen one:
+ * Take the backup's colour scheme, but only on a device where nobody has chosen one:
  * an import fills in what is missing and overrides nothing, preferences
  * included.
  */
