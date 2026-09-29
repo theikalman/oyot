@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { resolve } from '$app/paths';
     import { modIsCommand } from '$lib/keyboard/keys';
     import { SYNC_TONE_COLORS, syncBadge, type BadgeInputs } from '$lib/sync/syncBadge';
     import { isMobile } from '$lib/utils/platform';
@@ -201,6 +202,8 @@
                     The keys are shown the way this device's keyboard labels them{#if command}: ⌘ is
                         Command, ⌃ is Control, ⌥ is Option, and ⇧ is Shift{/if}.
                     {#if isMobile}On a phone or tablet, they need a keyboard attached.{/if}
+                    Most of them can be given other keys in
+                    <a href={resolve('/settings/shortcuts')}>Settings, under Keyboard shortcuts</a>.
                 </p>
 
                 <div class="groups">

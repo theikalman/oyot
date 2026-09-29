@@ -23,6 +23,7 @@
     } from '$lib/desktop';
     import { toasts } from '$lib/services/toast';
     import { openDocument, openHelp, openNotes } from '$lib/services/navigation';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { onDestroy, onMount } from 'svelte';
 
     let currentTheme = $derived($theme);
@@ -53,6 +54,16 @@
     function goToBackupSettings() {
         goto(resolve('/settings/backup'));
     }
+
+    function goToShortcutSettings() {
+        goto(resolve('/settings/shortcuts'));
+    }
+
+    let shortcutSummary = $derived(
+        customShortcuts.changedCount > 0
+            ? `${customShortcuts.changedCount} changed • Choose the keys for formatting, undo and more`
+            : 'Choose your own keys for formatting, undo and more',
+    );
 
     function goToHelp() {
         void openHelp();
@@ -215,6 +226,31 @@
                 </button>
             </div>
         </div>
+    </section>
+
+    <section class="settings-section">
+        <h2 class="section-title">Keyboard</h2>
+        <button class="section-card settings-link" onclick={goToShortcutSettings}>
+            <div class="setting-row">
+                <div class="setting-info">
+                    <span class="setting-label">Keyboard shortcuts</span>
+                    <span class="setting-desc">{shortcutSummary}</span>
+                </div>
+                <svg
+                    class="chevron"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M9 18l6-6-6-6" />
+                </svg>
+            </div>
+        </button>
     </section>
 
     {#if desktop?.supported}

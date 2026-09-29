@@ -101,6 +101,8 @@
                 return 'Sync';
             case '/settings/backup':
                 return 'Backup';
+            case '/settings/shortcuts':
+                return 'Keyboard shortcuts';
             default:
                 return '';
         }
