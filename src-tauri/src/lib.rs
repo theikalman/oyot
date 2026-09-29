@@ -861,6 +861,8 @@ pub fn run() {
             get_or_create_today_journal,
             get_theme,
             save_theme,
+            get_keyboard_shortcuts,
+            save_keyboard_shortcuts,
             save_image,
             pick_and_import_image,
             cleanup_orphaned_images,

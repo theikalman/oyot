@@ -19,7 +19,7 @@ pub use background_sync::*;
 pub use backup::*;
 pub use backup_remote::*;
 pub use backup_schedule::*;
-pub use config::{get_theme, save_theme};
+pub use config::{get_keyboard_shortcuts, get_theme, save_keyboard_shortcuts, save_theme};
 pub use connections::*;
 pub use desktop::*;
 pub use documents::*;
