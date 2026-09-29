@@ -45,6 +45,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0032](0032-sync-over-one-tls-connection-per-device-pair.md)       | Sync over one TLS connection per device pair, not WebRTC                             | Accepted                                                                         |
 | [0033](0033-hash-what-a-document-holds-not-how-it-is-encoded.md)   | Hash what a document holds, not how it is encoded                                    | Accepted                                                                         |
 | [0034](0034-phones-sync-in-the-background-by-dialling-out.md)      | Phones sync in the background by dialling out on a schedule                          | Accepted                                                                         |
+| [0035](0035-keyboard-shortcuts-the-user-can-change.md)             | Keyboard shortcuts the user can change, kept per device                              | Proposed                                                                         |
 
 ## Format
 

@@ -50,6 +50,10 @@ and move between paired devices over an encrypted peer-to-peer connection.
   anywhere, or Settings > Help, says what the calendar's dots and the other
   colors mean, lists every keyboard shortcut as your keyboard labels it, and
   covers the rest worth knowing.
+- **Your own keyboard shortcuts.** Settings > Keyboard shortcuts gives the
+  text styles, headings, lists, undo, Help and Edit other keys, on each
+  device. It asks before taking keys another shortcut has, and Reset puts any
+  of them back.
 - **Backup and restore.** Settings > Backup saves the whole library, images
   included, to one file wherever you choose, or to your Google Drive once you
   link an account (desktop), and imports one back. An import merges into what

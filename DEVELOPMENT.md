@@ -611,14 +611,39 @@ screen, and builds the search index, which only it can render.
 ### Keeping the help page current
 
 The help page (`src/routes/help`) lists every keyboard shortcut and says
-what the app's colours mean. A new shortcut, toolbar tool or slash command
-belongs in `src/lib/help/shortcuts.ts` too. Its tests fail when the editor
-stops binding a listed key, when a toolbar shortcut is missing from the
-list or named differently, and when the slash menu's entries change. The
-calendar's key draws days with `CalendarDay`, so a new day mark shows up
-there without a second copy of its style, but it still needs a line saying
-what it means. It also needs its words in `MARK_MEANINGS`, the hover text and
-screen-reader label on a calendar day, which the type checker insists on.
+what the app's colours mean. A new keyboard shortcut or toolbar tool belongs
+in `src/lib/keyboard/shortcuts.ts`, and a slash command in
+`src/lib/help/shortcuts.ts`. Their tests fail when the editor stops binding
+a listed key, when a toolbar tool is missing from the list or named
+differently, and when the slash menu's entries change. The calendar's key
+draws days with `CalendarDay`, so a new day mark shows up there without a
+second copy of its style, but it still needs a line saying what it means. It
+also needs its words in `MARK_MEANINGS`, the hover text and screen-reader
+label on a calendar day, which the type checker insists on.
+
+### Keyboard shortcuts the user can change
+
+A shortcut in `src/lib/keyboard/shortcuts.ts` with an `id` can be given other
+keys in Settings > Keyboard shortcuts
+([ADR 0035](docs/decisions/0035-keyboard-shortcuts-the-user-can-change.md)).
+The id is what the user's keys are stored under in `config.json`, so it never
+changes once released. Adding one:
+
+- Its default keys have to be ones `problemWith` in
+  `src/lib/keyboard/bindings.ts` accepts, Mod (or Control on a Mac) and a
+  character, and no other shortcut's. The tests say which.
+- If the editor answers it, its command goes in `EDITOR_COMMANDS` in
+  `src/lib/editor/customShortcuts.ts`, the same command the editor's own
+  binding runs: a test runs both and compares them. If the app answers it,
+  ask `customShortcuts.matches(id, event)` rather than reading the keys.
+- A toolbar tool with a shortcut shares its id, which is how its tooltip
+  finds the keys.
+
+A new editor extension that binds a key someone could press as a shortcut
+fails a test until that key is either the default of a shortcut that can be
+changed or kept in `bindings.ts`, on a Mac and elsewhere. Otherwise a user
+could give the key to something else, and the extension would still answer
+it whenever the user's shortcut had not changed.
 
 ## Tech Stack
 
