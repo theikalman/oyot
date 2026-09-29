@@ -2,9 +2,13 @@
 #
 # Set the app version everywhere it is written down.
 #
-# It lives in five places and only four were checked, so a bump could leave
-# the Android versionCode behind and Play would reject the upload after the
-# build had already run. This writes all five from one argument.
+# It lives in seven places: package.json, the two version fields of
+# package-lock.json, tauri.conf.json's version and Android versionCode,
+# Cargo.toml and Cargo.lock. Only four were once checked, so a bump could
+# leave the versionCode behind and Play would reject the upload after the
+# build had already run. The lockfile was not written at all, so its two
+# fields sat at 0.0.23-alpha through two bumps until npm rewrote them. This
+# writes all seven from one argument.
 #
 # The changelog is deliberately not written here: an entry is a sentence about
 # what changed, which nothing can generate. `version.test.ts` fails until one
@@ -52,6 +56,22 @@ function edit(file, fn) {
 }
 
 edit('package.json', (s) => s.replace(/^(\s*"version":\s*)"[^"]*"/m, `$1"${version}"`));
+// npm writes the version into the lockfile twice: at its root, and on the
+// entry for the package itself. Only those two, since every dependency's entry
+// has a "version" of its own. Edited in place rather than through
+// `npm install --package-lock-only`, which goes to the registry and may
+// rewrite more of the lockfile than these two fields. Both are checked
+// afterwards: one found without the other would otherwise pass as an edit.
+edit('package-lock.json', (s) => {
+    const after = s
+        .replace(/^( {2}"version":\s*)"[^"]*"/m, `$1"${version}"`)
+        .replace(/("":\s*\{[^{}]*?"version":\s*)"[^"]*"/, `$1"${version}"`);
+    const lock = JSON.parse(after);
+    if (lock.version !== version || lock.packages?.['']?.version !== version) {
+        throw new Error('package-lock.json: did not find both of its version fields');
+    }
+    return after;
+});
 edit('src-tauri/tauri.conf.json', (s) =>
     s
         .replace(/^(\s*"version":\s*)"[^"]*"/m, `$1"${version}"`)
