@@ -35,7 +35,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Peer-to-peer sync.** Pair two devices on one network and they reconcile
   their whole document set, including images, with no internet and no server
   anywhere in the middle. A device somewhere else is reached at an address you
-  give it, over a VPN you already run.
+  give it, over a VPN you already run. A computer keeps syncing from the tray
+  when its window is closed, and a phone catches up in the background with a
+  device that is awake.
 - **Export.** Settings > Data writes every note out as a Markdown file, with
   the images they embed, in one zip. Nothing here is a format you can only
   read from inside Oyot.
@@ -53,26 +55,27 @@ and move between paired devices over an encrypted peer-to-peer connection.
   link an account (desktop), and imports one back. An import merges into what
   is already there and never removes a note, so it is safe to run on a device
   you are still using. On a computer, backups can also run on their own, daily
-  or weekly, to Google Drive or a folder you choose, while Oyot is open.
+  or weekly, to Google Drive or a folder you choose, while Oyot is running.
 
 ## Sync
 
-Devices sync directly over WebRTC. They find each other in one of two ways, and
-neither needs an account, a server, or anything run by us.
+Devices sync directly with each other, over one encrypted connection per
+pair. They find each other in one of two ways, and neither needs an account, a
+server, or anything run by us.
 
 On one network, they find each other by themselves over mDNS. Elsewhere, you
 tell one device where the other is, and it checks.
 
-- Each device's ID is an Ed25519 public key, and every signaling message is
-  signed, so nothing on the network can forge, alter or replay one.
+- Each device's ID is an Ed25519 public key, and that key is what the
+  connection is made with (TLS 1.3), so nothing on the network can pose as a
+  device you paired with, or read what passes between them.
 - Pairing is explicit. You read one device's ID on another (by hand or by QR
   code) and confirm the prompt. Devices do announce themselves on the network,
   but an announcement is only an address: nothing syncs until you have
   confirmed the ID.
 - Documents reconcile as a whole set on every connection, so devices converge
   after being apart without a central copy to fall back on.
-- Note content never leaves the two devices, and is encrypted in transit by
-  WebRTC's DTLS.
+- Note content never leaves your devices, and is encrypted in transit.
 
 ### Devices that are not on one network
 
@@ -80,13 +83,14 @@ Pairing asks where the other device is. Answer "somewhere else" and it takes an
 address alongside the ID: a host name or an IP that does not change. The
 reliable way to have one is a VPN you already run between your own machines,
 such as Tailscale, where every device has a stable name and address. Pair with
-the other device's address on this one, then add this device's address over
-there, on its row under Paired Devices, and they reach each other from
-anywhere.
+the other device's address on this one, and they reach each other from
+anywhere: the device with the address makes the connection, and it carries
+sync both ways. Adding this device's address on the other one too, on its row
+under Paired Devices, lets either side start.
 
 Oyot does not install, configure or manage the VPN, and does not know whether
-you have one. It only uses the address. Nothing else changes: the same signed
-handshake, the same encrypted data channel, the same documents.
+you have one. It only uses the address. Nothing else changes: the same
+handshake, the same encrypted connection, the same documents.
 
 **What this does not do:** it is not a fallback that happens by itself. Two
 devices with no shared network and no address for each other do not sync, and
@@ -101,6 +105,15 @@ Local discovery works on desktop and Android. iOS needs a Bonjour backend that
 does not exist yet, so an iOS device finds nothing on its own network; it can
 still sync with devices you have given it an address for.
 
+### In the background
+
+Closing Oyot's window on a computer leaves it running in the tray (the menu bar
+on a Mac), still syncing, and it can start there when you log in. A phone
+cannot be reached while it is in your pocket, so instead it reaches out every
+so often, when Android or iOS lets it, to a device that is awake, such as that
+computer. Settings > Sync on a phone turns this off, allows it on mobile data,
+and says when it last ran. Opening Oyot always syncs straight away.
+
 The design decisions behind all of this, including what each one gives up, are
 in [docs/decisions](./docs/decisions).
 
@@ -114,8 +127,8 @@ builds are produced by CI; other platforms are built locally for now.
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap
 - **Backend**: Rust, Tauri 2
 - **Storage**: SQLite (rusqlite), Yjs CRDTs for document content
-- **Sync**: WebRTC data channels, with mDNS on the local network for
-  signaling
+- **Sync**: in Rust, over TLS 1.3 between devices, with mDNS on the local
+  network, merging documents with `yrs`, the Rust port of Yjs
 
 ## Development
 

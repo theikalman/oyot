@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as Y from 'yjs';
 
-// The service talks to Tauri through the repository and to peers through the
-// sync layer; neither exists under vitest. Capture the calls instead.
+// The service talks to Tauri through the repository, which does not exist
+// under vitest. Capture the calls instead. What peers are sent is Rust's to
+// work out from each save (ADR 0031, decision 4).
 const saved: Array<{ docId: string; state: Uint8Array }> = [];
-const broadcast: Array<{ docId: string; update: string }> = [];
 let saveShouldThrow = false;
 
 vi.mock('$lib/sync', () => ({
@@ -13,9 +13,6 @@ vi.mock('$lib/sync', () => ({
             if (saveShouldThrow) throw new Error('boom');
             saved.push({ docId, state: mergedState });
         },
-    },
-    broadcastLocalUpdate: (docId: string, update: string) => {
-        broadcast.push({ docId, update });
     },
 }));
 
@@ -55,7 +52,6 @@ function textOf(state: Uint8Array): string {
 describe('EditorSaveService', () => {
     beforeEach(() => {
         saved.length = 0;
-        broadcast.length = 0;
         counts.length = 0;
         saveShouldThrow = false;
         vi.useFakeTimers();
@@ -143,34 +139,30 @@ describe('EditorSaveService', () => {
     it('an untouched document is not written', () => {
         // A fresh Y.Doc encodes to a 2-byte "empty update", never zero length,
         // so a `=== 0` guard here would let every opened-but-unedited document
-        // write a row and broadcast it to every peer.
+        // write a row.
         const svc = new EditorSaveService();
         svc.setDocument(asDocument('doc'));
         svc.setYDoc(new Y.Doc());
 
         expect(svc.flushNow()).toBeNull();
         expect(saved).toHaveLength(0);
-        expect(broadcast).toHaveLength(0);
     });
 
-    it('a save broadcasts the edit it recorded', async () => {
+    it('an edit schedules a write that carries it', async () => {
         const ydoc = docWith('shared');
-        const svc = new EditorSaveService();
+        const svc = new EditorSaveService({ debounceMs: 100 });
         svc.setDocument(asDocument('doc'));
         svc.setYDoc(ydoc);
 
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
         ydoc.getText('content').insert(6, '!');
-        svc.recordUpdate(updates[0]);
+        svc.recordUpdate();
+        expect(svc.hasPendingWrite()).toBe(true);
 
-        await svc.flushNow();
+        await vi.advanceTimersByTimeAsync(100);
 
-        expect(broadcast).toHaveLength(1);
-        expect(broadcast[0].docId).toBe('doc');
-        const peer = new Y.Doc();
-        Y.applyUpdate(peer, saved[0].state);
-        expect(peer.getText('content').toString()).toBe('shared!');
+        expect(saved).toHaveLength(1);
+        expect(textOf(saved[0].state)).toBe('shared!');
+        expect(svc.hasPendingWrite()).toBe(false);
     });
 
     // The sidebar badge read whatever the counts had been when the app
@@ -218,10 +210,8 @@ describe('EditorSaveService', () => {
         svc.setDocument(asDocument('doc'));
         svc.setYDoc(ydoc);
 
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
         ydoc.getText('content').insert(4, '!');
-        svc.recordUpdate(updates[0]);
+        svc.recordUpdate();
 
         saveShouldThrow = true;
         await svc.flushNow();
@@ -235,45 +225,15 @@ describe('EditorSaveService', () => {
         expect(svc.hasPendingWrite()).toBe(false);
     });
 
-    it('does not lose the delta a failed save was carrying', async () => {
-        // The peer never saw it, so it still has to go out. Taking the delta
-        // and dropping it on failure meant only the next edit was broadcast,
-        // and the failed one reached other devices only on the next reconnect.
-        const ydoc = docWith('base');
-        const peer = new Y.Doc();
-        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
-
-        const svc = new EditorSaveService();
-        svc.setDocument(asDocument('doc'));
-        svc.setYDoc(ydoc);
-
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
-        ydoc.getText('content').insert(4, ' one');
-        svc.recordUpdate(updates[0]);
-
-        saveShouldThrow = true;
-        await svc.flushNow();
-        expect(broadcast).toHaveLength(0);
-
-        saveShouldThrow = false;
-        await svc.flushNow();
-
-        expect(broadcast).toHaveLength(1);
-        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        Y.applyUpdate(peer, sent);
-        expect(peer.getText('content').toString()).toBe('base one');
-    });
-
-    it('a document switch drops the dirty flag with the pending edits', () => {
+    it('a document switch drops the dirty flag', () => {
         const svc = new EditorSaveService();
         svc.setDocument(asDocument('doc-a'));
         svc.setYDoc(docWith('x'));
-        svc.recordUpdate(new Uint8Array([1, 2, 3]));
-        expect(svc.hasPendingWrite()).toBe(true);
+        svc.recordUpdate();
+        svc.flushNow();
 
         svc.setDocument(asDocument('doc-b'));
-        expect(svc.takePendingDelta()).toBeNull();
+        expect(svc.hasPendingWrite()).toBe(false);
     });
 
     it('a failed save reports instead of rejecting the caller', async () => {
@@ -285,122 +245,6 @@ describe('EditorSaveService', () => {
         // Teardown paths call this without awaiting, so it must not produce an
         // unhandled rejection.
         await expect(svc.flushNow()).resolves.toBeUndefined();
-        expect(broadcast).toHaveLength(0);
-    });
-});
-
-describe('delta broadcasting', () => {
-    beforeEach(() => {
-        saved.length = 0;
-        broadcast.length = 0;
-        counts.length = 0;
-        saveShouldThrow = false;
-        vi.useFakeTimers();
-    });
-    afterEach(() => vi.useRealTimers());
-
-    // Peers only need what changed; the full state is what goes to disk,
-    // because crdt_state is a materialised column.
-    it('broadcasts only the recorded edits, not the whole document', async () => {
-        const ydoc = docWith('a long pre-existing body of text');
-        // A peer that already has this document, i.e. shares its history. A
-        // lookalike doc with the same text would not do: it has different
-        // client ids, so a delta would have nothing to attach to.
-        const peer = new Y.Doc();
-        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
-
-        const svc = new EditorSaveService();
-        svc.setDocument(asDocument('doc'));
-        svc.setYDoc(ydoc);
-
-        // Capture the update Yjs emits for one small edit.
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
-        ydoc.getText('content').insert(0, '!');
-        expect(updates).toHaveLength(1);
-
-        svc.recordUpdate(updates[0]);
-        await svc.flushNow();
-
-        const persisted = saved[0].state;
-        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        expect(sent.length).toBeLessThan(persisted.length);
-
-        // And the delta still carries the edit.
-        Y.applyUpdate(peer, sent);
-        expect(peer.getText('content').toString()).toBe(ydoc.getText('content').toString());
-    });
-
-    it('coalesces several edits into one delta', async () => {
-        const ydoc = docWith('base');
-        const peer = new Y.Doc();
-        Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
-
-        const svc = new EditorSaveService({ debounceMs: 50 });
-        svc.setDocument(asDocument('doc'));
-        svc.setYDoc(ydoc);
-
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
-        ydoc.getText('content').insert(4, ' one');
-        ydoc.getText('content').insert(8, ' two');
-        expect(updates).toHaveLength(2);
-        for (const u of updates) svc.recordUpdate(u);
-
-        await vi.advanceTimersByTimeAsync(50);
-
-        // Two edits, one broadcast carrying both.
-        expect(broadcast).toHaveLength(1);
-        const sent = Uint8Array.from(atob(broadcast[0].update), (c) => c.charCodeAt(0));
-        Y.applyUpdate(peer, sent);
-        expect(peer.getText('content').toString()).toBe('base one two');
-    });
-
-    it('writes but sends nothing when no local edit was recorded', async () => {
-        // The regression this guards: falling back to the whole document here
-        // meant a peer's edit arriving in the open document triggered a save
-        // that sent the entire document straight back to that peer, once per
-        // remote keystroke batch.
-        const svc = new EditorSaveService();
-        svc.setDocument(asDocument('doc'));
-        svc.setYDoc(docWith('content'));
-
-        await svc.flushNow();
-
-        expect(saved).toHaveLength(1);
-        expect(broadcast).toHaveLength(0);
-    });
-
-    it('does not carry a pending delta across a document switch', async () => {
-        const ydoc = docWith('first');
-        const svc = new EditorSaveService();
-        svc.setDocument(asDocument('doc-a'));
-        svc.setYDoc(ydoc);
-
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
-        ydoc.getText('content').insert(0, 'x');
-        svc.recordUpdate(updates[0]);
-
-        // Switching documents must drop it: broadcasting one document's edit
-        // under another's id would corrupt the peer's copy.
-        svc.setDocument(asDocument('doc-b'));
-        expect(svc.takePendingDelta()).toBeNull();
-    });
-
-    it('a delta is consumed once', async () => {
-        const ydoc = docWith('base');
-        const svc = new EditorSaveService();
-        svc.setDocument(asDocument('doc'));
-        svc.setYDoc(ydoc);
-
-        const updates: Uint8Array[] = [];
-        ydoc.on('update', (u: Uint8Array) => updates.push(u));
-        ydoc.getText('content').insert(0, 'y');
-        svc.recordUpdate(updates[0]);
-
-        expect(svc.takePendingDelta()).not.toBeNull();
-        expect(svc.takePendingDelta()).toBeNull();
     });
 
     it('recordUpdate after destroy is ignored', () => {
@@ -409,44 +253,32 @@ describe('delta broadcasting', () => {
         svc.setYDoc(docWith('x'));
         svc.destroy();
 
-        svc.recordUpdate(new Uint8Array([1, 2, 3]));
+        svc.recordUpdate();
         expect(svc.hasPendingWrite()).toBe(false);
-        expect(svc.takePendingDelta()).toBeNull();
     });
 });
 
 describe('persistSnapshot', () => {
     beforeEach(() => {
         saved.length = 0;
-        broadcast.length = 0;
         saveShouldThrow = false;
     });
 
-    it('writes and broadcasts exactly what it was handed', async () => {
+    it('writes exactly what it was handed', async () => {
         const state = Y.encodeStateAsUpdate(docWith('captured'));
-        await persistSnapshot('doc-x', state, state);
+        await persistSnapshot('doc-x', state);
 
         expect(saved).toEqual([{ docId: 'doc-x', state }]);
-        expect(broadcast[0].docId).toBe('doc-x');
-    });
-
-    it('writes without broadcasting when handed no delta', async () => {
-        const state = Y.encodeStateAsUpdate(docWith('captured'));
-        await persistSnapshot('doc-x', state, null);
-
-        expect(saved).toHaveLength(1);
-        expect(broadcast).toHaveLength(0);
     });
 
     it('skips an empty snapshot', async () => {
-        await persistSnapshot('doc-x', new Uint8Array(), null);
+        await persistSnapshot('doc-x', new Uint8Array());
         expect(saved).toHaveLength(0);
     });
 
     it('skips the bare empty Yjs update', async () => {
         const empty = Y.encodeStateAsUpdate(new Y.Doc());
-        await persistSnapshot('doc-x', empty, empty);
+        await persistSnapshot('doc-x', empty);
         expect(saved).toHaveLength(0);
-        expect(broadcast).toHaveLength(0);
     });
 });

@@ -1,8 +1,7 @@
 use crate::db::AppState;
 use crate::indexer;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use tauri::Emitter;
 
 /// Largest image we will take in, from disk or from a paste. Mirrors the
 /// check the editor does before it calls in, and is the backstop for the peer
@@ -88,6 +87,18 @@ fn store_attachment(
     bytes: &[u8],
     mime_type: &str,
 ) -> Result<StoredImage, String> {
+    store_attachment_at(&state.db, &state.data_dir, bytes, mime_type)
+}
+
+/// `store_attachment`, given the database and the data directory rather than
+/// the app's state, for the sync engine, which runs without Tauri on a phone's
+/// background run (ADR 0031, decision 8).
+pub(crate) fn store_attachment_at(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+    bytes: &[u8],
+    mime_type: &str,
+) -> Result<StoredImage, String> {
     if bytes.is_empty() {
         return Err("image is empty".to_string());
     }
@@ -114,14 +125,14 @@ fn store_attachment(
     let hash = sha256_hex(bytes);
     let filename = filename_for(&hash, mime_type)?;
 
-    let attachments_dir = state.data_dir.join("attachments");
+    let attachments_dir = data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     std::fs::write(attachments_dir.join(&filename), bytes).map_err(|e| e.to_string())?;
 
     let relative_path = format!("attachments/{filename}");
     let now = current_timestamp();
 
-    let db = state.db.lock();
+    let db = db.lock();
     db.execute(
         "INSERT OR REPLACE INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at) VALUES (?, ?, ?, 1, ?)",
         params![&hash, mime_type, &relative_path, now],
@@ -236,7 +247,26 @@ pub async fn pick_and_import_image(
     // decides the real type from the bytes.
     let declared = mime_for_extension(&path)
         .ok_or_else(|| "unsupported image type: only PNG, JPEG, GIF and WebP".to_string())?;
-    store_attachment(&state, &bytes, declared).map(Some)
+    let stored = store_attachment(&state, &bytes, declared)?;
+    announce_image(&state, &stored);
+    Ok(Some(stored))
+}
+
+/// Tell connected devices about an image just added here, so they fetch it
+/// without waiting for their next connection. Sent before the note that
+/// embeds it is saved: a peer that fetches it first has it ready when the
+/// note arrives.
+fn announce_image(state: &AppState, image: &StoredImage) {
+    crate::sync::announce(
+        &state.app_handle,
+        crate::sync::protocol::Message::AttachManifest {
+            items: vec![crate::sync::protocol::AttachmentEntry {
+                hash: image.hash.clone(),
+                mime: image.mime_type.clone(),
+                size: image.size.max(0) as u64,
+            }],
+        },
+    );
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
@@ -258,7 +288,9 @@ pub fn save_image(
         .decode(&image_data)
         .map_err(|e| e.to_string())?;
 
-    store_attachment(&state, &image_bytes, &mime_type).map(|s| s.hash)
+    let stored = store_attachment(&state, &image_bytes, &mime_type)?;
+    announce_image(&state, &stored);
+    Ok(stored.hash)
 }
 
 #[tauri::command]
@@ -460,19 +492,19 @@ pub fn referenced_attachments(db: &Connection) -> Result<Vec<(String, String, St
     Ok(rows)
 }
 
-#[tauri::command]
-pub fn list_attachment_manifest(
-    state: tauri::State<'_, AppState>,
+/// Every referenced image this device holds in full, with its size.
+pub(crate) fn attachment_manifest(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
 ) -> Result<Vec<AttachmentManifestEntry>, String> {
     let rows = {
-        let db = state.db.lock();
+        let db = db.lock();
         referenced_attachments(&db)?
     };
 
     let mut out = Vec::new();
     for (hash, mime_type, local_path) in rows {
-        let size = state
-            .data_dir
+        let size = data_dir
             .join(&local_path)
             .metadata()
             .map(|m| m.len() as i64)
@@ -489,82 +521,46 @@ pub fn list_attachment_manifest(
     Ok(out)
 }
 
-#[derive(serde::Serialize)]
-pub struct AttachmentBytesResponse {
-    pub hash: String,
-    pub mime_type: String,
-    pub data: String, // base64
-}
-
-// Read one attachment's bytes to answer a peer's `attach-need`.
-#[tauri::command]
-pub fn get_attachment_bytes(
-    state: tauri::State<'_, AppState>,
-    hash: String,
-) -> Result<Option<AttachmentBytesResponse>, String> {
-    use base64::Engine;
-
+/// An image's type and bytes, when this device holds it in full.
+pub(crate) fn read_attachment_bytes(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+    hash: &str,
+) -> Result<Option<(String, Vec<u8>)>, String> {
     let row: Option<(String, String)> = {
-        let db = state.db.lock();
+        let db = db.lock();
         db.query_row(
             "SELECT mime_type, local_path FROM attachments \
              WHERE hash = ? AND is_fully_downloaded = 1 AND local_path IS NOT NULL",
-            params![&hash],
+            params![hash],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .ok()
     };
-
     let Some((mime_type, relative_path)) = row else {
         return Ok(None);
     };
-
-    let full_path = state.data_dir.join(relative_path);
-    let bytes = std::fs::read(&full_path).map_err(|e| e.to_string())?;
-
-    Ok(Some(AttachmentBytesResponse {
-        hash,
-        mime_type,
-        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
-    }))
+    let bytes = std::fs::read(data_dir.join(relative_path)).map_err(|e| e.to_string())?;
+    Ok(Some((mime_type, bytes)))
 }
 
+/// Whether this device holds an image in full.
+pub(crate) fn has_attachment(db: &Connection, hash: &str) -> Result<bool, String> {
+    let downloaded: Option<i64> = db
+        .query_row(
+            "SELECT is_fully_downloaded FROM attachments WHERE hash = ?",
+            params![hash],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(downloaded == Some(1))
+}
+
+/// Told to the page when an image arrives, so an open note shows it.
 #[derive(Clone, serde::Serialize)]
 pub(crate) struct AttachmentDownloadedEvent {
     pub hash: String,
-}
-
-// Persist an attachment pulled from a peer (`attach-data`). The hash is the
-// content address, so mismatched bytes are rejected outright. Emits
-// `attachment-downloaded` so open editors can re-resolve the image.
-#[tauri::command]
-pub fn save_attachment_bytes(
-    state: tauri::State<'_, AppState>,
-    hash: String,
-    mime_type: String,
-    data: String,
-) -> Result<(), String> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&data)
-        .map_err(|e| e.to_string())?;
-
-    let actual = sha256_hex(&bytes);
-    if actual != hash {
-        return Err(format!(
-            "attachment hash mismatch: expected {hash}, got {actual}"
-        ));
-    }
-
-    // A peer controls both the bytes and the declared type, and the result is
-    // rendered in our webview, so this path gets the same allowlist and cap as
-    // a local import rather than trusting the manifest.
-    store_attachment(&state, &bytes, &mime_type)?;
-
-    let _ = state
-        .app_handle
-        .emit("attachment-downloaded", AttachmentDownloadedEvent { hash });
-    Ok(())
 }
 
 fn current_timestamp() -> i64 {

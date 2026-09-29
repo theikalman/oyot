@@ -99,29 +99,6 @@ pub fn normalize_addrs(mut addrs: Vec<IpAddr>) -> Vec<IpAddr> {
     addrs
 }
 
-/// Which of this device's own addresses the operating system would use to
-/// reach `target`.
-///
-/// A connected UDP socket sends nothing: connecting only fixes the route, and
-/// the kernel then reports the source address it would put on a packet. That
-/// is exactly the address a peer at `target` would see, and exactly the one the
-/// WebView's host candidate for that interface is bound to, which is what makes
-/// it the right thing to write into an obfuscated candidate (ADR 0023).
-///
-/// Better than listing every interface: one answer, the correct one, and no
-/// unrelated addresses disclosed to the peer.
-pub fn local_source_address(target: IpAddr) -> Option<IpAddr> {
-    let bind: std::net::SocketAddr = if target.is_ipv4() {
-        "0.0.0.0:0".parse().ok()?
-    } else {
-        "[::]:0".parse().ok()?
-    };
-    let socket = std::net::UdpSocket::bind(bind).ok()?;
-    // Port 9 is discard. Nothing is sent to it, and nothing would read it.
-    socket.connect(std::net::SocketAddr::new(target, 9)).ok()?;
-    socket.local_addr().ok().map(|addr| addr.ip())
-}
-
 /// Which devices are reachable right now, by which route.
 #[derive(Debug, Default)]
 pub struct PeerTable {
@@ -211,6 +188,9 @@ impl PeerTable {
 pub struct Peers {
     app: Option<AppHandle>,
     table: ParkingMutex<PeerTable>,
+    /// The node_id of every peer that became reachable, for the sync engine
+    /// to dial it (ADR 0032, decision 1).
+    found: tokio::sync::broadcast::Sender<String>,
 }
 
 impl Peers {
@@ -218,7 +198,13 @@ impl Peers {
         Self {
             app,
             table: ParkingMutex::new(PeerTable::default()),
+            found: tokio::sync::broadcast::channel(64).0,
         }
+    }
+
+    /// Hear about every peer that becomes reachable, by node_id.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.found.subscribe()
     }
 
     /// Record one sighting and tell the frontend if it is news.
@@ -280,6 +266,8 @@ impl Peers {
     }
 
     fn emit_found(&self, peer: &Peer) {
+        // Nobody listening is fine: the engine is not running.
+        let _ = self.found.send(peer.node_id.clone());
         if let Some(app) = &self.app {
             let _ = app.emit("peer-found", serde_json::json!(peer));
         }
@@ -415,14 +403,6 @@ mod tests {
         assert_eq!(table.clear_source(PeerSource::Mdns), vec!["a".to_string()]);
         assert!(table.best("a").is_none());
         assert!(table.best("b").is_some());
-    }
-
-    // No packet leaves the machine, so this works with nothing listening and
-    // with no network at all beyond a loopback.
-    #[test]
-    fn the_source_address_toward_loopback_is_loopback() {
-        let got = local_source_address("127.0.0.1".parse().unwrap());
-        assert_eq!(got, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
     }
 
     #[test]

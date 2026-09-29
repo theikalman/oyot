@@ -2,7 +2,9 @@
 
 - **Status:** Accepted, amended by [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md), which
   removes the broker and with it the development broker described here. The
-  binary chunk framing is untouched
+  binary chunk framing is untouched by it. Amended again by
+  [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which retires
+  the chunk frames (decisions 4 to 6) with the data channel they were for
 - **Date:** 2026-09-14
 - **Amends:** [0005](0005-attachment-sync.md) (the framing and timeout
   assumptions) and [0009](0009-authenticated-signaling.md) (what the reference

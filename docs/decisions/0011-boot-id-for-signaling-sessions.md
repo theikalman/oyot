@@ -1,6 +1,8 @@
 # 0011: Identify a signaling session by boot id, not epoch alone
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which
+  keeps boot ids in the advert and the probe, and takes them out of the
+  session
 - **Date:** 2026-09-14
 - **Amends:** [0004](0004-manual-reconnect-and-per-direction-epoch.md)
   (decision 2, per-direction epoch tracking)

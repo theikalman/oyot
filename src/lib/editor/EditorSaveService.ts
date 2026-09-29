@@ -2,8 +2,8 @@ import * as Y from 'yjs';
 import { toasts } from '$lib/services/toast';
 import type { Document } from '$lib/types';
 import { appStore } from '$lib/stores/app';
-import { documentRepository, broadcastLocalUpdate } from '$lib/sync';
-import { bytesToBase64, EMPTY_UPDATE_LEN } from '$lib/sync/protocol';
+import { documentRepository } from '$lib/sync';
+import { EMPTY_UPDATE_LEN } from '$lib/sync/protocol';
 import type { DocumentIndex } from './documentIndex';
 
 // Long enough to coalesce ordinary typing, short enough that an unexpected
@@ -17,37 +17,22 @@ export interface SaveServiceOptions {
     onSaved?: (docId: string) => void;
 }
 
-// Persist a snapshot and tell paired devices about it.
+// Persist a snapshot. Rust sends connected devices whatever it adds to the
+// store, and nothing when it adds nothing, so a save the user did not prompt
+// sends no one anything (ADR 0031, decision 4).
 //
 // Everything is taken by value: this is called while the editor that produced
 // `snapshot` is being torn down, so it must not read any mutable service state.
 // Reading `this.ydoc` here instead is what made the old flush-on-switch write
 // the incoming document's empty state under the outgoing document's id.
-//
-// `snapshot` is the whole merged state, because `crdt_state` is a materialised
-// column. `delta` is only what changed locally, which is all a peer needs, and
-// `null` means nothing changed locally and there is nothing to send.
-//
-// A null delta must not fall back to broadcasting the snapshot. The editor
-// saves for reasons other than the user typing -- a peer's edit arriving in
-// the open document is one -- and sending the whole document back in response
-// echoes every peer's own edit at it, once per remote keystroke batch.
-//
-// Skipping a live message is not a correctness problem: the manifest exchange
-// on every (re)connect is what guarantees convergence, and live messages are a
-// latency optimisation on top of it (ADR 0003).
 export async function persistSnapshot(
     docId: string,
     snapshot: Uint8Array,
-    delta: Uint8Array | null,
     index?: DocumentIndex,
 ): Promise<void> {
     if (snapshot.length <= EMPTY_UPDATE_LEN) return;
     try {
         await documentRepository.saveLocalUpdate(docId, snapshot, index);
-        if (delta && delta.length > EMPTY_UPDATE_LEN) {
-            broadcastLocalUpdate(docId, bytesToBase64(delta));
-        }
         appStore.markDocumentHasContent(docId);
         if (index) {
             appStore.setDocumentCounts(docId, index.todoCount, index.completedTodoCount);
@@ -63,9 +48,6 @@ export class EditorSaveService {
     private ydoc: Y.Doc | null = null;
     private currentDoc: Document | null = null;
     private saveTimeout: ReturnType<typeof setTimeout> | null = null;
-    // Local edits made since the last write, kept so peers get a delta rather
-    // than the whole document on every keystroke batch.
-    private pendingUpdates: Uint8Array[] = [];
     private debounceMs: number;
     private onSaving?: () => void;
     private onSaved?: (docId: string) => void;
@@ -94,28 +76,17 @@ export class EditorSaveService {
 
     setDocument(doc: Document | null): void {
         this.currentDoc = doc;
+        // An edit belongs to the document that produced it, and a switch has
+        // already flushed it.
         this.dirty = false;
-        // Updates belong to the document that produced them; carrying them
-        // across a switch would broadcast one document's edit under another's
-        // id.
-        this.pendingUpdates = [];
     }
 
-    // A local Yjs update, straight from the document's update event. Records it
-    // for the next broadcast and schedules the write.
-    recordUpdate(update: Uint8Array): void {
+    // A local Yjs update, straight from the document's update event: the
+    // document has an edit to write, so schedule the write.
+    recordUpdate(): void {
         if (this.isDestroyed) return;
-        this.pendingUpdates.push(update);
         this.dirty = true;
         this.triggerSave();
-    }
-
-    // The accumulated local edits as one update, or null if there are none.
-    takePendingDelta(): Uint8Array | null {
-        if (this.pendingUpdates.length === 0) return null;
-        const merged = Y.mergeUpdates(this.pendingUpdates);
-        this.pendingUpdates = [];
-        return merged;
     }
 
     triggerSave(): void {
@@ -149,14 +120,12 @@ export class EditorSaveService {
         const snapshot = Y.encodeStateAsUpdate(this.ydoc);
         if (snapshot.length <= EMPTY_UPDATE_LEN) return null;
 
-        // Read both synchronously, before the returned promise is awaited: the
-        // caller may be tearing this editor down. A null delta is the normal
-        // case for a save that no local edit prompted.
-        const delta = this.takePendingDelta();
+        // Read synchronously, before the returned promise is awaited: the
+        // caller may be tearing this editor down.
         const index = this.readIndex?.() ?? undefined;
 
         this.onSaving?.();
-        return persistSnapshot(docId, snapshot, delta, index)
+        return persistSnapshot(docId, snapshot, index)
             .then(() => {
                 this.dirty = false;
                 this.onSaved?.(docId);
@@ -165,9 +134,8 @@ export class EditorSaveService {
                 // persistSnapshot already reported it to the user; swallow so
                 // a failed save does not surface as an unhandled rejection on
                 // a teardown path. Remember it, though: the content is still
-                // only in memory.
+                // only in memory, and the next save sends it with its own.
                 this.dirty = true;
-                if (delta) this.pendingUpdates.unshift(delta);
                 this.onSaved?.(docId);
             });
     }
@@ -186,7 +154,6 @@ export class EditorSaveService {
         }
         this.ydoc = null;
         this.currentDoc = null;
-        this.pendingUpdates = [];
         this.dirty = false;
     }
 }

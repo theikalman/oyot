@@ -2,6 +2,8 @@ use crate::db::AppState;
 use crate::endpoints::{self, DeviceEndpoint};
 use crate::identity::UserIdentity;
 use crate::pairing::{self, DevicePair};
+use crate::sync::manager::SyncManager;
+use tauri::Manager;
 
 /// This device's identity, as the signaling manager holds it.
 ///
@@ -30,10 +32,13 @@ pub fn set_display_name(
         let db = state.db.lock();
         crate::identity::update_display_name(&db, &display_name)?;
     }
-    // The manager loads the identity once at startup and puts the display
-    // name in every pair request, so without this a rename was invisible to
-    // peers until the app was restarted.
+    // Both hold the identity loaded at startup, and the sync engine puts the
+    // display name in every pair request, so without this a rename was
+    // invisible to peers until the app was restarted.
     state.signaling_manager.set_display_name(&display_name);
+    if let Some(sync) = state.app_handle.try_state::<SyncManager>() {
+        sync.set_display_name(&display_name);
+    }
     Ok(())
 }
 
@@ -54,35 +59,19 @@ pub fn remove_pair(state: tauri::State<'_, AppState>, peer_node_id: String) -> R
         // so it goes with the pairing. Left behind, it would keep the removed
         // device answering probes and showing up as reachable.
         endpoints::remove_endpoints_for_peer(&db, &user_id, &peer_node_id)?;
+        crate::sync::routes::forget(&db, &user_id, &peer_node_id)?;
     }
-    // The persisted row is only half of what trusts this peer; the session
-    // authorization has to go too, or its next offer is accepted anyway.
-    state.signaling_manager.revoke_peer(&peer_node_id);
+    // The row is what lets the device in; the connection it already has
+    // goes too, rather than syncing on until it next drops.
+    if let Some(sync) = state.app_handle.try_state::<SyncManager>() {
+        sync.forget(&peer_node_id);
+    }
     state
         .peers
         .forget(&peer_node_id, crate::network::peers::PeerSource::Address);
+    #[cfg(mobile)]
+    crate::mobile::reschedule(&state.app_handle);
     Ok(())
-}
-
-#[tauri::command]
-pub fn save_pair(
-    state: tauri::State<'_, AppState>,
-    peer_node_id: String,
-    peer_display_name: String,
-    room_id: String,
-) -> Result<(), String> {
-    let user_id = local_identity(&state)?.user_id;
-    let db = state.db.lock();
-    pairing::save_pair(&db, &user_id, &peer_node_id, &peer_display_name, &room_id)
-}
-
-#[tauri::command]
-pub fn update_pair_sync_time(
-    state: tauri::State<'_, AppState>,
-    room_id: String,
-) -> Result<(), String> {
-    let db = state.db.lock();
-    pairing::update_last_sync(&db, &room_id)
 }
 
 // --- addresses for devices that are not on this network -------------------

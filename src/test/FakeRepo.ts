@@ -1,10 +1,10 @@
 import * as Y from 'yjs';
-import { bytesToBase64, base64ToBytes, type ManifestEntry } from '$lib/sync/protocol';
-import { contentHashBase64 } from '$lib/sync/hash';
+import { base64ToBytes, type ManifestEntry } from '$lib/sync/protocol';
+import { contentDigest } from './contentDigest';
 
-// A DocumentRepository stand-in backed by real Y.Docs. Mirrors the semantics
-// the protocol relies on (deterministic update encoding, empty-update sentinel,
-// LWW rename and pin, tombstones) without Tauri.
+// A DocumentRepository stand-in backed by real Y.Docs, for importing a backup
+// without Tauri. Mirrors the rules the Rust commands apply (LWW rename and
+// pin, tombstones, content hashes).
 export class FakeRepo {
     docs = new Map<
         string,
@@ -69,7 +69,6 @@ export class FakeRepo {
     async listSyncState(): Promise<ManifestEntry[]> {
         const out: ManifestEntry[] = [];
         for (const [id, d] of this.docs) {
-            const state = Y.encodeStateAsUpdate(d.ydoc);
             out.push({
                 id,
                 docType: d.docType,
@@ -81,24 +80,11 @@ export class FakeRepo {
                 lifecycleUpdatedAt: d.lifecycleUpdatedAt,
                 pinned: d.pinned,
                 pinnedUpdatedAt: d.pinnedUpdatedAt,
-                contentHash: state.length <= 2 ? null : await contentHashBase64(state),
+                // As Rust reports it: an empty document has a hash too (ADR 0033).
+                contentHash: contentDigest(d.ydoc),
             });
         }
         return out;
-    }
-
-    async localStateVector(id: string): Promise<string> {
-        const d = this.docs.get(id);
-        return bytesToBase64(Y.encodeStateVector(d ? d.ydoc : new Y.Doc()));
-    }
-
-    async computeDelta(id: string, svB64: string): Promise<string | null> {
-        const d = this.docs.get(id);
-        if (!d) return null;
-        const diff = svB64
-            ? Y.encodeStateAsUpdate(d.ydoc, base64ToBytes(svB64))
-            : Y.encodeStateAsUpdate(d.ydoc);
-        return diff.length <= 2 ? null : bytesToBase64(diff);
     }
 
     async mergeDelta(id: string, updateB64: string): Promise<void> {
@@ -182,28 +168,5 @@ export class FakeRepo {
         d.lifecycleUpdatedAt = deletedAt;
         d.ydoc = new Y.Doc();
         return true;
-    }
-
-    // --- attachments ---
-    attachments = new Map<string, { mime: string; data: string }>();
-
-    async listAttachments(): Promise<{ hash: string; mime: string; size: number }[]> {
-        return [...this.attachments].map(([hash, a]) => ({
-            hash,
-            mime: a.mime,
-            size: a.data.length,
-        }));
-    }
-
-    async hasAttachment(hash: string): Promise<boolean> {
-        return this.attachments.has(hash);
-    }
-
-    async readAttachment(hash: string): Promise<{ mime: string; data: string } | null> {
-        return this.attachments.get(hash) ?? null;
-    }
-
-    async saveAttachment(hash: string, mime: string, data: string): Promise<void> {
-        this.attachments.set(hash, { mime, data });
     }
 }

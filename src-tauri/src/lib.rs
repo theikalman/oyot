@@ -3,13 +3,19 @@ mod logging;
 
 mod backup;
 mod commands;
+mod crdt;
 mod crypto;
 mod db;
+#[cfg(desktop)]
+mod desktop;
 mod endpoints;
 mod identity;
 mod indexer;
+#[cfg(mobile)]
+mod mobile;
 mod network;
 mod pairing;
+mod sync;
 
 use crate::commands::*;
 use crate::db::AppState;
@@ -130,6 +136,7 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             peer_display_name TEXT NOT NULL,
             room_id TEXT NOT NULL,
             last_synchronized INTEGER,
+            disconnected INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, peer_node_id)
         );
 
@@ -148,6 +155,34 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             added_at INTEGER NOT NULL,
             last_ok INTEGER,
             PRIMARY KEY (user_id, peer_node_id, host, port)
+        );
+
+        -- Where each paired device was last found on this network, for a
+        -- phone's background run, which cannot count on hearing mDNS (ADR
+        -- 0034, decision 3). `addrs` is a comma-separated list.
+        CREATE TABLE IF NOT EXISTS lan_routes (
+            user_id TEXT NOT NULL,
+            peer_node_id TEXT NOT NULL,
+            addrs TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            seen_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, peer_node_id)
+        );
+
+        -- Every background run, and how it went (ADR 0034, decision 7). The
+        -- newest 200 are kept. `reached` is a JSON array of display names.
+        CREATE TABLE IF NOT EXISTS sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER NOT NULL,
+            reached TEXT NOT NULL,
+            docs_received INTEGER NOT NULL DEFAULT 0,
+            docs_sent INTEGER NOT NULL DEFAULT 0,
+            images_received INTEGER NOT NULL DEFAULT 0,
+            images_sent INTEGER NOT NULL DEFAULT 0,
+            outcome TEXT NOT NULL,
+            error TEXT
         );
 
         -- Every backup attempt, finished or not (ADR 0026). What the settings
@@ -212,7 +247,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -584,12 +619,109 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v13: the content hash covers what a document holds, not its encoded
+    // bytes, and Rust computes it (ADR 0033). The old hashes match nothing
+    // the new ones can, so they are cleared, and `rehash_documents` rebuilds
+    // them after startup, one row at a time. Rebuilding them here would mean
+    // decoding every document inside this transaction, and one document yrs
+    // cannot read would stop the app from starting at all.
+    if version < 13 {
+        db.execute_batch(
+            "UPDATE documents SET content_hash = NULL;
+             PRAGMA user_version = 13;",
+        )
+        .map_err(|e| format!("Migration v13 failed: {}", e))?;
+    }
+
+    // v14: "Disconnect" is stored (ADR 0032, decision 10). It used to last
+    // until the app restarted, and a phone's background runs start fresh
+    // processes, which would forget it within the hour.
+    if version < 14 {
+        // A database from before pairing has no table to add it to; the base
+        // schema creates one with the column.
+        let has_column = db
+            .prepare("SELECT disconnected FROM device_pairs LIMIT 0")
+            .is_ok();
+        if table_exists(db, "device_pairs") && !has_column {
+            db.execute_batch(
+                "ALTER TABLE device_pairs ADD COLUMN disconnected INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(|e| format!("Migration v14 failed: {}", e))?;
+        }
+        db.execute_batch("PRAGMA user_version = 14;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
+    // v15: where each paired device was last found on this network, and the
+    // record of every background run (ADR 0034, decisions 3 and 7).
+    if version < 15 {
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS lan_routes (
+                 user_id TEXT NOT NULL,
+                 peer_node_id TEXT NOT NULL,
+                 addrs TEXT NOT NULL,
+                 port INTEGER NOT NULL,
+                 seen_at INTEGER NOT NULL,
+                 PRIMARY KEY (user_id, peer_node_id)
+             );
+             CREATE TABLE IF NOT EXISTS sync_runs (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 trigger TEXT NOT NULL,
+                 started_at INTEGER NOT NULL,
+                 ended_at INTEGER NOT NULL,
+                 reached TEXT NOT NULL,
+                 docs_received INTEGER NOT NULL DEFAULT 0,
+                 docs_sent INTEGER NOT NULL DEFAULT 0,
+                 images_received INTEGER NOT NULL DEFAULT 0,
+                 images_sent INTEGER NOT NULL DEFAULT 0,
+                 outcome TEXT NOT NULL,
+                 error TEXT
+             );
+             PRAGMA user_version = 15;",
+        )
+        .map_err(|e| format!("Migration v15 failed: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Build the main window from its entry in tauri.conf.json.
+///
+/// The entry says `"create": false` so it is built here rather than by Tauri,
+/// last in `setup()`: a start at login can then stay in the tray without the
+/// window flashing up first (ADR 0030, decision 7), and the page never loads
+/// before the state its commands read is managed.
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .ok_or("tauri.conf.json has no main window")?;
+    let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+
+    #[cfg(desktop)]
+    let builder = builder.visible(!desktop::launched_hidden());
+
+    builder.build()?;
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    // One copy at a time, and it has to be the first plugin registered: a
+    // second launch shows the running copy instead (ADR 0030, decision 6).
+    #[cfg(desktop)]
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            desktop::show_main_window(app)
+        }));
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default();
+
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // Registered for its Rust API: a backup is written to, and read from,
@@ -603,7 +735,21 @@ pub fn run() {
         .plugin(tauri_plugin_barcode_scanner::init())
         // Signing in to Google Drive on a phone (ADR 0025, decision 7).
         // Rust calls it; no capability lets the webview.
-        .plugin(tauri_plugin_sign_in::init());
+        .plugin(tauri_plugin_sign_in::init())
+        // Background runs and the screen (ADR 0034). Registered before the
+        // app finishes launching, which iOS needs of its background tasks.
+        .plugin(tauri_plugin_background_sync::init());
+
+    // Starting at login, opt-in and in the tray (ADR 0030, decision 7). Rust
+    // calls it; no capability lets the webview. A LaunchAgent rather than an
+    // AppleScript login item, because only a LaunchAgent passes `--hidden`.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![desktop::HIDDEN_FLAG]),
+        ))
+        .on_window_event(desktop::close::on_window_event);
 
     builder
         .setup(|app| {
@@ -622,13 +768,29 @@ pub fn run() {
             }
             clear_staging(app.handle());
 
-            {
+            let me = {
                 let db = state.db.lock();
                 let identity = crate::identity::get_or_create_identity(&db)
                     .map_err(|e| format!("Failed to create identity: {}", e))?;
+                let me = sync::manager::Me {
+                    node_id: identity.public.node_id.clone(),
+                    user_id: identity.public.user_id.clone(),
+                    display_name: parking_lot::Mutex::new(identity.public.display_name.clone()),
+                    signing: identity.signing_key.clone(),
+                };
                 state.signaling_manager.set_identity(identity);
-            }
+                me
+            };
 
+            // The sync engine, for the life of the process (ADR 0031,
+            // decision 1). It starts once the listener is up, below.
+            app.manage(sync::manager::SyncManager::new(
+                state.db.clone(),
+                state.data_dir.clone(),
+                std::sync::Arc::new(sync::tauri_events::TauriEvents::new(app.handle().clone())),
+                me,
+                state.peers.clone(),
+            ));
             app.manage(state);
             app.manage(BackupState::default());
             // Whatever remote destinations this build has credentials for
@@ -638,6 +800,42 @@ pub fn run() {
             ));
             // After everything it reads is managed (ADR 0026).
             start_scheduler(app.handle().clone());
+
+            // Hashes the v13 migration cleared, and any a failed read left
+            // out, rebuilt off the startup path (ADR 0033, decision 5).
+            let db = app.state::<AppState>().db.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::commands::sync::rehash_documents(&db)
+            });
+
+            // Listening, discovery and sync, on the async runtime: the engine
+            // spawns its connections there. A desktop runs them for as long
+            // as it runs; a phone only while it is on screen, which its
+            // platform reports (ADR 0034, decision 1).
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::signaling::start_network(&handle).await {
+                        warn_log!("[sync] could not start: {e}");
+                    }
+                });
+            }
+            #[cfg(mobile)]
+            mobile::keep(app.handle());
+
+            #[cfg(desktop)]
+            {
+                app.manage(desktop::close::CloseState::default());
+                desktop::tray::install(app.handle())?;
+                desktop::watcher::start(app.handle().clone());
+                if desktop::launched_hidden() {
+                    desktop::started_hidden();
+                }
+            }
+
+            // Last, once everything the page's commands read is managed.
+            create_main_window(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -669,12 +867,10 @@ pub fn run() {
             list_unindexed_documents,
             get_attachment_info,
             get_local_blob_url,
-            list_attachment_manifest,
-            get_attachment_bytes,
-            save_attachment_bytes,
             get_yjs_state,
             save_yjs_update,
-            set_content_hash,
+            save_document_index,
+            announce_documents,
             get_identity,
             set_display_name,
             list_paired_devices,
@@ -682,18 +878,17 @@ pub fn run() {
             forget_peer_endpoint,
             list_peer_endpoints,
             remove_pair,
-            save_pair,
-            update_pair_sync_time,
-            signaling_publish_pair_request,
-            signaling_accept_pair_request,
-            signaling_decline_pair_request,
-            signaling_publish_offer,
-            signaling_publish_answer,
-            signaling_publish_ice_candidate,
-            signaling_start,
-            signaling_stop,
+            get_sync_status,
+            request_pair,
+            answer_pair_request,
+            disconnect_device,
+            reconnect_device,
+            request_attachment,
+            get_network_status,
+            get_background_sync,
+            set_background_sync,
+            set_background_sync_mobile_data,
             probe_stored_addresses,
-            local_address_toward,
             list_reachable_peers,
             list_export_attachments,
             export_notes,
@@ -717,9 +912,25 @@ pub fn run() {
             set_backup_schedule,
             choose_backup_folder,
             dismiss_backup_suggestion,
+            get_desktop_settings,
+            set_keep_running,
+            set_start_at_login,
+            answer_close_notice,
+            close_acknowledged,
+            finish_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            // Say goodbye on the network before going, so peers do not keep
+            // dialling a port nothing answers.
+            tauri::RunEvent::Exit => crate::commands::signaling::stop_network(app),
+            // Clicking the Dock icon of an Oyot hidden to the menu bar brings
+            // its window back (ADR 0030, decision 3).
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => desktop::show_main_window(app),
+            _ => {}
+        });
 }
 
 #[cfg(test)]
@@ -1131,8 +1342,8 @@ mod migration_tests {
         );
     }
 
-    // Mirrors pairing::save_pair. The transport calls it on every transition to
-    // connected, so it must not disturb the sync timestamp of an existing pair.
+    // Mirrors pairing::save_pair. A device can pair again with one that still
+    // has it, so saving must not disturb the sync timestamp of an existing pair.
     #[test]
     fn saving_a_known_pair_keeps_its_last_sync_time() {
         let db = Connection::open_in_memory().unwrap();
@@ -1399,5 +1610,73 @@ mod migration_tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migrating_to_v13_clears_the_old_hashes_and_keeps_the_content() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute(
+            "INSERT INTO documents (id, type, title, crdt_state, content_hash, created_at, updated_at)
+             VALUES ('d1', 'note', 'n', x'0102', x'aa', 0, 0)",
+            [],
+        )
+        .unwrap();
+        db.execute_batch("PRAGMA user_version = 12;").unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let (state, hash): (Vec<u8>, Option<Vec<u8>>) = db
+            .query_row(
+                "SELECT crdt_state, content_hash FROM documents WHERE id = 'd1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, vec![1, 2]);
+        assert_eq!(hash, None);
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migrating_to_v14_keeps_every_pair_connected() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE device_pairs (
+                 user_id TEXT NOT NULL, peer_node_id TEXT NOT NULL,
+                 peer_display_name TEXT NOT NULL, room_id TEXT NOT NULL,
+                 last_synchronized INTEGER, PRIMARY KEY (user_id, peer_node_id));
+             INSERT INTO device_pairs VALUES ('u', 'n', 'Laptop', 'r', NULL);",
+        )
+        .unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("PRAGMA user_version = 13;").unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let disconnected: i64 = db
+            .query_row("SELECT disconnected FROM device_pairs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(disconnected, 0);
+    }
+
+    #[test]
+    fn migrating_to_v15_adds_routes_and_the_run_record() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch("DROP TABLE lan_routes; DROP TABLE sync_runs; PRAGMA user_version = 14;")
+            .unwrap();
+
+        run_migrations(&db).unwrap();
+
+        assert!(table_exists(&db, "lan_routes"));
+        assert!(table_exists(&db, "sync_runs"));
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 15);
     }
 }

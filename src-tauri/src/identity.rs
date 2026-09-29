@@ -77,7 +77,7 @@ fn default_display_name(node_id: &str) -> String {
     hostname.unwrap_or_else(|| format!("Device-{}", &node_id[..8]))
 }
 
-fn load_identity(db: &rusqlite::Connection) -> Result<Option<LocalIdentity>, String> {
+pub(crate) fn load_identity(db: &rusqlite::Connection) -> Result<Option<LocalIdentity>, String> {
     let row = db
         .query_row(
             // `rowid` rather than bare LIMIT 1: without an ordering SQLite

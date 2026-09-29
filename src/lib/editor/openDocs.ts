@@ -3,13 +3,12 @@ import type * as Y from 'yjs';
 // The Y.Doc behind the open editor, for as long as a document is open.
 //
 // The sync layer consults this so a peer's update can be applied to the
-// document the user is looking at. The alternative -- write the merge to
-// SQLite, emit an event, have the editor fetch the whole document back and
-// apply it -- was both slow (three full-document IPC transfers per remote
-// edit) and unsafe: it re-read "the current document" after an await, so
-// switching documents mid-flight applied one document's state to another
-// document's Y.Doc, then persisted and broadcast the result as legitimate
-// content.
+// document the user is looking at. An earlier alternative -- have the editor
+// fetch the whole document back and apply it -- was both slow (three
+// full-document IPC transfers per remote edit) and unsafe: it re-read "the
+// current document" after an await, so switching documents mid-flight applied
+// one document's state to another document's Y.Doc, then persisted the result
+// as legitimate content.
 //
 // Ownership: `DocumentRepository.openDocument` registers, the editor
 // unregisters when it tears the document down.

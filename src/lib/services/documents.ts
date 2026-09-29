@@ -42,6 +42,19 @@ export async function reindexAndCollect(): Promise<void> {
     await cleanupOrphanedImages();
 }
 
+// Index what Rust merged while no page was there to: in a phone's background
+// run, or while a hidden window's page was suspended (ADR 0031, decision 7).
+// Run whenever the page comes back on screen; it costs one query when there
+// is nothing to do.
+export async function catchUpIndex(): Promise<void> {
+    try {
+        const indexed = await documentRepository.backfillIndex();
+        if (indexed > 0) log.debug(`Indexed ${indexed} document(s) merged while away`);
+    } catch (error) {
+        console.error('Failed to catch up document indexes:', error);
+    }
+}
+
 export async function cleanupOrphanedImages(): Promise<number> {
     try {
         const count: number = await invoke('cleanup_orphaned_images');

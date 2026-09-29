@@ -1,6 +1,8 @@
 # 0004: Bring back a manual "Reconnect", track the epoch per direction
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which
+  retires the per-direction epoch (decision 2) along with WebRTC. Reconnect
+  keeps its meaning
 - **Date:** 2026-08-29
 - **Supersedes:** part of [0002](0002-signaling-retry-and-perfect-negotiation.md)
   (decision 2, "The manual 'Reconnect' button is removed", and the

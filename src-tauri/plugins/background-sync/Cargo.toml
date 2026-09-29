@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-background-sync"
+version = "0.1.0"
+description = "Background sync on phones: the platform's scheduler, and the app coming on screen and leaving it"
+edition = "2021"
+publish = false
+# Tauri finds the plugin's Swift package and Gradle module through this.
+links = "tauri-plugin-background-sync"
+
+[dependencies]
+tauri = "2"
+serde_json = "1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

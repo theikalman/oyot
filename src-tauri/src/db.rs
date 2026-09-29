@@ -1,3 +1,4 @@
+use crate::commands::signaling::NetworkStatus;
 use crate::network::lan_discovery::LanDiscovery;
 use crate::network::lan_signaling::LanListener;
 use crate::network::peers::Peers;
@@ -29,20 +30,21 @@ pub struct AppState {
     pub db: Arc<parking_lot::Mutex<Connection>>,
     pub signaling_manager: Arc<SignalingManager>,
     /// Who this device can reach, by whichever route found them (ADR 0023).
-    /// Every discovery source writes here and the signaling manager reads it.
+    /// Every discovery source writes here and the sync engine dials from it.
     pub peers: Arc<Peers>,
     /// Discovery of this user's other devices on the local network (ADR 0018).
     pub lan: Arc<LanDiscovery>,
     /// The other way a device is found: an address the user stored for it,
     /// proved by a probe (ADR 0023).
     pub remote: Arc<RemoteProbe>,
-    /// The local-network signaling listener, while one is running. Its port is
-    /// what discovery advertises, so the two start and stop together.
+    /// The listener, while one is running. Its port is what discovery
+    /// advertises, so the two start and stop together.
     pub lan_listener: Arc<parking_lot::Mutex<Option<LanListener>>>,
+    /// How the listener and discovery came up, once they have.
+    pub network: parking_lot::Mutex<Option<NetworkStatus>>,
     /// Identifies this run of the process in what we advertise, so a peer that
     /// restarted is not mistaken for the same one still sitting there.
     pub boot_id: String,
-    #[allow(dead_code)]
     pub app_handle: AppHandle,
     pub data_dir: PathBuf,
 }
@@ -65,7 +67,7 @@ impl AppState {
 
         let boot_id = uuid::Uuid::new_v4().to_string();
         let peers = Arc::new(Peers::new(Some(app_handle.clone())));
-        let signaling_manager = Arc::new(SignalingManager::new(peers.clone()));
+        let signaling_manager = Arc::new(SignalingManager::new());
         let lan = Arc::new(LanDiscovery::new(Some(app_handle.clone()), peers.clone()));
         let remote = Arc::new(RemoteProbe::new(
             peers.clone(),
@@ -81,6 +83,7 @@ impl AppState {
             lan,
             remote,
             lan_listener: Arc::new(parking_lot::Mutex::new(None)),
+            network: parking_lot::Mutex::new(None),
             boot_id,
             app_handle,
             data_dir: app_data_dir,

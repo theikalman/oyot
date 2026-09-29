@@ -1,8 +1,11 @@
 pub mod attachments;
+pub mod background_sync;
 pub mod backup;
 pub mod backup_remote;
 pub mod backup_schedule;
 pub mod config;
+pub mod connections;
+pub mod desktop;
 pub mod documents;
 pub mod export;
 pub mod import;
@@ -12,10 +15,13 @@ pub mod signaling;
 pub mod sync;
 
 pub use attachments::*;
+pub use background_sync::*;
 pub use backup::*;
 pub use backup_remote::*;
 pub use backup_schedule::*;
 pub use config::{get_theme, save_theme};
+pub use connections::*;
+pub use desktop::*;
 pub use documents::*;
 pub use export::*;
 pub use import::*;

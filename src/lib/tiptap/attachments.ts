@@ -24,12 +24,8 @@ export async function resolveAttachmentSrc(hash: string): Promise<string | null>
     }
 }
 
-// Ask connected peers for an attachment we are missing.
-//
-// There used to be a `request_attachment` command alongside this, flipping
-// `is_fully_downloaded` to 0. It was a no-op on the device that needs the
-// bytes, because no row exists there until they arrive, and now that orphan
-// collection works off references it has nothing left to mean.
+// Ask connected devices for an attachment we are missing. `attachment-
+// downloaded` says when it has arrived.
 export function requestAttachment(hash: string): void {
     try {
         pullAttachmentFromPeers(hash);

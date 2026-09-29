@@ -53,8 +53,8 @@
         // flushed while the state that produced it is still live.
         onBeforeTeardown?: (docId: string, ydoc: Y.Doc) => void;
         // Every local change to the document, as a Yjs update. Changes merged
-        // from a peer are tagged REMOTE_ORIGIN and skipped, so a merge is not
-        // rebroadcast to the peer that sent it.
+        // from a peer are tagged REMOTE_ORIGIN and skipped: they are already
+        // stored, and saving them again would only be work.
         onLocalUpdate?: (update: Uint8Array) => void;
         // Which of the document's task items to put the cursor on, counted
         // depth-first, as the todo index addresses one. Null for an ordinary
@@ -177,8 +177,7 @@
 
         // The only thing that schedules a save. Tiptap's `onUpdate` used to do
         // it as well, which meant a peer's edit landing in this document
-        // scheduled a save whose "delta" was the whole document, sent straight
-        // back to the peer that had just sent it.
+        // scheduled a save of the whole document.
         newYDoc.on('update', (update: Uint8Array, origin: unknown) => {
             if (origin === REMOTE_ORIGIN) return;
             onLocalUpdate?.(update);

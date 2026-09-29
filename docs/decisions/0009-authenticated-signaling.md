@@ -1,6 +1,8 @@
 # 0009: Sign signaling messages, make node_id a public key
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which
+  moves pairing out of the signed envelope and into TLS, keyed by the same
+  node key. Probes stay signed
 - **Date:** 2026-09-14
 - **Amends:** [0001](0001-mqtt-over-iroh-for-signaling.md), which chose the MQTT
   transport without specifying how a sender is authenticated

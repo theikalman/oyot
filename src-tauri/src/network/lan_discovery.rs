@@ -31,9 +31,11 @@ const TXT_NODE_ID: &str = "nid";
 const TXT_BOOT: &str = "boot";
 const TXT_VERSION: &str = "v";
 
-/// What this build advertises, and the only version it understands. A peer
-/// announcing anything else is ignored rather than guessed at.
-const ADVERT_VERSION: &str = "1";
+/// What this build advertises, and the only version it understands: the sync
+/// protocol's. A peer announcing anything else is ignored rather than guessed
+/// at, which is how a build that syncs over TLS and one that synced over
+/// WebRTC stay apart (ADR 0032, decision 9).
+const ADVERT_VERSION: &str = crate::sync::protocol::PROTOCOL_VERSION;
 
 /// The TXT properties to advertise for this device.
 pub fn advert_properties(node_id: &str, boot_id: &str) -> Vec<(String, String)> {
@@ -282,6 +284,49 @@ mod backend {
             tasks: vec![browse, prune],
         })
     }
+
+    /// Listen for other devices for `duration`, without advertising this
+    /// one: a phone's background run, which must not invite connections it
+    /// will not be there to take (ADR 0034, decision 3).
+    pub(super) async fn browse_for(
+        peers: &Peers,
+        our_node_id: &str,
+        duration: std::time::Duration,
+    ) {
+        let daemon = match ServiceDaemon::new() {
+            Ok(daemon) => daemon,
+            Err(e) => return warn_log!("[LAN] could not start mDNS to browse: {e}"),
+        };
+        let receiver = match daemon.browse(SERVICE_TYPE) {
+            Ok(receiver) => receiver,
+            Err(e) => {
+                let _ = daemon.shutdown();
+                return warn_log!("[LAN] could not browse the network: {e}");
+            }
+        };
+        let deadline = tokio::time::Instant::now() + duration;
+        while let Ok(Ok(event)) = tokio::time::timeout_at(deadline, receiver.recv_async()).await {
+            if let ServiceEvent::ServiceResolved(info) = event {
+                let txt: HashMap<String, String> = info
+                    .txt_properties
+                    .iter()
+                    .map(|p| (p.key().to_lowercase(), p.val_str().to_string()))
+                    .collect();
+                let addrs = info.addresses.iter().map(|a| a.to_ip_addr()).collect();
+                if let Some(peer) = peer_from_advert(
+                    &txt,
+                    &info.fullname,
+                    addrs,
+                    info.port,
+                    our_node_id,
+                    crypto::now_ms(),
+                ) {
+                    peers.observe(peer);
+                }
+            }
+        }
+        let _ = daemon.shutdown();
+    }
 }
 
 /// The iOS stub.
@@ -321,6 +366,19 @@ mod backend {
                 .to_string(),
         )
     }
+
+    pub(super) async fn browse_for(
+        _peers: &Peers,
+        _our_node_id: &str,
+        _duration: std::time::Duration,
+    ) {
+    }
+}
+
+/// Listen for this user's other devices for `duration`, without advertising
+/// this one. Nothing on iOS until the `NWBrowser` backend exists.
+pub async fn browse_for(peers: &Peers, our_node_id: &str, duration: Duration) {
+    backend::browse_for(peers, our_node_id, duration).await
 }
 
 #[cfg(test)]
@@ -338,7 +396,7 @@ mod tests {
     }
 
     fn advert(node_id: &str) -> HashMap<String, String> {
-        txt(&[("nid", node_id), ("boot", "boot-1"), ("v", "1")])
+        txt(&[("nid", node_id), ("boot", "boot-1"), ("v", "2")])
     }
 
     fn addr(last: u8) -> Vec<IpAddr> {
@@ -367,13 +425,17 @@ mod tests {
 
     #[test]
     fn an_advert_from_a_version_we_do_not_speak_is_ignored() {
-        let props = txt(&[("nid", "peer-a"), ("v", "2")]);
-        assert!(peer_from_advert(&props, "f", addr(2), 7000, US, 0).is_none());
+        for version in ["1", "3"] {
+            let props = txt(&[("nid", "peer-a"), ("v", version)]);
+            assert!(peer_from_advert(&props, "f", addr(2), 7000, US, 0).is_none());
+        }
+        let unversioned = txt(&[("nid", "peer-a")]);
+        assert!(peer_from_advert(&unversioned, "f", addr(2), 7000, US, 0).is_none());
     }
 
     #[test]
     fn an_advert_with_no_node_id_is_ignored() {
-        let props = txt(&[("v", "1")]);
+        let props = txt(&[("v", "2")]);
         assert!(peer_from_advert(&props, "f", addr(2), 7000, US, 0).is_none());
     }
 

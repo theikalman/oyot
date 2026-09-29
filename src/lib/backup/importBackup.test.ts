@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as Y from 'yjs';
-import { applyImport, planImport, type ImportAnnouncer } from './importBackup';
+import { applyImport, planImport } from './importBackup';
 import { reconcile } from '$lib/sync/reconcile';
-import { bytesToBase64, type ManifestEntry } from '$lib/sync/protocol';
+import { bytesToBase64 } from '$lib/sync/protocol';
 import { FakeRepo } from '../../test/FakeRepo';
 
 /**
@@ -21,22 +21,6 @@ async function backupOf(device: FakeRepo) {
     return { documents, readState };
 }
 
-function recorder() {
-    const calls = {
-        created: [] as string[],
-        updated: [] as string[],
-        renamed: [] as string[],
-        pinned: [] as string[],
-    };
-    const announce: ImportAnnouncer = {
-        created: (entry: ManifestEntry) => void calls.created.push(entry.id),
-        updated: (docId) => void calls.updated.push(docId),
-        renamed: (docId) => void calls.renamed.push(docId),
-        pinned: (docId) => void calls.pinned.push(docId),
-    };
-    return { calls, announce };
-}
-
 /** Copy one document from `from` to `to`, as a sync would have. */
 function share(from: FakeRepo, to: FakeRepo, id: string): void {
     const source = from.docs.get(id)!;
@@ -45,10 +29,22 @@ function share(from: FakeRepo, to: FakeRepo, id: string): void {
     to.docs.set(id, { ...source, ydoc });
 }
 
+/**
+ * Import `backup` into `device`, recording which renames and pins were
+ * written. Each is a Rust command that tells connected devices, so what is
+ * written is what they hear about.
+ */
 async function importInto(device: FakeRepo, backup: Awaited<ReturnType<typeof backupOf>>) {
     const plan = planImport(backup.documents, await device.listSyncState());
-    const { calls, announce } = recorder();
-    const result = await applyImport(plan, backup.readState, device as never, announce);
+    const renamed = vi.spyOn(device, 'applyRename');
+    const pinned = vi.spyOn(device, 'applyPin');
+    const result = await applyImport(plan, backup.readState, device as never);
+    const calls = {
+        renamed: renamed.mock.calls.map(([id]) => id),
+        pinned: pinned.mock.calls.map(([id]) => id),
+    };
+    renamed.mockRestore();
+    pinned.mockRestore();
     return { plan, result, calls };
 }
 
@@ -62,7 +58,7 @@ describe('importing a backup', () => {
         old.remove('gone', 50);
 
         const fresh = new FakeRepo();
-        const { plan, result, calls } = await importInto(fresh, await backupOf(old));
+        const { plan, result } = await importInto(fresh, await backupOf(old));
 
         expect(plan.counts).toMatchObject({ added: 3, updated: 0, kept: 0 });
         expect(result).toMatchObject({ added: 3, restored: 0, failedTitles: [] });
@@ -71,11 +67,6 @@ describe('importing a backup', () => {
         expect(fresh.docs.get('empty')?.isDeleted).toBe(false);
         // The tombstone comes along, so the delete keeps propagating from here.
         expect(fresh.docs.get('gone')?.isDeleted).toBe(true);
-
-        // Connected devices hear about each note, and about the content of the
-        // ones that have any.
-        expect(calls.created.sort()).toEqual(['23 Sep 2026', 'empty', 'groceries']);
-        expect(calls.updated.sort()).toEqual(['23 Sep 2026', 'groceries']);
     });
 
     it('merges diverged edits rather than choosing between them', async () => {
@@ -242,7 +233,6 @@ describe('importing a backup', () => {
             plan,
             readState,
             device as never,
-            recorder().announce,
             (done, total) => void progress.push([done, total]),
         );
 

@@ -350,11 +350,17 @@
                         yet, but they sync with any device you give them an address for.
                     </li>
                     <li>
+                        <strong>In the background.</strong> On a computer, closing the window leaves Oyot
+                        running in the tray, or the menu bar on a Mac, still syncing. A phone reaches
+                        out every so often, when it is allowed to, to a device that is awake. Settings,
+                        under Sync, says when that last happened.
+                    </li>
+                    <li>
                         <strong>Backups.</strong> Settings, under Backup, saves your whole library, images
                         included, to a file, or on a computer to Google Drive once you link an account.
                         Importing a backup merges it into what is already here and never removes a note.
                         On a computer, backups can also run by themselves, daily or weekly, while Oyot
-                        is open.
+                        is running.
                     </li>
                     <li>
                         <strong>Export.</strong> Settings, under Data, saves every note as a Markdown

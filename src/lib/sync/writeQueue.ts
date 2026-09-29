@@ -1,16 +1,16 @@
 // Serialises asynchronous work by key, so two operations on the same key never
 // interleave while operations on different keys still run in parallel.
 //
-// The sync layer needs this because a write to a document is a
-// read-modify-write: load the stored CRDT state, merge an update into it, write
-// the whole thing back. `save_yjs_update` overwrites `crdt_state` outright, so
-// two writers that both start from the same base produce one lost update, and
-// the loser's edit is gone until the next reconnect re-pulls it.
+// The sync layer used this to keep writes to one document from losing each
+// other, when `save_yjs_update` overwrote `crdt_state` with whatever the page
+// had merged. Rust merges now (ADR 0031, decision 3), and the queue keeps the
+// page's own steps around a write in order: opening a document reads and
+// registers it in one step, a peer's update is applied to the open copy only
+// once it is registered, and an index is read from the copy it describes.
 //
-// That is routine rather than exotic: the data channel dispatches each inbound
-// message without waiting for the previous one to finish, so a `sync-delta`
-// followed by a live edit for the same document is already concurrent, and with
-// three devices two peers can write the same document at once.
+// That is routine rather than exotic: Rust's events arrive without waiting
+// for the page to finish with the last one, so two peers' updates to the
+// document being opened are already concurrent with the opening.
 export type WriteQueue = <T>(key: string, work: () => Promise<T>) => Promise<T>;
 
 export function createWriteQueue(): WriteQueue {

@@ -2,7 +2,9 @@
 
 - **Status:** Accepted, amended by [0022](0022-drop-the-broker-and-sync-only-on-the-local-network.md), which
   removes the broker this ADR kept as the fallback, leaving the local network
-  as the only transport
+  as the only transport, and by
+  [0032](0032-sync-over-one-tls-connection-per-device-pair.md), which replaces
+  WebRTC as the data plane (decision 1)
 - **Date:** 2026-09-15
 - **Amends:** [0001](0001-mqtt-over-iroh-for-signaling.md), which chose MQTT as
   _the_ signaling transport and left the app unable to sync without an

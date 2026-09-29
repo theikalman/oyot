@@ -1,6 +1,7 @@
 # 0010: Apply remote updates into the open document, serialise writes per document
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0031](0031-move-the-sync-engine-into-rust.md), which
+  has Rust merge a peer's update and send the open document what it added
 - **Date:** 2026-09-14
 - **Amends:** [0003](0003-full-document-set-sync.md) (decision 8, "one local
   write path" - it was one path but not a serialised one)

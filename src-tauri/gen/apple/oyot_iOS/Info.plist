@@ -20,6 +20,22 @@
 	<string>0.1.0</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is used to scan another device's Node ID QR code when pairing.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Oyot syncs your notes with your other devices on this network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_oyot._tcp</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.ajiyakin.oyot.sync.refresh</string>
+		<string>com.ajiyakin.oyot.sync.catch-up</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

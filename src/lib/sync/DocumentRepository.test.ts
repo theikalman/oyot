@@ -1,21 +1,39 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as Y from 'yjs';
+import { stateDigest } from '../../test/contentDigest';
 
-// Every command the repository calls, recorded rather than performed. `state`
-// stands in for the `crdt_state` column.
+// Every command the repository calls, recorded rather than performed.
+// `storedState` stands in for the `crdt_state` column, which Rust merges each
+// saved update into (ADR 0031, decision 3), and `unindexed` for the documents
+// `list_unindexed_documents` reports.
 const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
 let storedState = '';
-let onSave: (() => void) | null = null;
+let unindexed: string[] = [];
+
+const fromB64 = (b64: string) => new Uint8Array(Buffer.from(b64, 'base64'));
+const toB64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
+const hashOfStored = () => (storedState ? stateDigest(fromB64(storedState)) : null);
 
 vi.mock('@tauri-apps/api/core', () => ({
     invoke: async (cmd: string, args: Record<string, unknown>) => {
         calls.push({ cmd, args });
-        if (cmd === 'get_yjs_state') return { doc_id: args.docId, state: storedState };
-        if (cmd === 'save_yjs_update') {
-            storedState = args.mergedState as string;
-            onSave?.();
-            return undefined;
+        if (cmd === 'get_yjs_state') {
+            return { doc_id: args.docId, state: storedState, content_hash: hashOfStored() };
         }
+        if (cmd === 'save_yjs_update') {
+            const update = fromB64(args.update as string);
+            const merged = storedState ? Y.mergeUpdates([fromB64(storedState), update]) : update;
+            storedState = toB64(merged);
+            const doc = new Y.Doc();
+            Y.applyUpdate(doc, merged);
+            return { state_vector: toB64(Y.encodeStateVector(doc)) };
+        }
+        // As Rust does: an index read from a state the store has moved on
+        // from is dropped.
+        if (cmd === 'save_document_index') {
+            return args.contentHash === null || args.contentHash === hashOfStored();
+        }
+        if (cmd === 'list_unindexed_documents') return unindexed;
         return undefined;
     },
 }));
@@ -64,7 +82,7 @@ describe('DocumentRepository', () => {
     beforeEach(() => {
         calls.length = 0;
         storedState = '';
-        onSave = null;
+        unindexed = [];
     });
 
     it('merges into the open document rather than reloading it', async () => {
@@ -81,8 +99,7 @@ describe('DocumentRepository', () => {
         expect(live.getText('content').toString()).toBe('hello world');
         expect(calls.some((c) => c.cmd === 'get_yjs_state')).toBe(false);
 
-        const saved = calls.find((c) => c.cmd === 'save_yjs_update');
-        expect(textOfB64(saved?.args.mergedState as string)).toBe('hello world');
+        expect(textOfB64(storedState)).toBe('hello world');
 
         unregisterOpenDoc('doc', live);
     });
@@ -96,10 +113,11 @@ describe('DocumentRepository', () => {
         const index = await repo.importContent('doc', Y.encodeStateAsUpdate(authored('imported')));
 
         const saved = calls.find((c) => c.cmd === 'save_yjs_update');
-        // Saved as the device's own change, so no editor is told to reload.
-        expect(saved?.args.origin).toBe('local');
+        // Saved quietly: peers pull it when the note is announced with the
+        // rest of its batch.
+        expect(saved?.args.quiet).toBe(true);
         const merged = new Y.Doc();
-        Y.applyUpdate(merged, base64ToBytes(saved?.args.mergedState as string));
+        Y.applyUpdate(merged, base64ToBytes(storedState));
         const text = merged.getXmlFragment('content').toString();
         expect(text).toContain('typed while it ran');
         expect(text).toContain('imported');
@@ -108,7 +126,7 @@ describe('DocumentRepository', () => {
         expect(index?.text).toContain('imported');
     });
 
-    it('tags the merge so the editor does not rebroadcast it', async () => {
+    it('tags the merge so the editor does not save it again', async () => {
         const repo = new DocumentRepository();
         const live = docWith('base');
         storedState = bytesToBase64(Y.encodeStateAsUpdate(live));
@@ -122,8 +140,8 @@ describe('DocumentRepository', () => {
             deltaFrom(live, (d) => d.getText('content').insert(4, '!')),
         );
 
-        // The editor's listener skips REMOTE_ORIGIN; anything else would echo
-        // the peer's own edit straight back at it.
+        // The editor's listener skips REMOTE_ORIGIN; anything else would be
+        // saved a second time.
         expect(origins).toEqual(['oyot:remote']);
         unregisterOpenDoc('doc', live);
     });
@@ -197,7 +215,7 @@ describe('DocumentRepository', () => {
         unregisterOpenDoc('doc', live);
     });
 
-    // Before this, a document that arrived from a peer was written with no
+    // Before this, a document that arrived from elsewhere was written with no
     // index: invisible to search, contributing no backlinks and counted as
     // having no tasks, until someone happened to open and edit it here.
     it('indexes a document it merged but never displayed', async () => {
@@ -222,6 +240,57 @@ describe('DocumentRepository', () => {
         unregisterOpenDoc('doc', live);
     });
 
+    // ADR 0031, decision 4: once the store has said what it holds, a save
+    // carries only what it is missing, not the whole note every time.
+    it('sends only what the store is missing once it knows what it holds', async () => {
+        const repo = new DocumentRepository();
+        const live = docWith('hello');
+        registerOpenDoc('doc', live);
+
+        await repo.saveLocalUpdate('doc', Y.encodeStateAsUpdate(live));
+        live.getText('content').insert(5, ' world');
+        await repo.saveLocalUpdate('doc', Y.encodeStateAsUpdate(live));
+
+        const saves = calls.filter((c) => c.cmd === 'save_yjs_update');
+        const second = new Y.Doc();
+        Y.applyUpdate(second, base64ToBytes(saves[1].args.update as string));
+        // Only " world", which cannot even be placed without "hello".
+        expect(second.getText('content').toString()).toBe('');
+        expect(textOfB64(storedState)).toBe('hello world');
+        unregisterOpenDoc('doc', live);
+    });
+
+    // The save is what tells connected devices, so a closed document saves
+    // the rename itself, and only the rename.
+    it('renames a tag in a closed document by saving only what changed', async () => {
+        const repo = new DocumentRepository();
+        const tagged = prosemirrorJSONToYDoc(
+            getSchema(createContentExtensions()),
+            {
+                type: 'doc',
+                content: [
+                    {
+                        type: 'paragraph',
+                        content: [
+                            { type: 'text', text: 'a long note about planning '.repeat(20) },
+                            { type: 'tag', attrs: { name: 'work' } },
+                        ],
+                    },
+                ],
+            },
+            'content',
+        );
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(tagged));
+
+        expect(await repo.renameTagIn('doc', 'work', 'job')).toBe(1);
+        expect(await repo.renameTagIn('doc', 'holiday', 'leave')).toBe(0);
+
+        const saves = calls.filter((c) => c.cmd === 'save_yjs_update');
+        expect(saves).toHaveLength(1);
+        expect((saves[0].args.update as string).length).toBeLessThan(storedState.length / 4);
+        expect((saves[0].args.index as { tags: string[] }).tags).toEqual(['job']);
+    });
+
     it('keeps a newer registration when a replaced editor unregisters late', async () => {
         // Switching away from a document and straight back gives two Y.Docs
         // for one id. The outgoing editor must not evict the incoming one.
@@ -235,5 +304,98 @@ describe('DocumentRepository', () => {
         expect(getOpenDoc('doc')).toBe(second);
         unregisterOpenDoc('doc', second);
         expect(getOpenDoc('doc')).toBeUndefined();
+    });
+});
+
+// A peer's update arrives already merged: Rust stored it, and the page puts it
+// on screen and into the index (ADR 0031, decisions 5 and 7).
+describe('a peer update Rust has merged', () => {
+    beforeEach(() => {
+        calls.length = 0;
+        storedState = '';
+        unindexed = [];
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('lands in the open document without being saved again', async () => {
+        const repo = new DocumentRepository();
+        const live = await (async () => {
+            storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('hello')));
+            return repo.openDocument('doc');
+        })();
+        const origins: unknown[] = [];
+        live.on('update', (_u: Uint8Array, origin: unknown) => origins.push(origin));
+
+        await repo.peerMerged(
+            'doc',
+            deltaFrom(live, (d) => d.getText('content').insert(5, ' world')),
+        );
+
+        expect(live.getText('content').toString()).toBe('hello world');
+        expect(origins).toEqual(['oyot:remote']);
+        expect(calls.some((c) => c.cmd === 'save_yjs_update')).toBe(false);
+        unregisterOpenDoc('doc', live);
+    });
+
+    it('indexes the open document once the edits stop', async () => {
+        const repo = new DocumentRepository();
+        const live = new Y.Doc();
+        registerOpenDoc('doc', live);
+
+        const update = bytesToBase64(Y.encodeStateAsUpdate(authored('from a peer')));
+        await repo.peerMerged('doc', update);
+        await repo.peerMerged('doc', update);
+        expect(calls.some((c) => c.cmd === 'save_document_index')).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        const indexed = calls.filter((c) => c.cmd === 'save_document_index');
+        expect(indexed).toHaveLength(1);
+        expect((indexed[0].args.index as { text: string }).text).toBe('from a peer');
+        expect(indexed[0].args.contentHash).toBeNull();
+        unregisterOpenDoc('doc', live);
+    });
+
+    it('indexes a closed document from the state it read', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(authored('arrived while closed')));
+
+        await repo.peerMerged('doc', storedState);
+
+        const indexed = calls.find((c) => c.cmd === 'save_document_index');
+        expect((indexed?.args.index as { text: string }).text).toBe('arrived while closed');
+        expect(indexed?.args.contentHash).toBe(hashOfStored());
+    });
+
+    // Rust merged it after the document was read, so the event comes after
+    // the opening in the queue, and finds the copy the editor holds.
+    it('reaches a document that was being opened when it was merged', async () => {
+        const repo = new DocumentRepository();
+        const base = docWith('base');
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(base));
+
+        const opening = repo.openDocument('doc');
+        const delta = deltaFrom(base, (d) => d.getText('content').insert(4, ' plus peer'));
+        storedState = bytesToBase64(Y.mergeUpdates([fromB64(storedState), fromB64(delta)]));
+        const applying = repo.peerMerged('doc', delta);
+
+        const ydoc = await opening;
+        await applying;
+        expect(ydoc.getText('content').toString()).toBe('base plus peer');
+        unregisterOpenDoc('doc', ydoc);
+    });
+
+    it('catches up on documents merged while no page was running', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(authored('merged in the background')));
+        unindexed = ['doc'];
+
+        expect(await repo.backfillIndex()).toBe(1);
+        const indexed = calls.find((c) => c.cmd === 'save_document_index');
+        expect(indexed?.args.contentHash).toBe(hashOfStored());
     });
 });

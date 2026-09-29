@@ -33,6 +33,7 @@
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
     import { LocalNetworkStatus } from '$lib/settings';
+    import { BackgroundSyncCard } from '$lib/settings';
     import { PairDeviceForm } from '$lib/settings';
     import { ConnectedPeerList } from '$lib/settings';
     import { UnpairedAddressList } from '$lib/settings';
@@ -122,7 +123,7 @@
         } catch (e) {
             // Sending the request can fail outright: the device may have left
             // the network between rendering the form and pressing the button.
-            // The transport knows why, so say what it said.
+            // Rust knows why, so say what it said.
             console.error('Failed to send pair request:', e);
             toasts.error(
                 e instanceof Error && e.message ? e.message : 'Could not send that pairing request',
@@ -253,6 +254,8 @@
         anyStoredAddress={endpoints.length > 0}
         onCheckAddresses={handleCheckAddresses}
     />
+
+    <BackgroundSyncCard />
 
     <PairDeviceForm
         pairingState={pairState}

@@ -10,6 +10,8 @@
             peer_display_name: string;
             room_id: string;
             last_synchronized: number | null;
+            /** Disconnected by the user, until they reconnect it. */
+            disconnected?: boolean;
         }>;
         connectedPeers: ConnectedPeer[];
         /** Every stored address, for every device (ADR 0023). */
@@ -47,9 +49,10 @@
         return connectedPeers.some((p) => p.room_id === roomId);
     }
 
-    // The app reconnects paired devices automatically (on startup, when signaling
-    // recovers, and with backoff after a drop). The "Reconnect" action lets the
-    // user bypass the backoff wait and force an attempt right now.
+    // The app reconnects paired devices automatically (on startup, when one is
+    // found, and with backoff after a drop), except one the user disconnected.
+    // The "Reconnect" action lets the user bypass the backoff wait and force
+    // an attempt right now, and lifts a disconnect.
     function peerStatus(pair: { peer_node_id: string; room_id: string }): PeerConnection {
         return peerConnection(
             isConnected(pair.room_id),
@@ -93,7 +96,9 @@
                                     ? 'Connected'
                                     : pstatus === 'connecting'
                                       ? 'Connecting…'
-                                      : 'Offline'}
+                                      : pair.disconnected
+                                        ? 'Disconnected'
+                                        : 'Offline'}
                             </span>
                         </div>
                         <span class="peer-id">{pair.peer_node_id}</span>

@@ -238,14 +238,6 @@ impl BackupReader {
         self.preferences.as_ref()
     }
 
-    /// The SHA-256 of a document's state: the sync layer's content hash, so
-    /// comparing it with the local one says whether the backup's copy is any
-    /// different, without reading it. `None` for a document with no state.
-    pub fn content_hash(&self, doc_id: &str) -> Option<&str> {
-        let path = self.states.get(doc_id)?.as_ref()?;
-        Some(self.entries.get(path)?.sha256.as_str())
-    }
-
     /// A document's Yjs state, checked against the manifest again as it is
     /// read. `Ok(None)` for a document with no state.
     pub fn read_state(&mut self, doc_id: &str) -> Result<Option<Vec<u8>>, String> {

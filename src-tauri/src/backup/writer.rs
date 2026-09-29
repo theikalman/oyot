@@ -458,17 +458,20 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    // Read back through the manifest's checksum, which `read_state` checks.
     #[test]
-    fn a_document_states_hash_is_its_content_hash() {
+    fn a_document_state_reads_back_as_written() {
         let dir = scratch();
         let db = library();
         add_document(&db, "a", b"state bytes");
         let destination = dir.join("backup.zip");
         write_backup(&db, &dir, &Preferences::default(), 0, &destination).unwrap();
 
-        let reader = BackupReader::open(&destination).unwrap();
-        let expected = sha256_hex(b"state bytes");
-        assert_eq!(reader.content_hash("a"), Some(expected.as_str()));
+        let mut reader = BackupReader::open(&destination).unwrap();
+        assert_eq!(
+            reader.read_state("a").unwrap(),
+            Some(b"state bytes".to_vec())
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

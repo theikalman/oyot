@@ -1,5 +1,5 @@
 import { reconcile, type Reconciliation } from '$lib/sync/reconcile';
-import { pinStamp, type ManifestEntry } from '$lib/sync/protocol';
+import { EMPTY_CONTENT_HASH, pinStamp, type ManifestEntry } from '$lib/sync/protocol';
 
 /**
  * Importing a backup: merging it into this library the way a peer's manifest
@@ -97,9 +97,11 @@ export function planImport(backup: ManifestEntry[], local: ManifestEntry[]): Imp
 
 function decide(entry: ManifestEntry, local: ManifestEntry | undefined): ImportStep {
     const decision = reconcile(entry, local);
-    // A backup names a document's content by its hash, and names none when it
-    // holds none: there is nothing to merge for a document nobody typed in.
-    const hasContent = entry.contentHash !== null;
+    // Nothing to merge for a document nobody typed in, which the backup's
+    // hash says (ADR 0033, decision 4). A missing hash is an unknown, not an
+    // empty document: its content is merged, and a backup with no state for it
+    // simply has nothing to give.
+    const hasContent = entry.contentHash !== EMPTY_CONTENT_HASH;
     const step = (outcome: ImportOutcome, merge = false, d: ImportDecision = decision) => ({
         entry,
         local,
@@ -138,7 +140,12 @@ function decide(entry: ManifestEntry, local: ManifestEntry | undefined): ImportS
     }
 }
 
-/** The part of `DocumentRepository` an import writes through. */
+/**
+ * The part of `DocumentRepository` an import writes through. Each of these
+ * ends in a Rust command that also tells connected devices, so they need not
+ * wait for their next connection to see a restored note (ADR 0031, decision
+ * 6).
+ */
 export interface ImportTarget {
     listSyncState(): Promise<ManifestEntry[]>;
     ensureDoc(entry: ManifestEntry): Promise<void>;
@@ -147,17 +154,6 @@ export interface ImportTarget {
     applyPin(docId: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void>;
     applyDelete(docId: string, deletedAt: number): Promise<boolean>;
     mergeDelta(docId: string, updateB64: string): Promise<void>;
-}
-
-/**
- * Tells connected devices what arrived, so they need not wait for their next
- * reconnect to see a restored note. The same messages a user's own edit sends.
- */
-export interface ImportAnnouncer {
-    created(entry: ManifestEntry): void;
-    updated(docId: string, state: string): void;
-    renamed(docId: string, title: string, titleUpdatedAt: number): void;
-    pinned(docId: string, pinned: boolean, pinnedUpdatedAt: number): void;
 }
 
 export interface ImportResult {
@@ -189,9 +185,9 @@ function hasWork(step: ImportStep): boolean {
 }
 
 /**
- * Carry out a plan. One document at a time, each through the same repository
- * calls a peer's changes take, so an open note takes the change live and its
- * derived rows are rebuilt as they would be for a peer's edit.
+ * Carry out a plan. One document at a time, through the repository, so an
+ * open note takes the change live and its derived rows are rebuilt as they
+ * are for an edit.
  *
  * A document that fails is named in the result and the rest continue: losing
  * one note out of three hundred is not a reason to import none of them.
@@ -200,7 +196,6 @@ export async function applyImport(
     plan: ImportPlan,
     readState: (docId: string) => Promise<string | null>,
     target: ImportTarget,
-    announce: ImportAnnouncer,
     onProgress: (done: number, total: number) => void = () => {},
 ): Promise<ImportResult> {
     const work = plan.steps.filter(hasWork);
@@ -211,7 +206,6 @@ export async function applyImport(
         const state = await readState(docId);
         if (!state) return;
         await target.mergeDelta(docId, state);
-        announce.updated(docId, state);
     };
 
     onProgress(0, work.length);
@@ -229,7 +223,6 @@ export async function applyImport(
                 case 'create':
                 case 'revive':
                     await target.ensureDoc(entry);
-                    announce.created(entry);
                     if (step.merge) await mergeFromBackup(entry.id);
                     if (decision.kind === 'create') result.added++;
                     else result.restored++;
@@ -237,12 +230,9 @@ export async function applyImport(
                 case 'update':
                     if (decision.rename) {
                         await target.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
-                        announce.renamed(entry.id, entry.title, entry.titleUpdatedAt);
                     }
                     if (decision.repin) {
-                        const pinned = entry.pinned ?? false;
-                        await target.applyPin(entry.id, pinned, pinStamp(entry));
-                        announce.pinned(entry.id, pinned, pinStamp(entry));
+                        await target.applyPin(entry.id, entry.pinned ?? false, pinStamp(entry));
                     }
                     if (step.merge) await mergeFromBackup(entry.id);
                     updated.push(step);

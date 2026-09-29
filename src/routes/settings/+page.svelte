@@ -14,6 +14,13 @@
         type ScheduleView,
     } from '$lib/backup';
     import { formatLastSync } from '$lib/stores/sync';
+    import {
+        getDesktopSettings,
+        setKeepRunning,
+        setStartAtLogin,
+        trayPlace,
+        type DesktopSettings,
+    } from '$lib/desktop';
     import { toasts } from '$lib/services/toast';
     import { openDocument, openHelp, openNotes } from '$lib/services/navigation';
     import { onDestroy, onMount } from 'svelte';
@@ -64,7 +71,52 @@
         return `Last backup ${formatLastSync(last.finishedAt ?? last.startedAt).toLowerCase()}`;
     });
 
+    // Closing to the tray and starting at login (ADR 0030). Null until read,
+    // and the section stays hidden on a phone, where neither applies.
+    let desktop = $state<DesktopSettings | null>(null);
+    let place = $state('the system tray');
+    let savingDesktop = $state(false);
+
+    async function handleKeepRunning(event: Event) {
+        // Read before the await: an event's target is gone once it has run.
+        const input = event.currentTarget as HTMLInputElement;
+        const keepRunning = input.checked;
+        savingDesktop = true;
+        try {
+            await setKeepRunning(keepRunning);
+            if (desktop) desktop = { ...desktop, keepRunning };
+        } catch (error) {
+            console.error('Failed to change keeping Oyot running:', error);
+            toasts.error(`Could not change that: ${message(error)}`);
+            input.checked = !keepRunning;
+        } finally {
+            savingDesktop = false;
+        }
+    }
+
+    async function handleStartAtLogin(event: Event) {
+        const input = event.currentTarget as HTMLInputElement;
+        const wanted = input.checked;
+        savingDesktop = true;
+        try {
+            // What the OS now has, which may not be what was asked for.
+            const startAtLogin = await setStartAtLogin(wanted);
+            input.checked = startAtLogin;
+            if (desktop) desktop = { ...desktop, startAtLogin };
+        } catch (error) {
+            console.error('Failed to change starting at login:', error);
+            toasts.error(`Could not change that: ${message(error)}`);
+            input.checked = !wanted;
+        } finally {
+            savingDesktop = false;
+        }
+    }
+
     onMount(() => {
+        getDesktopSettings()
+            .then((settings) => (desktop = settings))
+            .catch((error) => console.error('Failed to load the desktop settings:', error));
+        void trayPlace().then((name) => (place = name));
         getBackupStatus()
             .then((status) => (backupStatus = status))
             .catch((error) => console.error('Failed to load the backup status:', error));
@@ -164,6 +216,44 @@
             </div>
         </div>
     </section>
+
+    {#if desktop?.supported}
+        <section class="settings-section">
+            <h2 class="section-title">Desktop</h2>
+            <div class="section-card">
+                <label class="setting-row">
+                    <span class="setting-info">
+                        <span class="setting-label"
+                            >Keep Oyot running when the window is closed</span
+                        >
+                        <span class="setting-desc">
+                            Your notes keep syncing. Quit Oyot from its icon in {place}.
+                        </span>
+                    </span>
+                    <input
+                        type="checkbox"
+                        checked={desktop.keepRunning}
+                        onchange={handleKeepRunning}
+                        disabled={savingDesktop}
+                    />
+                </label>
+                <label class="setting-row">
+                    <span class="setting-info">
+                        <span class="setting-label">Start Oyot when you log in</span>
+                        <span class="setting-desc">
+                            It starts in {place}, without opening a window.
+                        </span>
+                    </span>
+                    <input
+                        type="checkbox"
+                        checked={desktop.startAtLogin}
+                        onchange={handleStartAtLogin}
+                        disabled={savingDesktop}
+                    />
+                </label>
+            </div>
+        </section>
+    {/if}
 
     <section class="settings-section">
         <h2 class="section-title">Sync</h2>
@@ -330,6 +420,17 @@
     .setting-desc {
         font-size: 13px;
         color: var(--text-muted);
+    }
+
+    label.setting-row {
+        cursor: pointer;
+    }
+
+    .setting-row input[type='checkbox'] {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        cursor: pointer;
     }
 
     .theme-toggle-btn {
