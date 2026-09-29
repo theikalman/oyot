@@ -52,6 +52,16 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             });
     }
 
+    // The menu bar wants a template: a black glyph on transparency that macOS
+    // tints to match the bar, as its own icons are. The app icon is a square
+    // tile, which stands out there.
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray
+            .icon(tauri::include_image!("icons/tray-template.png"))
+            .icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
