@@ -199,24 +199,16 @@
         font-weight: 500;
     }
     .peer-status.online {
-        background: #dcfce7;
-        color: #166534;
+        background: var(--ok-bg);
+        color: var(--ok-text);
     }
     .peer-status.offline {
         background: var(--bg-hover);
         color: var(--text-muted);
     }
     .peer-status.connecting {
-        background: #fef3c7;
-        color: #92400e;
-    }
-    :global([data-theme='dark']) .peer-status.online {
-        background: #14532d;
-        color: #86efac;
-    }
-    :global([data-theme='dark']) .peer-status.connecting {
-        background: #451a03;
-        color: #fcd34d;
+        background: var(--warn-bg);
+        color: var(--warn-text);
     }
     .peer-id {
         font-family: monospace;
@@ -236,14 +228,14 @@
     .btn-danger {
         padding: 6px 12px;
         background: transparent;
-        color: #ef4444;
-        border: 1px solid #ef4444;
+        color: var(--error-text);
+        border: 1px solid var(--status-error);
         border-radius: 4px;
         cursor: pointer;
         font-size: 12px;
     }
     .btn-danger:hover {
-        background: #fef2f2;
+        background: var(--error-bg);
     }
     .btn-secondary {
         padding: 6px 12px;

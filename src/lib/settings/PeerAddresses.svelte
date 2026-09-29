@@ -128,7 +128,7 @@
         overflow-wrap: anywhere;
     }
     .address.answering {
-        color: var(--status-ok, #22c55e);
+        color: var(--status-ok);
     }
     .address-state {
         color: var(--text-muted);
@@ -165,7 +165,7 @@
         color: var(--text-muted);
     }
     .add-error {
-        color: var(--status-error, #ef4444);
+        color: var(--status-error);
     }
     .link-button {
         padding: 0;
@@ -184,7 +184,7 @@
         text-decoration: none;
     }
     .link-button.danger {
-        color: var(--status-error, #ef4444);
+        color: var(--status-error);
     }
     .link-button.add {
         align-self: flex-start;

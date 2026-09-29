@@ -540,6 +540,7 @@
 
     .editor-content :global(.document-link-icon) {
         font-size: 12px;
+        color: var(--text-muted);
     }
     .editor-content :global(.document-link-title) {
         font-weight: 500;
@@ -683,8 +684,8 @@
         opacity: 0;
         width: 12px !important;
         height: 12px !important;
-        background: var(--accent-color, #6366f1) !important;
-        border: 2px solid white !important;
+        background: var(--accent-color) !important;
+        border: 2px solid var(--bg-primary) !important;
         border-radius: 3px !important;
         position: absolute !important;
         z-index: 10 !important;
@@ -734,8 +735,8 @@
     }
 
     .editor-content :global(.collaboration-cursor__caret) {
-        border-left: 1px solid #6366f1;
-        border-right: 1px solid #6366f1;
+        border-left: 1px solid var(--accent-color);
+        border-right: 1px solid var(--accent-color);
         margin-left: -1px;
         margin-right: -1px;
         pointer-events: none;

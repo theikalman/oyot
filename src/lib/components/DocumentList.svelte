@@ -48,7 +48,7 @@
                         fill="none"
                         viewBox="0 0 24 24"
                         ><path
-                            stroke="#A1A1A1"
+                            stroke="currentColor"
                             stroke-linecap="round"
                             stroke-linejoin="round"
                             stroke-width="1.5"
@@ -252,11 +252,12 @@
     }
 
     .doc-menu-item.danger {
-        color: #ef4444;
+        color: var(--error-text);
     }
 
     .doc-type {
         margin-right: 6px;
+        color: var(--text-muted);
         display: inline-flex;
         align-items: center;
         vertical-align: middle;

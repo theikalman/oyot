@@ -76,7 +76,7 @@
     .modal-btn {
         padding: 6px 16px;
         background: var(--btn-primary-bg);
-        color: white;
+        color: var(--on-accent);
         border: none;
         border-radius: 4px;
         cursor: pointer;

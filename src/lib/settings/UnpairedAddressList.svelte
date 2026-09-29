@@ -126,8 +126,8 @@
         border-radius: 999px;
     }
     .address-status.online {
-        color: var(--status-ok, #22c55e);
-        border: 1px solid var(--status-ok, #22c55e);
+        color: var(--status-ok);
+        border: 1px solid var(--status-ok);
     }
     .address-status.offline {
         color: var(--text-muted);
@@ -146,15 +146,15 @@
     .btn-danger {
         padding: 6px 12px;
         background: transparent;
-        color: var(--status-error, #ef4444);
-        border: 1px solid var(--status-error, #ef4444);
+        color: var(--status-error);
+        border: 1px solid var(--status-error);
         border-radius: 6px;
         cursor: pointer;
         font-size: 12px;
         flex-shrink: 0;
     }
     .btn-danger:hover {
-        background: var(--status-error, #ef4444);
-        color: white;
+        background: var(--status-error);
+        color: var(--on-danger);
     }
 </style>

@@ -177,8 +177,8 @@
     }
 
     .device-dot.online {
-        background: var(--status-ok, #22c55e);
-        box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+        background: var(--status-ok);
+        box-shadow: 0 0 0 2px var(--ok-bg);
     }
 
     .device-name {

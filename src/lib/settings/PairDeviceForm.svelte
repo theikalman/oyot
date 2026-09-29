@@ -327,7 +327,7 @@
     .btn-pair {
         padding: 8px 14px;
         background: var(--accent-color);
-        color: white;
+        color: var(--on-accent);
         border: none;
         border-radius: 6px;
         cursor: pointer;
@@ -345,7 +345,7 @@
         margin: 0;
     }
     .pair-status.error {
-        color: #ef4444;
+        color: var(--error-text);
     }
     .pair-status.note {
         color: var(--text-secondary);

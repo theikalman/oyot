@@ -183,7 +183,7 @@
     .rename-error {
         margin: 8px 0 0 0;
         font-size: 12px;
-        color: #d9534f;
+        color: var(--error-text);
     }
     .identity-row {
         margin-bottom: 8px;

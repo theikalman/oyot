@@ -495,7 +495,7 @@
     .btn.danger-fill {
         background: var(--status-error);
         border-color: var(--status-error);
-        color: white;
+        color: var(--on-danger);
     }
 
     .modal-note {

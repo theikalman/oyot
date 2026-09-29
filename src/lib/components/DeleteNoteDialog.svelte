@@ -81,7 +81,7 @@
     .modal-btn {
         padding: 6px 16px;
         background: var(--btn-primary-bg);
-        color: white;
+        color: var(--on-accent);
         border: none;
         border-radius: 4px;
         cursor: pointer;
@@ -103,10 +103,11 @@
     }
 
     .modal-btn.danger {
-        background: #ef4444;
+        background: var(--status-error);
+        color: var(--on-danger);
     }
 
     .modal-btn.danger:hover {
-        background: #dc2626;
+        background: var(--danger-hover);
     }
 </style>
