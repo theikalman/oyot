@@ -577,6 +577,7 @@ oyot/
 │   │   ├── settings/        # Pairing, addresses and sync settings UI
 │   │   ├── services/        # Document actions, theme, toasts
 │   │   ├── stores/          # Svelte stores (app state, sync state)
+│   │   ├── theme/           # Colour schemes: the list, and their colours
 │   │   ├── sync/            # The page's side of sync: events, pairing, stores
 │   │   ├── tiptap/          # Editor extensions, slash commands, nodes
 │   │   ├── changelog.ts     # Release notes shown in the About dialog
