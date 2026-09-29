@@ -151,6 +151,13 @@ describe('matchesKeys', () => {
         expect(matchesKeys('Mod-b', press('b', { meta: true, ctrl: true }), true)).toBe(false);
     });
 
+    // Mod-E is the editor's, for inline code, and Mod-Shift-E switches
+    // between reading and editing.
+    it('wants Shift when the shortcut has it, and only then', () => {
+        expect(matchesKeys('Mod-Shift-e', press('e', { meta: true }, 69), true)).toBe(false);
+        expect(matchesKeys('Mod-e', press('e', { meta: true }, 69), true)).toBe(true);
+    });
+
     it('wants every modifier the shortcut has, and no other', () => {
         expect(matchesKeys('Mod-Alt-1', press('1', { meta: true, alt: true }, 49), true)).toBe(
             true,

@@ -4,7 +4,8 @@
     import { currentDocument, appStore } from '$lib/stores/app';
     import { loadDocument } from '$lib/services/documents';
     import { documentView } from '$lib/editor/documentView';
-    import { isEditShortcut, opensForEditing } from '$lib/editor/editorMode';
+    import { opensForEditing } from '$lib/editor/editorMode';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import Editor from '$lib/editor/Editor.svelte';
     import EditToggle from '$lib/editor/EditToggle.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -93,7 +94,7 @@
     // works from the document while editing and from nowhere in particular
     // while reading, when the document cannot take focus.
     function handleKeydown(event: KeyboardEvent) {
-        if (view !== 'editor' || !isEditShortcut(event)) return;
+        if (view !== 'editor' || !customShortcuts.matches('edit', event)) return;
         event.preventDefault();
         toggleEditing();
     }

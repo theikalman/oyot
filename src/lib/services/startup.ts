@@ -1,6 +1,7 @@
 import { appStore } from '$lib/stores/app';
 import { initializeTheme } from './theme';
 import { loadAllDocuments, reindexAndCollect } from './documents';
+import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
 
 // Everything the app has to do once, and a way to wait for it.
 //
@@ -15,6 +16,10 @@ import { loadAllDocuments, reindexAndCollect } from './documents';
 let started: Promise<void> | null = null;
 
 async function run(): Promise<void> {
+    // Not waited for: until it answers, every shortcut has its own keys, and
+    // the first screen needs none of them.
+    void customShortcuts.load();
+
     try {
         appStore.setTheme(await initializeTheme());
     } catch (error) {

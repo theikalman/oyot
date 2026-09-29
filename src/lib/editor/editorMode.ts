@@ -1,4 +1,4 @@
-import { matchesKeys, modIsCommand, shortcutLabel, type KeyPress } from '$lib/keyboard/keys';
+import { modIsCommand, shortcutLabel } from '$lib/keyboard/keys';
 
 // Which mode a document opens in: reading, with one exception, a note the
 // user has just created. Creating a note is asking to write in it, and
@@ -32,12 +32,7 @@ export function opensForEditing(docId: string): boolean {
 
 // The keyboard shortcut for the Edit button: Mod-Shift-E, from anywhere on a
 // document's page, both ways. Not Mod-E, which the editor already gives to
-// inline code.
-
-/** Whether a key press is the shortcut that switches between reading and editing. */
-export function isEditShortcut(event: KeyPress, command: boolean = modIsCommand()): boolean {
-    return matchesKeys('Mod-Shift-e', event, command);
-}
+// inline code. The document page answers it, through $lib/keyboard.
 
 /** The Edit button's shortcut the way the keyboard in front of the user labels it. */
 export function editShortcutLabel(command: boolean = modIsCommand()): string {

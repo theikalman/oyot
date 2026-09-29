@@ -8,8 +8,6 @@ import {
 } from '@tiptap/core';
 import { createContentExtensions } from '$lib/editor/extensions';
 import { createCollaborationExtension } from '$lib/editor/yjs';
-import { isEditShortcut } from '$lib/editor/editorMode';
-import { isHelpShortcut } from '$lib/help/helpShortcut';
 import { TOOLS } from '$lib/editor/toolbarTools';
 import { canonicalKeys } from './keys';
 import { effectiveBindings, howToPress, keptFor, problemWith } from './bindings';
@@ -73,21 +71,6 @@ function editorBindings(): Set<string> {
     return new Set(editorBindingsAsWritten().map(normalize));
 }
 
-// A binding in the editor's notation as a key press, the way the keyboard
-// in front of the user would send it.
-function pressFor(keys: string, command: boolean) {
-    const parts = keys.split('-');
-    const key = parts.pop()!;
-    const held = new Set(parts);
-    return {
-        key,
-        metaKey: command && held.has('Mod'),
-        ctrlKey: !command && held.has('Mod'),
-        shiftKey: held.has('Shift'),
-        altKey: held.has('Alt'),
-    };
-}
-
 function group(id: string): ShortcutGroup {
     const found = SHORTCUT_GROUPS.find((g) => g.id === id);
     if (!found) throw new Error(`no shortcut group "${id}"`);
@@ -117,18 +100,10 @@ describe('the shortcuts the help page lists', () => {
         }
     });
 
-    it('give the Edit button the shortcut it answers to', () => {
-        const [keys] = group('document').shortcuts[0].keys;
-        for (const command of [true, false]) {
-            expect(isEditShortcut(pressFor(keys, command), command)).toBe(true);
-        }
-    });
-
-    it('give the help page the shortcut it answers to', () => {
-        const [keys] = group('anywhere').shortcuts[0].keys;
-        for (const command of [true, false]) {
-            expect(isHelpShortcut(pressFor(keys, command), command)).toBe(true);
-        }
+    // The layout answers Help, and the document page Edit, by these ids.
+    it('list the shortcuts the app answers under the ids it answers them by', () => {
+        expect(group('anywhere').shortcuts.map((s) => s.id)).toEqual(['help']);
+        expect(group('document').shortcuts.map((s) => s.id)).toEqual(['edit']);
     });
 
     it('name each group once', () => {
