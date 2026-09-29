@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { editShortcutLabel, openNextForEditing, opensForEditing } from './editorMode';
+import { openNextForEditing, opensForEditing } from './editorMode';
 
 describe('opensForEditing', () => {
     // The request is module state; asking about anything clears it.
@@ -45,12 +45,5 @@ describe('opensForEditing', () => {
         openNextForEditing('b');
 
         expect(opensForEditing('b')).toBe(true);
-    });
-});
-
-describe('editShortcutLabel', () => {
-    it('spells the shortcut the way the keyboard does', () => {
-        expect(editShortcutLabel(true)).toBe('⇧⌘E');
-        expect(editShortcutLabel(false)).toBe('Ctrl+Shift+E');
     });
 });

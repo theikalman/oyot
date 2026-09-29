@@ -90,13 +90,16 @@ describe('the shortcuts the help page lists', () => {
         expect(unbound).toEqual([]);
     });
 
-    it('include every shortcut the toolbar names, under the same name', () => {
-        const listed = SHORTCUT_GROUPS.flatMap((g) => g.shortcuts);
+    // A tool's tooltip names the keys of the shortcut with its id, so every
+    // tool has one but the two that insert something.
+    it("give every toolbar tool a shortcut under its own id, by the tool's name", () => {
         for (const tool of TOOLS) {
-            if (!tool.keys) continue;
-            const entry = listed.find((s) => s.action === tool.label);
-            expect(entry, tool.label).toBeDefined();
-            expect(entry!.keys.map(normalize), tool.label).toContain(normalize(tool.keys));
+            const shortcut = changeableShortcut(tool.id);
+            if (tool.id === 'table' || tool.id === 'image') {
+                expect(shortcut, tool.id).toBeUndefined();
+            } else {
+                expect(shortcut?.action, tool.id).toBe(tool.label);
+            }
         }
     });
 
@@ -109,15 +112,6 @@ describe('the shortcuts the help page lists', () => {
     it('name each group once', () => {
         const ids = SHORTCUT_GROUPS.map((g) => g.id);
         expect(new Set(ids).size).toBe(ids.length);
-    });
-
-    it("file each toolbar shortcut under the tool's own id", () => {
-        for (const tool of TOOLS) {
-            if (!tool.keys) continue;
-            const shortcut = changeableShortcut(tool.id);
-            expect(shortcut?.action, tool.id).toBe(tool.label);
-            expect(shortcut?.keys.map(normalize), tool.id).toContain(normalize(tool.keys));
-        }
     });
 });
 

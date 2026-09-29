@@ -1,5 +1,3 @@
-import { HELP_KEYS } from '$lib/help/helpShortcut';
-
 // Every keyboard shortcut Oyot has: the keys, what they do, and where. The
 // help page lists them all, and the ones with an id can be changed in
 // Settings.
@@ -48,7 +46,10 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         id: 'anywhere',
         title: 'Anywhere',
         where: 'Wherever you are in Oyot, unless a dialog is open',
-        shortcuts: [{ id: 'help', action: 'Open the help page', keys: [HELP_KEYS] }],
+        // Mod-/ because the editor leaves it free, and it is where a number
+        // of apps keep their list of shortcuts. Plain / is the editor's, for
+        // the insert menu.
+        shortcuts: [{ id: 'help', action: 'Open the help page', keys: ['Mod-/'] }],
     },
     {
         id: 'document',

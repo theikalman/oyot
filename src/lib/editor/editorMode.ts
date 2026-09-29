@@ -1,5 +1,3 @@
-import { modIsCommand, shortcutLabel } from '$lib/keyboard/keys';
-
 // Which mode a document opens in: reading, with one exception, a note the
 // user has just created. Creating a note is asking to write in it, and
 // opening it for reading would show an empty page with nothing to do on it
@@ -28,13 +26,4 @@ export function opensForEditing(docId: string): boolean {
     const edit = editOnNextOpen === docId;
     editOnNextOpen = null;
     return edit;
-}
-
-// The keyboard shortcut for the Edit button: Mod-Shift-E, from anywhere on a
-// document's page, both ways. Not Mod-E, which the editor already gives to
-// inline code. The document page answers it, through $lib/keyboard.
-
-/** The Edit button's shortcut the way the keyboard in front of the user labels it. */
-export function editShortcutLabel(command: boolean = modIsCommand()): string {
-    return shortcutLabel('Mod-Shift-e', command);
 }

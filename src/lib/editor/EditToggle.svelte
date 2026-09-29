@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { editShortcutLabel } from './editorMode';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
 
     // Switches the open document between reading and editing. It reads
     // "Edit" while reading and "Done" while editing: what pressing it does,
@@ -12,10 +12,11 @@
 
     let { editing, onToggle }: Props = $props();
 
-    const shortcut = editShortcutLabel();
+    // Its keys, which the user may have changed, or left it without.
+    let shortcut = $derived(customShortcuts.labelFor('edit'));
     let label = $derived(editing ? 'Done' : 'Edit');
     let hint = $derived(
-        `${editing ? 'Stop editing and go back to reading' : 'Edit this page'} (${shortcut})`,
+        `${editing ? 'Stop editing and go back to reading' : 'Edit this page'}${shortcut ? ` (${shortcut})` : ''}`,
     );
 </script>
 

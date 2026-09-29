@@ -9,8 +9,8 @@
         LINE_STARTS,
         SYMBOLS,
     } from '$lib/help/shortcuts';
-    import { SHORTCUT_GROUPS } from '$lib/keyboard/shortcuts';
-    import { HELP_KEYS } from '$lib/help/helpShortcut';
+    import { SHORTCUT_GROUPS, type Shortcut } from '$lib/keyboard/shortcuts';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import CalendarLegend from '$lib/help/CalendarLegend.svelte';
     import Keys from '$lib/help/Keys.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -27,6 +27,11 @@
     // Whether Mod is Command here, as it is on Apple devices. Asked once, so
     // every key on the page is written for the keyboard in front of the user.
     const command = modIsCommand();
+
+    // The keys that do each shortcut now, which the user may have changed,
+    // and may have left some shortcuts without.
+    let helpKeys = $derived(customShortcuts.keysFor('help'));
+    let editKeys = $derived(customShortcuts.keysFor('edit'));
 
     // Each state the sync badge can be in, named the way the badge names it.
     const SYNC_STATES: { inputs: BadgeInputs; meaning: string }[] = [
@@ -69,12 +74,24 @@
     ];
 </script>
 
+<!-- A shortcut's keys as they are now: one the user changed has theirs. -->
+{#snippet keysOf(shortcut: Shortcut)}
+    {@const keys = shortcut.id ? customShortcuts.keysFor(shortcut.id) : shortcut.keys}
+    {#if keys.length > 0}
+        <Keys {keys} {command} />
+    {:else}
+        <span class="no-keys">No shortcut</span>
+    {/if}
+{/snippet}
+
 <WorkspaceShell title="Help">
     <div class="help">
         <div class="help-body">
             <p class="lead">
-                How Oyot works, what its colors mean, and every keyboard shortcut it has. Press
-                <Keys keys={[HELP_KEYS]} {command} /> from anywhere to come back here.
+                How Oyot works, what its colors mean, and every keyboard shortcut it has.
+                {#if helpKeys.length > 0}
+                    Press <Keys keys={helpKeys} {command} /> from anywhere to come back here.
+                {/if}
             </p>
 
             <nav class="toc" aria-label="On this page">
@@ -98,9 +115,9 @@
                     </li>
                     <li>
                         <strong>Everything opens for reading.</strong> A stray tap cannot change a
-                        note you are only reading. To write, press Edit, the pencil at the top
-                        right, or <Keys keys={['Mod-Shift-e']} {command} />. Done, or the same keys,
-                        goes back to reading. Tasks can still be ticked off while you read.
+                        note you are only reading. To write, press Edit, the pencil at the top right{#if editKeys.length > 0},
+                            or <Keys keys={editKeys} {command} />. Done, or the same keys,{:else}.
+                            Done{/if} goes back to reading. Tasks can still be ticked off while you read.
                     </li>
                     <li>
                         <strong>There is nothing to save.</strong> What you write is saved as you type.
@@ -182,7 +199,7 @@
                 <h2 id="shortcuts-title">Keyboard shortcuts</h2>
                 <p>
                     The keys are shown the way this device's keyboard labels them{#if command}: ⌘ is
-                        Command, ⌥ is Option, and ⇧ is Shift{/if}.
+                        Command, ⌃ is Control, ⌥ is Option, and ⇧ is Shift{/if}.
                     {#if isMobile}On a phone or tablet, they need a keyboard attached.{/if}
                 </p>
 
@@ -197,7 +214,7 @@
                                         <tr>
                                             <td class="action">{shortcut.action}</td>
                                             <td class="shortcut-keys">
-                                                <Keys keys={shortcut.keys} {command} />
+                                                {@render keysOf(shortcut)}
                                             </td>
                                         </tr>
                                     {/each}
@@ -622,6 +639,11 @@
 
     .shortcut-keys {
         text-align: right;
+    }
+
+    .no-keys {
+        color: var(--text-muted);
+        font-size: 12px;
     }
 
     .typed {
