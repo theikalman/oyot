@@ -646,6 +646,28 @@ changed or kept in `bindings.ts`, on a Mac and elsewhere. Otherwise a user
 could give the key to something else, and the extension would still answer
 it whenever the user's shortcut had not changed.
 
+### App icons
+
+Every icon is made from `oyot-logo-only-high-res.png` by Tauri's icon
+command. Give it the manifest, not the image:
+
+```bash
+npm run tauri icon app-icon.json
+```
+
+The manifest gives Android's adaptive icon its own foreground,
+`oyot-logo-android-foreground.png`, the logo shrunk onto a white square.
+That layer is 108dp across, but a launcher shows only the middle 72dp, cut
+to its own shape, and only a 66dp circle survives every shape. Handed a
+single image, `tauri icon` stretches it over the whole layer, which cut off
+the top of the loop and the tips of the roots. In the foreground image the
+logo is centred on its bounding box and reaches no more than 28dp from the
+middle, 265 px of the 1024 px square. A new logo needs that image remade the
+same way.
+
+The command rewrites `icon.icns` on every run, with the same pixels, so
+leave it out of a commit unless the logo changed.
+
 ## Tech Stack
 
 - **Frontend**: SvelteKit 2, Svelte 5, TypeScript, Tiptap (rich text editing)
