@@ -3,7 +3,7 @@
     import { indexRevision } from '$lib/stores/derivedIndex';
     import { openDocument, openTag } from '$lib/services/navigation';
     import { loadTagsByDocument } from '$lib/services/tags';
-    import { formatJournalTitle, weekdayName } from '$lib/calendar/calendar';
+    import { formatJournalTitle, journalTitleFor, weekdayName } from '$lib/calendar/calendar';
     import { groupByMonth, journalEntries, type JournalEntry } from '$lib/journals/journalIndex';
     import { NO_TAGS, type TagsByDocument } from '$lib/tags/documentTags';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -64,6 +64,10 @@
         };
     });
 
+    // Today's entry is where the eye should land first, so its name is drawn
+    // in the accent colour, as the calendar and the Todos page draw today.
+    let todayTitle = $derived(journalTitleFor(today));
+
     // What a row says about its day, spelled out rather than abbreviated: a
     // column of bare numbers leaves the reader to work out what is being
     // counted, and there are three different things it could be.
@@ -123,7 +127,7 @@
                                     onclick={() => open(entry)}
                                     title="Open the journal for {entry.title}"
                                 >
-                                    <span class="day-name">
+                                    <span class="day-name" class:today={entry.title === todayTitle}>
                                         {formatJournalTitle(entry.title, today)}
                                     </span>
                                     <span class="day-weekday">{weekdayName(entry.date)}</span>
@@ -249,6 +253,12 @@
     .day-name {
         font-weight: 500;
         min-width: 110px;
+    }
+
+    /* After the empty rule, and as specific, so today stays lit even before
+       anything is written in it. */
+    .day-row .day-name.today {
+        color: var(--accent-color);
     }
 
     .day-weekday {
