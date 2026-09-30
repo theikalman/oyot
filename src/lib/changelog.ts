@@ -36,6 +36,26 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.28-alpha',
+        date: '2026-09-30',
+        summary:
+            "Today stands out on the Journals page, and Oyot's icon looks right in the macOS menu bar and on Android home screens.",
+        changes: [
+            {
+                kind: 'improved',
+                text: "On the Journals page, today's entry, Today, is in the accent colour, as it is on the Todos page and in the calendar, even before anything is written in it.",
+            },
+            {
+                kind: 'fixed',
+                text: "In the macOS menu bar, the Oyot icon is drawn in the menu bar's own colour, light or dark, like the icons beside it, where it used to be the app icon, a white square that stood out next to the other menu bar icons.",
+            },
+            {
+                kind: 'fixed',
+                text: 'On Android, the app icon fits inside the round, squircle or square shape the launcher cuts it to, where the top of the loop and the tips of the roots used to be cut off.',
+            },
+        ],
+    },
+    {
         version: '0.0.27-alpha',
         date: '2026-09-29',
         summary:
