@@ -56,10 +56,14 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Color schemes.** Settings > Appearance offers Catppuccin, in its light
   Latte and dark Frappé, Macchiato and Mocha, and Solarized Light and Dark.
   Macchiato is the default.
-- **Your own keyboard shortcuts.** Settings > Keyboard shortcuts gives the
-  text styles, headings, lists, undo, Help and Edit other keys, on each
-  device. It asks before taking keys another shortcut has, and Reset puts any
-  of them back.
+- **Around by keyboard.** From anywhere, Cmd/Ctrl+T opens today's journal,
+  and Cmd/Ctrl+[ and ] the day before and the day after the one that is open.
+  Cmd/Ctrl+1 to 5 open Search, Notes, Journals, Todos and Tags, in the order
+  the sidebar lists them, and Cmd/Ctrl+, opens Settings.
+- **Your own keyboard shortcuts.** Settings > Keyboard shortcuts lets you
+  choose other keys for the ones above, and for the text styles, headings,
+  lists, undo, Help and Edit, on each device. It asks before taking keys
+  another shortcut has, and Reset puts any of them back.
 - **Backup and restore.** Settings > Backup saves the whole library, images
   included, to one file wherever you choose, or to your Google Drive once you
   link an account (desktop), and imports one back. An import merges into what
