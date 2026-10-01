@@ -48,8 +48,19 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         where: 'Wherever you are in Oyot, unless a dialog is open',
         // Mod-/ because the editor leaves it free, and it is where a number
         // of apps keep their list of shortcuts. Plain / is the editor's, for
-        // the insert menu.
-        shortcuts: [{ id: 'help', action: 'Open the help page', keys: ['Mod-/'] }],
+        // the insert menu. The pages under Index by their place in it, as
+        // apps number the places down their sidebar; the editor leaves Mod
+        // and a digit free, since its headings are Mod-Alt and one. Settings
+        // on Mod-, as in most apps on a Mac.
+        shortcuts: [
+            { id: 'help', action: 'Open the help page', keys: ['Mod-/'] },
+            { id: 'search', action: 'Open the Search page', keys: ['Mod-1'] },
+            { id: 'notes', action: 'Open the Notes page', keys: ['Mod-2'] },
+            { id: 'journals', action: 'Open the Journals page', keys: ['Mod-3'] },
+            { id: 'todos', action: 'Open the Todos page', keys: ['Mod-4'] },
+            { id: 'tags', action: 'Open the Tags page', keys: ['Mod-5'] },
+            { id: 'settings', action: 'Open Settings', keys: ['Mod-,'] },
+        ],
     },
     {
         id: 'document',

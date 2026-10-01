@@ -9,8 +9,8 @@ import { CHANGEABLE_SHORTCUTS } from '$lib/keyboard/shortcuts';
 /**
  * What each shortcut the editor answers does: the command its own key
  * binding runs, so a shortcut given other keys does exactly what the old
- * keys did. The rest, Help and Edit, are the app's, answered from the
- * window.
+ * keys did. The rest, the ones that go somewhere and Edit, are the app's,
+ * answered from the window.
  */
 export const EDITOR_COMMANDS: Readonly<Record<string, (editor: Editor) => boolean>> = {
     bold: (editor) => editor.commands.toggleBold(),

@@ -11,7 +11,7 @@
     import { catchUpIndex } from '$lib/services/documents';
     import { watchScheduledBackups } from '$lib/backup';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
-    import { openHelp } from '$lib/services/navigation';
+    import { GO_TO_SHORTCUTS, destination } from '$lib/keyboard/goTo';
     import { watchCloseRequests } from '$lib/desktop';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import CloseNoticeDialog from '$lib/components/CloseNoticeDialog.svelte';
@@ -83,14 +83,19 @@
         goto(resolve('/'));
     }
 
-    // The help page's shortcut, taken here because this layout is on screen
-    // whatever the route, settings included. Not while a dialog is open: it
-    // is something half done, and leaving the page would throw it away.
+    // The shortcuts that go somewhere: Help, the pages under Index, and
+    // Settings. Taken here because this layout is on screen whatever the
+    // route, settings included. Not while a dialog is open: it is something
+    // half done, and leaving the page would throw it away.
     function handleKeydown(event: KeyboardEvent) {
-        if (!customShortcuts.matches('help', event)) return;
+        const id = GO_TO_SHORTCUTS.find((id) => customShortcuts.matches(id, event));
+        if (id === undefined) return;
         event.preventDefault();
-        if (document.querySelector('[aria-modal="true"]')) return;
-        if (currentPath !== '/help') void openHelp();
+        // Held down, the keys go once. A repeat that came before the page
+        // had opened would open it again, a second step back to undo.
+        if (event.repeat || document.querySelector('[aria-modal="true"]')) return;
+        const to = destination(id, { path: currentPath });
+        if (to !== null) void goto(resolve(to.path));
     }
 
     let pageTitle = $derived.by(() => {

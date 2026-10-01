@@ -11,6 +11,7 @@ import { createCollaborationExtension } from '$lib/editor/yjs';
 import { TOOLS } from '$lib/editor/toolbarTools';
 import { canonicalKeys } from './keys';
 import { effectiveBindings, howToPress, keptFor, problemWith } from './bindings';
+import { GO_TO_SHORTCUTS } from './goTo';
 import {
     CHANGEABLE_SHORTCUTS,
     SHORTCUT_GROUPS,
@@ -103,9 +104,10 @@ describe('the shortcuts the help page lists', () => {
         }
     });
 
-    // The layout answers Help, and the document page Edit, by these ids.
+    // The layout answers the ones that go somewhere, and the document page
+    // Edit, by these ids.
     it('list the shortcuts the app answers under the ids it answers them by', () => {
-        expect(group('anywhere').shortcuts.map((s) => s.id)).toEqual(['help']);
+        expect(group('anywhere').shortcuts.map((s) => s.id)).toEqual(GO_TO_SHORTCUTS);
         expect(group('document').shortcuts.map((s) => s.id)).toEqual(['edit']);
     });
 

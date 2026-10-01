@@ -3,6 +3,7 @@ import * as Y from 'yjs';
 import { flattenExtensions, getExtensionField, type AnyExtension, type Editor } from '@tiptap/core';
 import type { EditorView } from '@tiptap/pm/view';
 import { assign, effectiveBindings, type Overrides } from '$lib/keyboard/bindings';
+import { GO_TO_SHORTCUTS } from '$lib/keyboard/goTo';
 import { canonicalKeys, type KeyPress } from '$lib/keyboard/keys';
 import { CHANGEABLE_SHORTCUTS } from '$lib/keyboard/shortcuts';
 import { createContentExtensions } from './extensions';
@@ -59,11 +60,11 @@ function handlerWith(overrides: Overrides) {
 }
 
 describe('EDITOR_COMMANDS', () => {
-    // Help and Edit are answered from the window.
+    // The ones that go somewhere, Help among them, and Edit are answered
+    // from the window.
     it('covers every shortcut that can be changed but the app’s own', () => {
-        const answered = CHANGEABLE_SHORTCUTS.map((s) => s.id).filter(
-            (id) => id !== 'help' && id !== 'edit',
-        );
+        const appsOwn = new Set([...GO_TO_SHORTCUTS, 'edit']);
+        const answered = CHANGEABLE_SHORTCUTS.map((s) => s.id).filter((id) => !appsOwn.has(id));
         expect(Object.keys(EDITOR_COMMANDS).sort()).toEqual(answered.sort());
     });
 
