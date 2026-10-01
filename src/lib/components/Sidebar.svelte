@@ -13,10 +13,8 @@
     import type { DocumentSummary } from '../types';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import {
-        createJournalForDate as createJournalForDateAction,
-        setPinned,
-    } from '../services/documentActions';
+    import { setPinned } from '../services/documentActions';
+    import { openJournal } from '../services/journals';
     import {
         openDocument,
         openHelp,
@@ -235,21 +233,15 @@
         goto(resolve('/settings/sync'));
     }
 
-    // One way in for "open the journal for this date", used by the calendar.
-    // The date arithmetic moved to $lib/calendar; what stays here is the part
-    // that needs the document list and the router.
+    // A day picked in the calendar. Opening it, and starting its journal if
+    // it has none, is shared with the keys for today and the days either
+    // side, in $lib/services/journals.
     async function openJournalFor(journalTitle: string) {
-        const existing = journals.find((d: DocumentSummary) => d.title === journalTitle);
-        if (existing) {
-            handleDocClick(existing);
-            return;
-        }
         try {
-            const doc = await createJournalForDateAction(journalTitle);
-            await openDocument(doc.id);
+            await openJournal(journalTitle);
             dismissOnSmallScreen();
         } catch (err) {
-            console.error('[Sidebar] Failed to create journal for date:', journalTitle, err);
+            console.error('[Sidebar] Failed to open the journal for', journalTitle, err);
             toasts.error('Could not open that day');
         }
     }
