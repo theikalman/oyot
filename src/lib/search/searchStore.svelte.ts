@@ -2,8 +2,6 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SearchHit } from './results';
 import type { DocumentType } from './scopes';
 
-export type { SearchHit };
-
 // Long enough to coalesce typing, short enough that the results feel like they
 // follow the keystrokes.
 const DEBOUNCE_MS = 150;
@@ -16,13 +14,14 @@ const DEBOUNCE_MS = 150;
 export const SHOWN_HITS = 100;
 
 /**
- * The state behind a full-text search box.
+ * The state behind the Search page's full-text search.
  *
- * Its own module because it is a small state machine with three things that
- * have to stay in step: a debounce, a sequence number so a slow response
- * cannot overwrite a newer one, and a selection that has to reset whenever the
- * results change. Mixed into a component with seven other concerns, each of
- * those was a separate `let` that any of the others could get wrong.
+ * Its own module because it is a small state machine with things that have
+ * to stay in step: a debounce, and a sequence number so a slow response
+ * cannot overwrite a newer one. Mixed into a component with other concerns,
+ * each of those was a separate `let` that any of the others could get wrong.
+ * Which row the arrow keys are on is the page's, since it moves through the
+ * todo and tag rows as well, which are not this search's.
  */
 export function createSearch() {
     let results = $state<SearchHit[]>([]);
@@ -32,9 +31,6 @@ export function createSearch() {
     // A failed search must not render as "nothing matches": that reads as an
     // answer when it is the absence of one.
     let failed = $state(false);
-    // Which hit the arrow keys have moved to. Reset whenever the results
-    // change, so Enter never opens a document the user cannot see highlighted.
-    let selected = $state(0);
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     let seq = 0;
@@ -52,7 +48,6 @@ export function createSearch() {
             results = hits.slice(0, SHOWN_HITS);
             more = hits.length > SHOWN_HITS;
             failed = false;
-            selected = 0;
         } catch (err) {
             if (mine !== seq) return;
             console.error('[search] failed:', err);
@@ -74,7 +69,6 @@ export function createSearch() {
         more = false;
         failed = false;
         searching = false;
-        selected = 0;
     }
 
     return {
@@ -89,9 +83,6 @@ export function createSearch() {
         },
         get failed() {
             return failed;
-        },
-        get selected() {
-            return selected;
         },
 
         /**
@@ -119,17 +110,6 @@ export function createSearch() {
 
         /** Forget the results, and anything still on its way. */
         clear,
-
-        /** Move the selection, wrapping. No-op with no results. */
-        move(delta: number): void {
-            if (results.length === 0) return;
-            selected = (selected + delta + results.length) % results.length;
-        },
-
-        /** The hit the keyboard is on, if any. */
-        current(): SearchHit | undefined {
-            return results[selected];
-        },
     };
 }
 

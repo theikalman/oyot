@@ -146,7 +146,7 @@
         display: none;
     }
 
-    /* The same size as the « beside the sidebar's search box, which puts the
+    /* The same size as the « at the top of the sidebar, which puts the
        sidebar away again. */
     .show-sidebar-btn {
         flex-shrink: 0;
