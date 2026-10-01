@@ -5,8 +5,10 @@
     import { resolve } from '$app/paths';
     import type { Snippet } from 'svelte';
     import { initSync, shutdownSync, refreshSyncStatus } from '$lib/sync';
-    import { appStore } from '$lib/stores/app';
+    import { appStore, documents } from '$lib/stores/app';
     import { applyTheme } from '$lib/services/theme';
+    import { openJournal } from '$lib/services/journals';
+    import { toasts } from '$lib/services/toast';
     import { startApp } from '$lib/services/startup';
     import { catchUpIndex } from '$lib/services/documents';
     import { watchScheduledBackups } from '$lib/backup';
@@ -83,19 +85,49 @@
         goto(resolve('/'));
     }
 
-    // The shortcuts that go somewhere: Help, the pages under Index, and
-    // Settings. Taken here because this layout is on screen whatever the
-    // route, settings included. Not while a dialog is open: it is something
-    // half done, and leaving the page would throw it away.
+    // The journal on screen, by the URL, which names it before it has
+    // loaded. Its day is its title.
+    let openJournalTitle = $derived.by(() => {
+        if (page.route.id !== '/doc/[id]') return null;
+        const doc = $documents.find((d) => d.id === page.params.id);
+        return doc?.doc_type === 'journal' ? doc.title : null;
+    });
+
+    // The day the keys are on their way to, until it is open. A second
+    // press before then counts on from it, so two quick presses are two
+    // days, even when the first has a journal to start.
+    let journalOnItsWay: string | null = null;
+
+    async function openDay(title: string) {
+        journalOnItsWay = title;
+        try {
+            await openJournal(title);
+        } catch (error) {
+            console.error('[shortcuts] could not open the journal for', title, error);
+            toasts.error('Could not open that day');
+        } finally {
+            if (journalOnItsWay === title) journalOnItsWay = null;
+        }
+    }
+
+    // The shortcuts that go somewhere: Help, the pages under Index,
+    // Settings, and the journals for today and the days either side. Taken
+    // here because this layout is on screen whatever the route, settings
+    // included. Not while a dialog is open: it is something half done, and
+    // leaving the page would throw it away.
     function handleKeydown(event: KeyboardEvent) {
         const id = GO_TO_SHORTCUTS.find((id) => customShortcuts.matches(id, event));
         if (id === undefined) return;
         event.preventDefault();
         // Held down, the keys go once. A repeat that came before the page
-        // had opened would open it again, a second step back to undo.
+        // had opened would open it again, a second step back to undo, and
+        // one stepping through days would start a journal for each.
         if (event.repeat || document.querySelector('[aria-modal="true"]')) return;
-        const to = destination(id, { path: currentPath });
-        if (to !== null) void goto(resolve(to.path));
+        const here = { path: currentPath, journal: journalOnItsWay ?? openJournalTitle };
+        const to = destination(id, here, new Date());
+        if (to === null) return;
+        if (to.kind === 'page') void goto(resolve(to.path));
+        else void openDay(to.title);
     }
 
     let pageTitle = $derived.by(() => {

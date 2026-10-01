@@ -63,6 +63,20 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         ],
     },
     {
+        id: 'days',
+        title: 'Days',
+        where: 'Anywhere, unless a dialog is open, counting from the open journal or from today',
+        // The calendar's Today, and the days either side of the one open,
+        // which is what Mod-[ and Mod-] are, back and forward, on a Mac.
+        // Opening a day with no journal starts one, as picking it in the
+        // calendar does.
+        shortcuts: [
+            { id: 'today', action: "Open today's journal", keys: ['Mod-t'] },
+            { id: 'previousDay', action: 'Open the journal for the day before', keys: ['Mod-['] },
+            { id: 'nextDay', action: 'Open the journal for the day after', keys: ['Mod-]'] },
+        ],
+    },
+    {
         id: 'document',
         title: 'Notes and journals',
         where: 'On any open note or journal',

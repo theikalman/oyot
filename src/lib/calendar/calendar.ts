@@ -82,6 +82,16 @@ export function addMonths(monthOf: Date, delta: number): Date {
     return new Date(monthOf.getFullYear(), monthOf.getMonth() + delta, 1);
 }
 
+/**
+ * The day `delta` days after `date`, or before it for a negative `delta`.
+ *
+ * By the calendar rather than by adding milliseconds, so a day is a day even
+ * across a change to or from summer time, when one is 23 or 25 hours long.
+ */
+export function addDays(date: Date, delta: number): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
+}
+
 /** Whether `day` in the displayed month is the same date as `today`. */
 export function isSameDay(monthOf: Date, day: number | null, today: Date): boolean {
     if (day === null) return false;

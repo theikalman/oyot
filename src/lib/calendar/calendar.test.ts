@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    addDays,
     addMonths,
     formatJournalTitle,
     journalDateOf,
@@ -72,6 +73,27 @@ describe('addMonths', () => {
         const next = addMonths(new Date(2026, 0, 31), 1);
         expect(monthLabel(next)).toBe('February 2026');
         expect(next.getDate()).toBe(1);
+    });
+});
+
+describe('addDays', () => {
+    it('steps a day either way across the end of a month and of a year', () => {
+        expect(journalTitleFor(addDays(new Date(2026, 8, 30), 1))).toBe('2026-10-01');
+        expect(journalTitleFor(addDays(new Date(2026, 9, 1), -1))).toBe('2026-09-30');
+        expect(journalTitleFor(addDays(new Date(2026, 11, 31), 1))).toBe('2027-01-01');
+        expect(journalTitleFor(addDays(new Date(2027, 0, 1), -1))).toBe('2026-12-31');
+    });
+
+    it('knows a leap year has a 29 February', () => {
+        expect(journalTitleFor(addDays(new Date(2028, 1, 28), 1))).toBe('2028-02-29');
+        expect(journalTitleFor(addDays(new Date(2026, 1, 28), 1))).toBe('2026-03-01');
+    });
+
+    // Adding 24 hours from late in the evening lands on the wrong day, or on
+    // the same one, wherever the clocks change in between.
+    it('steps a whole day from any time of day', () => {
+        expect(journalTitleFor(addDays(new Date(2026, 2, 28, 23, 30), 1))).toBe('2026-03-29');
+        expect(journalTitleFor(addDays(new Date(2026, 9, 25, 0, 30), -1))).toBe('2026-10-24');
     });
 });
 
