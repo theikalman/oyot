@@ -637,6 +637,10 @@ changes once released. Adding one:
   `src/lib/editor/customShortcuts.ts`, the same command the editor's own
   binding runs: a test runs both and compares them. If the app answers it,
   ask `customShortcuts.matches(id, event)` rather than reading the keys.
+- One that opens a page, or a day's journal, goes in
+  `src/lib/keyboard/goTo.ts`, which says where it goes from where the user
+  is, and the layout answers it from anywhere but a dialog. A test holds the
+  "Anywhere" and "Days" groups to that file's list.
 - A toolbar tool with a shortcut shares its id, which is how its tooltip
   finds the keys.
 

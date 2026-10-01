@@ -8,8 +8,8 @@ import { CHANGEABLE_SHORTCUTS, changeableShortcut } from './shortcuts';
  * included (ADR 0035).
  *
  * Module state, because a key is answered and named all over the app: the
- * layout answers Help, the document page Edit, and the editor the rest,
- * while tooltips and the help page name them. Loaded at startup, and until
+ * layout answers the ones that go somewhere, the document page Edit, and
+ * the editor the rest, while tooltips and the help page name them. Loaded at startup, and until
  * then, or if loading fails, every shortcut has its own keys.
  *
  * The rules are in bindings.ts, where they can be tested; this only holds

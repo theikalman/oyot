@@ -33,6 +33,9 @@
     // and may have left some shortcuts without.
     let helpKeys = $derived(customShortcuts.keysFor('help'));
     let editKeys = $derived(customShortcuts.keysFor('edit'));
+    let todayKeys = $derived(customShortcuts.keysFor('today'));
+    let previousDayKeys = $derived(customShortcuts.keysFor('previousDay'));
+    let nextDayKeys = $derived(customShortcuts.keysFor('nextDay'));
 
     // Each state the sync badge can be in, named the way the badge names it.
     const SYNC_STATES: { inputs: BadgeInputs; meaning: string }[] = [
@@ -151,6 +154,15 @@
                         The arrows move a month at a time. Today goes back to this month and opens
                         today's journal.
                     </li>
+                    {#if todayKeys.length > 0 && previousDayKeys.length > 0 && nextDayKeys.length > 0}
+                        <li>
+                            From anywhere, <Keys keys={todayKeys} {command} /> opens today's journal,
+                            and <Keys keys={previousDayKeys} {command} /> and
+                            <Keys keys={nextDayKeys} {command} /> the day before and the day after the
+                            journal that is open, or today. A day with no journal gets one, as clicking
+                            it does.
+                        </li>
+                    {/if}
                     <li>
                         Opening a journal any other way, from Search or the Journals page, moves the
                         calendar to its month.
@@ -357,6 +369,12 @@
                         finished ones too. Its search finds the tasks with every word you type in
                         them, in any order, and marks the words it found. <strong>Tags</strong> lists
                         every tag.
+                    </li>
+                    <li>
+                        <strong>From the keyboard.</strong> Each page under Index, and Settings, has
+                        keys that open it from anywhere, listed under
+                        <a href="#shortcuts">Keyboard shortcuts</a>. On the Search page, its keys
+                        put the cursor back in the box.
                     </li>
                 </ul>
             </section>
