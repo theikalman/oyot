@@ -24,6 +24,8 @@ export interface ScopeInfo {
     hint: string;
     /** What one result is, for "No note matches". */
     noun: string;
+    /** What the page says when this search could not be run. */
+    failure: string;
 }
 
 /**
@@ -37,6 +39,7 @@ export const SCOPES: readonly ScopeInfo[] = [
         placeholder: 'Search notes and journals',
         hint: 'Type a word or two to find the notes and journals that have them, in the title or anywhere in the text.',
         noun: 'note or journal',
+        failure: 'Could not search right now. Your notes and journals are unchanged.',
     },
     {
         id: 'notes',
@@ -44,6 +47,7 @@ export const SCOPES: readonly ScopeInfo[] = [
         placeholder: 'Search notes',
         hint: 'Type a word or two to find the notes that have them, in the title or anywhere in the text.',
         noun: 'note',
+        failure: 'Could not search right now. Your notes and journals are unchanged.',
     },
     {
         id: 'journals',
@@ -51,6 +55,7 @@ export const SCOPES: readonly ScopeInfo[] = [
         placeholder: 'Search journals',
         hint: "Type a word or two to find the journals that have them. A date such as 2026-09 finds that month's days.",
         noun: 'journal',
+        failure: 'Could not search right now. Your notes and journals are unchanged.',
     },
     {
         id: 'todos',
@@ -58,6 +63,7 @@ export const SCOPES: readonly ScopeInfo[] = [
         placeholder: 'Search todos',
         hint: 'Type a word or two to find the tasks that have them, in every note and journal, done or not.',
         noun: 'todo',
+        failure: 'Could not read your todos right now. They are still in your notes.',
     },
     {
         id: 'tags',
@@ -65,6 +71,7 @@ export const SCOPES: readonly ScopeInfo[] = [
         placeholder: 'Search tags',
         hint: 'Type a tag, or part of one, to find the notes and journals that carry it.',
         noun: 'tag',
+        failure: 'Could not read your tags right now. They are still in your notes.',
     },
 ];
 

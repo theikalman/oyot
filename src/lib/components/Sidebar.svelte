@@ -22,6 +22,7 @@
         openHelp,
         openJournals,
         openNotes,
+        openSearch,
         openTags,
         openTodos,
     } from '../services/navigation';
@@ -114,6 +115,7 @@
             0,
         ),
     );
+    let onSearchPage = $derived(page.url.pathname === '/search');
     let onTodosPage = $derived(page.url.pathname === '/todos');
     let onJournalsPage = $derived(page.url.pathname === '/journals');
     let onNotesPage = $derived(page.url.pathname === '/notes');
@@ -131,6 +133,11 @@
         void $indexRevision;
         void refreshTagCount();
     });
+
+    function goToSearch() {
+        void openSearch();
+        dismissOnSmallScreen();
+    }
 
     function goToNotes() {
         void openNotes();
@@ -413,6 +420,25 @@
 
                 <div class="sidebar-section">
                     <h3>Index</h3>
+                    <!-- First, since it is the way into all the rest: it finds
+                         notes and journals by their words, and todos and tags
+                         as well. Nothing to count beside it. -->
+                    <button class="nav-item" class:active={onSearchPage} onclick={goToSearch}>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <circle cx="11" cy="11" r="7" />
+                            <path d="m20 20-3.5-3.5" />
+                        </svg>
+                        <span class="nav-label">Search</span>
+                    </button>
                     <button class="nav-item" class:active={onNotesPage} onclick={goToNotes}>
                         <svg
                             width="16"

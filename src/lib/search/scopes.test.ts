@@ -16,6 +16,7 @@ describe('the choices of what to search', () => {
             expect(scope.placeholder, scope.id).not.toBe('');
             expect(scope.hint, scope.id).not.toBe('');
             expect(scope.noun, scope.id).not.toBe('');
+            expect(scope.failure, scope.id).not.toBe('');
         }
     });
 
