@@ -781,9 +781,13 @@ pub struct SearchHit {
     pub id: String,
     pub doc_type: String,
     pub title: String,
+    /// The title again, with the words the query matched wrapped in the same
+    /// markers as `snippet`. Exactly `title` when none of its words matched.
+    pub marked_title: String,
     /// A fragment of the body around the match, with the matched terms
-    /// wrapped in the control characters the frontend splits on. Empty when
-    /// the match was in the title only.
+    /// wrapped in the control characters the frontend splits on. When only
+    /// the title matched, the start of the body, with nothing marked; empty
+    /// when there is no body.
     pub snippet: String,
 }
 
@@ -827,10 +831,19 @@ pub fn run_search(
     // an element. The previous `[` and `]` were rendered verbatim, so every
     // result showed literal brackets and no highlight.
     // Kept in step with src/lib/search/snippet.ts.
+    //
+    // The title is marked from the search row's copy of it, which the indexer
+    // keeps in step with the document's. Should the two ever disagree, the
+    // document's own title is shown unmarked: a hit must never read as a
+    // title the document does not have.
     let mut stmt = db
         .prepare(
             "SELECT d.id, d.type, d.title,
-                    snippet(document_search, 2, char(2), char(3), '…', 12) AS snippet
+                    CASE WHEN document_search.title = d.title
+                         THEN highlight(document_search, 1, char(2), char(3))
+                         ELSE d.title
+                    END AS marked_title,
+                    snippet(document_search, 2, char(2), char(3), '…', 16) AS snippet
                FROM document_search
                JOIN documents d ON d.id = document_search.document_id
               WHERE document_search MATCH ?1
@@ -843,11 +856,15 @@ pub fn run_search(
 
     let results: Vec<SearchHit> = stmt
         .query_map(params![&match_query, doc_type, limit as i64], |row| {
+            let title: String = row.get(2)?;
             Ok(SearchHit {
                 id: row.get(0)?,
                 doc_type: row.get(1)?,
-                title: row.get(2)?,
-                snippet: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                marked_title: row
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| title.clone()),
+                title,
+                snippet: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -1943,6 +1960,40 @@ mod tests {
             .unwrap_or_default()
             .to_string();
         assert_eq!(marked, "meeting");
+    }
+
+    #[test]
+    fn a_search_hit_marks_the_matched_words_in_its_title() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Quarterly review", 2);
+        index_text(&db, "d2", "Quarterly review", "talked about the budget");
+        index_text(&db, "d1", "One", "the quarterly numbers");
+
+        let hits = search(&db, "quarterly").unwrap();
+        let marked = |id: &str| {
+            hits.iter()
+                .find(|hit| hit.id == id)
+                .map(|hit| hit.marked_title.clone())
+                .unwrap()
+        };
+
+        assert_eq!(marked("d2"), "\u{2}Quarterly\u{3} review");
+        // Matched in the body only: the title comes back as it is.
+        assert_eq!(marked("d1"), "One");
+    }
+
+    // The search row keeps its own copy of the title. Were it ever behind
+    // the document's, a hit would show a title the document does not have.
+    #[test]
+    fn a_hit_never_shows_a_title_the_document_does_not_have() {
+        let db = db();
+        // Indexed under another title than the row's, which is "One".
+        index_text(&db, "d1", "Quarterly", "the numbers");
+
+        let hits = search(&db, "quarterly").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "One");
+        assert_eq!(hits[0].marked_title, "One");
     }
 
     #[test]
