@@ -427,8 +427,9 @@
                     </li>
                     <li>
                         <strong>More room to write.</strong> The « before the page's title hides the sidebar,
-                        and the » in its place brings it back. On a small screen the sidebar opens over
-                        the page, below its title, and gets out of the way by itself once you pick something.
+                        and the » in its place brings it back. It stays that way from page to page. On
+                        a small screen the sidebar opens over the page, below its title, and gets out
+                        of the way by itself once you pick something.
                     </li>
                     <li>
                         <strong>Long titles.</strong> On a phone or a tablet, a title too long for the

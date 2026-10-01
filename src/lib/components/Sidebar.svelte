@@ -6,6 +6,20 @@
     export function isSmallScreen(): boolean {
         return typeof window !== 'undefined' && window.matchMedia(SMALL_SCREEN_QUERY).matches;
     }
+
+    // Whether the sidebar was hidden the last time it was on a wide screen.
+    // Every page has a sidebar of its own, made afresh when the page changes,
+    // so this is kept here, where it outlives them. Hidden to have room to
+    // write, the sidebar used to come back with the next page.
+    let hiddenWhenWide = false;
+
+    /**
+     * Whether a page's sidebar starts out hidden: always on a small screen,
+     * where it would cover the page, and on a wide one as it was left there.
+     */
+    export function startsCollapsed(): boolean {
+        return isSmallScreen() || hiddenWhenWide;
+    }
 </script>
 
 <script lang="ts">
@@ -62,16 +76,24 @@
 
     // Follow the viewport rather than sampling it once at startup. Rotating a
     // tablet or resizing a window left the sidebar in whatever state it had
-    // been in when the app opened.
+    // been in when the app opened. Becoming small puts it out of the way;
+    // becoming wide keeps it open if it was, and otherwise brings it back as
+    // it was last left on a wide screen.
     $effect(() => {
         if (typeof window === 'undefined') return;
         const mq = window.matchMedia(SMALL_SCREEN_QUERY);
         const onChange = (e: MediaQueryListEvent) => {
             small = e.matches;
-            collapsed = e.matches;
+            collapsed = e.matches || (collapsed && hiddenWhenWide);
         };
         mq.addEventListener('change', onChange);
         return () => mq.removeEventListener('change', onChange);
+    });
+
+    // On a wide screen, the next page's sidebar starts as this one is now.
+    // Only there: on a small screen every page starts with it hidden.
+    $effect(() => {
+        if (!small) hiddenWhenWide = collapsed;
     });
 
     // On a phone the sidebar covers the editor rather than sitting beside it,
