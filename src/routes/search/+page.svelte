@@ -8,6 +8,7 @@
     import { createSearch } from '$lib/search/searchStore.svelte';
     import { createTodoIndex } from '$lib/todos/todoStore.svelte';
     import { createDocumentTags } from '$lib/tags/tagStore.svelte';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { searchTerms } from '$lib/todos/todoSearch';
     import {
         SCOPES,
@@ -216,6 +217,17 @@
         box?.focus();
     });
 
+    // So do Search's own keys, pressed here, where the layout has nowhere to
+    // take them, with the words chosen so the next ones typed replace them.
+    // Not under a dialog, which keeps the keys while it is up.
+    function handleWindowKeydown(event: KeyboardEvent) {
+        if (!customShortcuts.matches('search', event)) return;
+        if (document.querySelector('[aria-modal="true"]')) return;
+        event.preventDefault();
+        box?.focus();
+        box?.select();
+    }
+
     // Back from a row this page opened, it is as it was left: the same words,
     // the same choice, and the row that was opened, scrolled to once it is
     // listed again. SvelteKit keeps this for each entry in the history, so
@@ -280,6 +292,8 @@
     runs: { text: string; match: boolean }[],
 )}{#each runs as run, r (r)}{#if run.match}<mark>{run.text}</mark
             >{:else}{run.text}{/if}{/each}{/snippet}
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <WorkspaceShell title="Search">
     <div class="search-page" bind:this={scroller}>

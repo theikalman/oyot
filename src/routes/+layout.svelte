@@ -114,7 +114,8 @@
     // Settings, and the journals for today and the days either side. Taken
     // here because this layout is on screen whatever the route, settings
     // included. Not while a dialog is open: it is something half done, and
-    // leaving the page would throw it away.
+    // leaving the page would throw it away. On the page it opens, a
+    // shortcut does nothing here, and the Search page answers its own.
     function handleKeydown(event: KeyboardEvent) {
         const id = GO_TO_SHORTCUTS.find((id) => customShortcuts.matches(id, event));
         if (id === undefined) return;
