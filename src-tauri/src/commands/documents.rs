@@ -836,6 +836,11 @@ pub fn run_search(
     // keeps in step with the document's. Should the two ever disagree, the
     // document's own title is shown unmarked: a hit must never read as a
     // title the document does not have.
+    //
+    // Ranked by BM25 with a word in the title worth ten in the body: a note
+    // named for what was searched is the likelier answer than one that
+    // mentions it, and weighted alike a short body outranks a title. The
+    // first weight is the unindexed id column's, which has nothing to score.
     let mut stmt = db
         .prepare(
             "SELECT d.id, d.type, d.title,
@@ -849,7 +854,7 @@ pub fn run_search(
               WHERE document_search MATCH ?1
                 AND d.is_deleted = 0
                 AND (?2 IS NULL OR d.type = ?2)
-              ORDER BY rank
+              ORDER BY bm25(document_search, 0.0, 10.0, 1.0)
               LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
@@ -1994,6 +1999,24 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "One");
         assert_eq!(hits[0].marked_title, "One");
+    }
+
+    // A note called "Pineapple" is what someone searching for pineapple is
+    // after, more than a short list that mentions one in passing. Weighted
+    // alike, the short list wins: a short body scores a match highly.
+    #[test]
+    fn a_match_in_the_title_ranks_above_one_in_the_text() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Pineapple", 2);
+        add_doc(&db, "d3", "note", "Groceries", 3);
+        index_text(&db, "d1", "One", "nothing to do with it");
+        index_text(&db, "d2", "Pineapple", "how to tell when one is ripe");
+        index_text(&db, "d3", "Groceries", "milk, pineapple");
+
+        assert_eq!(
+            hit_ids(&search(&db, "pineapple").unwrap()),
+            vec!["d2", "d3"]
+        );
     }
 
     #[test]
