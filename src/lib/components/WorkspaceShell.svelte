@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Snippet } from 'svelte';
     import { isLoading } from '$lib/stores/app';
-    import Sidebar, { isSmallScreen } from './Sidebar.svelte';
+    import Sidebar, { startsCollapsed } from './Sidebar.svelte';
     import PageTitle from './PageTitle.svelte';
     import SyncStatus from './SyncStatus.svelte';
 
@@ -24,7 +24,8 @@
     // hides the sidebar can sit in this header. It used to float over the
     // bottom left of the page, on top of the start of whatever lines were
     // there, which on a phone with the keyboard up are the ones being typed.
-    let sidebarCollapsed = $state(isSmallScreen());
+    // A page starts with it as the last page left it on a wide screen.
+    let sidebarCollapsed = $state(startsCollapsed());
 
     // How tall this header is. On a small screen the sidebar opens over the
     // page, and it opens below this, so the button that closes it is still
