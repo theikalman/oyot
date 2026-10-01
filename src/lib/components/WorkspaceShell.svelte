@@ -20,43 +20,56 @@
 
     let { title = null, actions, tools, children }: Props = $props();
 
-    // Held here rather than in the sidebar, so the button that brings the
-    // sidebar back can sit in this header. It used to float over the bottom
-    // left of the page, on top of the start of whatever lines were there,
-    // which on a phone with the keyboard up are the ones being typed.
+    // Held here rather than in the sidebar, so the button that shows and
+    // hides the sidebar can sit in this header. It used to float over the
+    // bottom left of the page, on top of the start of whatever lines were
+    // there, which on a phone with the keyboard up are the ones being typed.
     let sidebarCollapsed = $state(isSmallScreen());
+
+    // How tall this header is. On a small screen the sidebar opens over the
+    // page, and it opens below this, so the button that closes it is still
+    // there to press. Measured rather than assumed: a title shown in full
+    // makes the header taller.
+    let headerHeight = $state(57);
 </script>
 
-<main class="app">
+<main class="app" style:--workspace-header-height="{headerHeight}px">
     <div class="workspace">
         <Sidebar bind:collapsed={sidebarCollapsed} />
         <div class="main-content">
-            <div class="sync-status-container">
+            <div class="sync-status-container" bind:offsetHeight={headerHeight}>
                 <div class="page-start">
-                    {#if sidebarCollapsed}
-                        <button
-                            class="show-sidebar-btn"
-                            onclick={() => (sidebarCollapsed = false)}
-                            title="Show sidebar"
-                            aria-label="Show sidebar"
+                    <!-- One button for the sidebar, always here, before the
+                         title: « while it is open, » while it is not. The «
+                         used to sit at the top of the sidebar, and once the
+                         search box beside it was gone it had a row to itself
+                         there, which looked like something missing. -->
+                    <button
+                        class="sidebar-toggle"
+                        onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
+                        title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                        aria-label="Sidebar"
+                        aria-expanded={!sidebarCollapsed}
+                        aria-controls="sidebar"
+                    >
+                        <svg
+                            width="20"
+                            height="20"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                            ><path
+                                stroke="currentColor"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d={sidebarCollapsed
+                                    ? 'm13 17 5-5-5-5M6 17l5-5-5-5'
+                                    : 'm11 17-5-5 5-5M18 17l-5-5 5-5'}
+                            /></svg
                         >
-                            <svg
-                                width="20"
-                                height="20"
-                                xmlns="http://www.w3.org/2000/svg"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                aria-hidden="true"
-                                ><path
-                                    stroke="currentColor"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    stroke-width="2"
-                                    d="m13 17 5-5-5-5M6 17l5-5-5-5"
-                                /></svg
-                            >
-                        </button>
-                    {/if}
+                    </button>
                     {#if title}
                         <div class="page-heading">
                             <PageTitle {title} />
@@ -146,9 +159,8 @@
         display: none;
     }
 
-    /* The same size as the « at the top of the sidebar, which puts the
-       sidebar away again. */
-    .show-sidebar-btn {
+    /* 32px, the height of every row in this header. */
+    .sidebar-toggle {
         flex-shrink: 0;
         width: 32px;
         height: 32px;
@@ -164,7 +176,7 @@
     }
 
     @media (hover: hover) {
-        .show-sidebar-btn:hover {
+        .sidebar-toggle:hover {
             background: var(--bg-hover);
             color: var(--text-primary);
         }
@@ -174,12 +186,12 @@
        Apple's guidelines allow, reaching into the header's padding and the
        gap before the title without the button looking any bigger. */
     @media (pointer: coarse) {
-        .show-sidebar-btn {
+        .sidebar-toggle {
             position: relative;
             -webkit-tap-highlight-color: transparent;
         }
 
-        .show-sidebar-btn::after {
+        .sidebar-toggle::after {
             content: '';
             position: absolute;
             inset: -6px;

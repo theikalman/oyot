@@ -257,28 +257,9 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar" class:collapsed class:overlay={small && !collapsed}>
-    <div class="sidebar-header">
-        {#if !collapsed}
-            <button class="collapse-btn" onclick={() => (collapsed = true)} title="Collapse">
-                <svg
-                    width="20"
-                    height="20"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    ><path
-                        stroke="currentColor"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="m11 17-5-5 5-5M18 17l-5-5 5-5"
-                    /></svg
-                >
-            </button>
-        {/if}
-    </div>
-
+<!-- Shown and hidden by the button before the page's title, in the
+     workspace's header. -->
+<aside id="sidebar" class="sidebar" class:collapsed class:overlay={small && !collapsed}>
     {#if !collapsed}
         <div class="sidebar-content">
             <!-- The calendar, always, and no heading over it. It is how a
@@ -489,8 +470,7 @@
 </aside>
 
 {#if small && !collapsed}
-    <!-- Tapping away closes it, which is the only way out on a phone once the
-         sidebar covers the editor. -->
+    <!-- Tapping away closes it, as the « before the page's title does. -->
     <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
 {/if}
 
@@ -532,57 +512,24 @@
     }
 
     /* Over the editor, not beside it. As a column on a 375px screen it left
-       about 125px to write in. */
+       about 125px to write in. Below the page's header, which holds the
+       button that closes it again. */
     .sidebar.overlay {
         position: fixed;
-        top: var(--safe-top);
+        top: calc(var(--safe-top) + var(--workspace-header-height, 57px));
         bottom: var(--safe-bottom);
         left: var(--safe-left);
         z-index: 120;
         box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
     }
 
+    /* Under the header too, which stays as it is while the sidebar is open,
+       its button included. */
     .sidebar-scrim {
         position: fixed;
-        inset: 0;
+        inset: calc(var(--safe-top) + var(--workspace-header-height, 57px)) 0 0 0;
         z-index: 110;
         background: rgba(0, 0, 0, 0.35);
-    }
-
-    /* The size of the » that brings the sidebar back. */
-    .collapse-btn {
-        flex-shrink: 0;
-        width: 32px;
-        height: 32px;
-        padding: 0;
-        background: none;
-        border: none;
-        border-radius: 4px;
-        color: var(--text-secondary);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .collapse-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    /* The height of the page's own header beside it, so the line under the
-       two runs straight across. Search has a page of its own now, under
-       Index, so all this holds is the button that puts the sidebar away. */
-    .sidebar-header {
-        padding: 12px;
-        border-bottom: 1px solid var(--border-color);
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-        gap: 8px;
-        flex-shrink: 0;
-        height: 57px;
-        box-sizing: border-box;
     }
 
     /* scrollable middle area */
