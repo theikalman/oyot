@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findTerms, hasTerms, searchSections, searchTerms } from './todoSearch';
+import { findAnyTerms, findTerms, hasTerms, searchSections, searchTerms } from './todoSearch';
 import { groupTodos, type TodoHit, type TodoSections } from './grouping';
 
 /** What each find covers, which reads more plainly than its offsets. */
@@ -85,6 +85,35 @@ describe('findTerms', () => {
 
     it('finds any todo, and marks nothing in it, for no words', () => {
         expect(findTerms('call the bank', [])).toEqual([]);
+    });
+});
+
+describe('findAnyTerms', () => {
+    const covered = (text: string, query: string) =>
+        findAnyTerms(text, searchTerms(query)).map((range) => text.slice(range.start, range.end));
+
+    // A document's tags share a search's words between them: `work home`
+    // finds a note tagged #work and #home, and each chip marks its own word.
+    it('finds the words that are there, though others are not', () => {
+        expect(covered('homework', 'work urgent')).toEqual(['work']);
+    });
+
+    it('finds nothing, rather than failing, when no word is there', () => {
+        expect(findAnyTerms('homework', searchTerms('urgent'))).toEqual([]);
+    });
+
+    it('folds and joins as findTerms does', () => {
+        expect(covered('Café crème', 'cafe crem')).toEqual(['Café', 'crèm']);
+        expect(covered('milk', 'mi lk')).toEqual(['milk']);
+    });
+
+    it('agrees with findTerms when every word is there', () => {
+        const terms = searchTerms('bank call');
+        expect(findAnyTerms('call the bank', terms)).toEqual(findTerms('call the bank', terms));
+    });
+
+    it('passes over an empty word instead of finding it everywhere', () => {
+        expect(findAnyTerms('milk', ['', 'mi'])).toEqual([{ start: 0, end: 2 }]);
     });
 });
 

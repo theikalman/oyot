@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
     markSegments,
+    markText,
     todoSegments,
     type MarkedRun,
     type MarkedSegment,
     type TodoSegment,
 } from './todoText';
-import { findTerms, searchTerms } from './todoSearch';
+import { findAnyTerms, findTerms, searchTerms } from './todoSearch';
 
 const text = (value: string): TodoSegment => ({ kind: 'text', text: value });
 const tag = (name: string): TodoSegment => ({ kind: 'tag', name });
@@ -152,5 +153,24 @@ describe('markSegments', () => {
                 .join('');
             expect(text).toBe(todo);
         }
+    });
+});
+
+describe('markText', () => {
+    const plain = (value: string): MarkedRun => ({ text: value, match: false });
+    const found = (value: string): MarkedRun => ({ text: value, match: true });
+
+    // How the Search page draws a tag it found: the chip, with its hash, and
+    // the part of the name that matched.
+    it('marks the finds in a piece of text drawn whole', () => {
+        const chip = '#homework';
+        expect(markText(chip, findAnyTerms(chip, searchTerms('work urgent')))).toEqual([
+            plain('#home'),
+            found('work'),
+        ]);
+    });
+
+    it('leaves the text as one run when nothing was found', () => {
+        expect(markText('#home', [])).toEqual([plain('#home')]);
     });
 });

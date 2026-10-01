@@ -103,6 +103,14 @@ export function markSegments(
     });
 }
 
+/**
+ * `text` cut into runs where the finds in it begin and end, for text that
+ * is drawn whole, such as a tag's name on its chip.
+ */
+export function markText(text: string, found: readonly TextRange[]): MarkedRun[] {
+    return markRuns(text, 0, found);
+}
+
 /** `text`, found at `offset` in its todo, cut where the finds begin and end. */
 function markRuns(text: string, offset: number, found: readonly TextRange[]): MarkedRun[] {
     const runs: MarkedRun[] = [];

@@ -4,10 +4,12 @@ import type { TodoGroup, TodoSections } from './grouping';
 //
 // The Todos page already has every todo in hand, so its search is a filter
 // over those rows, as the Notes and Tags pages filter theirs, and not a
-// query: the full-text index behind the sidebar's search holds documents,
-// not task items (ADR 0017).
+// query: the full-text index behind the Search page's text search holds
+// documents, not task items (ADR 0017). The Search page finds todos, and
+// tags by their names, with these same rules, so a word finds the same
+// todos on either page.
 //
-// It reads a query the way the sidebar's search does: every word has to be
+// It reads a query the way the full-text search does: every word has to be
 // in the todo, in any order, and neither case nor accents matter, so "cafe"
 // finds "Café". Unlike there, a word is found inside a longer one as well as
 // at its start, as the Notes and Tags filters find theirs. That also finds
@@ -76,13 +78,37 @@ export function hasTerms(text: string, terms: readonly string[]): boolean {
  */
 export function findTerms(text: string, terms: readonly string[]): TextRange[] | null {
     if (terms.length === 0) return [];
+    return scan(text, terms, true);
+}
+
+/**
+ * Everywhere any of `terms` is in `text`, joined as `findTerms` joins them,
+ * and nothing when none of them is. For a search that takes its words from
+ * more than one piece of text, such as a document's tags, where one tag can
+ * hold some of the words and the next the rest.
+ */
+export function findAnyTerms(text: string, terms: readonly string[]): TextRange[] {
+    return scan(text, terms, false) ?? [];
+}
+
+/**
+ * The finds of each of `terms` in `text`, joined. Null when `every` asks for
+ * all of them and one is missing.
+ */
+function scan(text: string, terms: readonly string[], every: boolean): TextRange[] | null {
     const origin: number[] = [];
     const folded = fold(text, origin);
 
     const found: TextRange[] = [];
     for (const term of terms) {
+        // An empty term is found everywhere, and searching on past the end
+        // of the text for it would never stop.
+        if (!term) continue;
         let at = folded.indexOf(term);
-        if (at === -1) return null;
+        if (at === -1) {
+            if (every) return null;
+            continue;
+        }
         for (; at !== -1; at = folded.indexOf(term, at + 1)) {
             found.push(inOriginal(origin, at, at + term.length));
         }
