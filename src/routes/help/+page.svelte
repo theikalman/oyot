@@ -36,6 +36,7 @@
     let todayKeys = $derived(customShortcuts.keysFor('today'));
     let previousDayKeys = $derived(customShortcuts.keysFor('previousDay'));
     let nextDayKeys = $derived(customShortcuts.keysFor('nextDay'));
+    let sidebarKeys = $derived(customShortcuts.keysFor('sidebar'));
 
     // Each state the sync badge can be in, named the way the badge names it.
     const SYNC_STATES: { inputs: BadgeInputs; meaning: string }[] = [
@@ -426,10 +427,12 @@
                         and dark.
                     </li>
                     <li>
-                        <strong>More room to write.</strong> The « before the page's title hides the sidebar,
-                        and the » in its place brings it back. It stays that way from page to page. On
-                        a small screen the sidebar opens over the page, below its title, and gets out
-                        of the way by itself once you pick something.
+                        <strong>More room to write.</strong> The « before the page's title hides the
+                        sidebar, and the » in its place brings it back{#if sidebarKeys.length > 0},
+                            as
+                            <Keys keys={sidebarKeys} {command} /> does{/if}. It stays that way from
+                        page to page. On a small screen the sidebar opens over the page, below its
+                        title, and gets out of the way by itself once you pick something.
                     </li>
                     <li>
                         <strong>Long titles.</strong> On a phone or a tablet, a title too long for the
