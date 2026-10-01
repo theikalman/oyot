@@ -36,6 +36,42 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.29-alpha',
+        date: '2026-10-01',
+        summary:
+            "Search has a page of its own, first under Index, and new keyboard shortcuts open today's journal, the day before or after, the Index pages and Settings, and show or hide the sidebar.",
+        changes: [
+            {
+                kind: 'added',
+                text: 'A Search page, first under Index in the sidebar, finds the notes and journals with every word you type, in the title or anywhere in the text. A note whose title has the words comes ahead of one that only mentions them, and the words it found are marked. Choose Notes or Journals to look in one kind alone, Todos to find a task by its words, done or not, or Tags to find what carries a tag. Click what it finds to open it, or use the arrow keys and Enter; a task opens its note at that task. Back from there, the search is as you left it.',
+            },
+            {
+                kind: 'added',
+                text: "Keyboard shortcuts now take you around Oyot from any page, unless a dialog is open. On Apple devices, ⌘T opens today's journal, and ⌘[ and ⌘] the day before and the day after, counting from the journal that is open, or from today anywhere else; a day with no journal gets one, as clicking it in the calendar does. ⌘1 to ⌘5 open Search, Notes, Journals, Todos and Tags, in the order the sidebar lists them, ⌘, opens Settings, and ⌘\\ shows or hides the sidebar. Elsewhere, Ctrl takes the place of ⌘. Tooltips and the help page name the keys, and Settings > Keyboard shortcuts can change them.",
+            },
+            {
+                kind: 'improved',
+                text: "The « that hides the sidebar and the » that brings it back are one button now, before the page's title. The « used to be at the top of the sidebar, beside the search box. On a phone the sidebar opens below the header, so the same button closes it again.",
+            },
+            {
+                kind: 'improved',
+                text: "On a phone or a tablet, the sync indicator shows only its coloured dot, so the page's title has more room. Tapping it still opens Settings > Sync, and a screen reader still reads its status and how many devices it is connected to.",
+            },
+            {
+                kind: 'fixed',
+                text: 'In a wide window, a sidebar you have hidden stays hidden when you go to another page, until Oyot restarts. It used to come back each time you went to a different kind of page, such as Help, or back from Settings.',
+            },
+            {
+                kind: 'fixed',
+                text: 'A search with a word of punctuation in it, such as the hyphen in "Q3 - budget", no longer finds nothing. A word with no letter or digit in it is left out, so that search finds the notes that say Q3 budget.',
+            },
+            {
+                kind: 'removed',
+                text: 'The search box at the top of the sidebar is gone, and with it searching without leaving the page you are on: the results used to show in the sidebar, in place of the calendar, the pinned notes and the Index. Searching is done on the Search page now.',
+            },
+        ],
+    },
+    {
         version: '0.0.28-alpha',
         date: '2026-09-30',
         summary:
