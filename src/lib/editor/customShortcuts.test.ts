@@ -60,10 +60,10 @@ function handlerWith(overrides: Overrides) {
 }
 
 describe('EDITOR_COMMANDS', () => {
-    // The ones that go somewhere, Help among them, and Edit are answered
-    // from the window.
+    // The ones that go somewhere, Help among them, Edit and the sidebar's
+    // are answered from the window.
     it('covers every shortcut that can be changed but the app’s own', () => {
-        const appsOwn = new Set([...GO_TO_SHORTCUTS, 'edit']);
+        const appsOwn = new Set([...GO_TO_SHORTCUTS, 'edit', 'sidebar']);
         const answered = CHANGEABLE_SHORTCUTS.map((s) => s.id).filter((id) => !appsOwn.has(id));
         expect(Object.keys(EDITOR_COMMANDS).sort()).toEqual(answered.sort());
     });
