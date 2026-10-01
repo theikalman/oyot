@@ -263,12 +263,16 @@ pub fn clear_document_index(db: &rusqlite::Connection, doc_id: &str) -> Result<(
 /// error, and bare `AND`/`OR`/`NEAR` are operators. Each whitespace-separated
 /// term becomes a quoted string with a prefix wildcard, so typing "meet" finds
 /// "meeting" and nothing the user types is interpreted as syntax.
+///
+/// A term with no letter or digit in it is left out. The tokenizer finds no
+/// word in it, and FTS5 matches no row at all for the empty phrase that
+/// leaves, so one hyphen typed between two words used to hide every hit.
 pub fn to_fts_query(raw: &str) -> Option<String> {
     let terms: Vec<String> = raw
         .split_whitespace()
         .map(|t| t.replace(['"', '*'], " "))
         .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
+        .filter(|t| t.chars().any(char::is_alphanumeric))
         .map(|t| format!("\"{t}\"*"))
         .collect();
 
@@ -809,6 +813,34 @@ mod tests {
         );
         assert_eq!(to_fts_query("   "), None);
         assert_eq!(to_fts_query(""), None);
+    }
+
+    // The tokenizer reads nothing in a word without a letter or a digit, and
+    // FTS5 matches no row at all for the empty phrase it becomes, so one
+    // stray hyphen hid every hit.
+    #[test]
+    fn a_word_with_no_letter_or_digit_is_left_out_of_the_query() {
+        assert_eq!(
+            to_fts_query("Q3 - budget"),
+            Some("\"Q3\"* AND \"budget\"*".to_string())
+        );
+        assert_eq!(to_fts_query("- ... #"), None);
+    }
+
+    #[test]
+    fn punctuation_typed_between_words_does_not_hide_a_match() {
+        let db = db();
+        update_document_index(&db, "a", "Alpha", &index("Q3 budget review", &[], 0, 0)).unwrap();
+
+        let q = to_fts_query("Q3 - budget").unwrap();
+        let hits: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM document_search WHERE document_search MATCH ?",
+                [&q],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1);
     }
 
     #[test]
