@@ -77,6 +77,14 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         ],
     },
     {
+        id: 'sidebar',
+        title: 'Sidebar',
+        where: 'On every page but Settings, unless a dialog is open',
+        // Mod-\, as a number of note-taking apps have it. Mod-b, which a
+        // code editor might use, is bold here.
+        shortcuts: [{ id: 'sidebar', action: 'Show or hide the sidebar', keys: ['Mod-\\'] }],
+    },
+    {
         id: 'document',
         title: 'Notes and journals',
         where: 'On any open note or journal',

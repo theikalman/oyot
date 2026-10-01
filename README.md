@@ -59,7 +59,8 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **Around by keyboard.** From anywhere, Cmd/Ctrl+T opens today's journal,
   and Cmd/Ctrl+[ and ] the day before and the day after the one that is open.
   Cmd/Ctrl+1 to 5 open Search, Notes, Journals, Todos and Tags, in the order
-  the sidebar lists them, and Cmd/Ctrl+, opens Settings.
+  the sidebar lists them, and Cmd/Ctrl+, opens Settings. Cmd/Ctrl+\ shows or
+  hides the sidebar.
 - **Your own keyboard shortcuts.** Settings > Keyboard shortcuts lets you
   choose other keys for the ones above, and for the text styles, headings,
   lists, undo, Help and Edit, on each device. It asks before taking keys

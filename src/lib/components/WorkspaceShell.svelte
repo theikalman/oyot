@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Snippet } from 'svelte';
     import { isLoading } from '$lib/stores/app';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import Sidebar, { startsCollapsed } from './Sidebar.svelte';
     import PageTitle from './PageTitle.svelte';
     import SyncStatus from './SyncStatus.svelte';
@@ -26,6 +27,26 @@
     // there, which on a phone with the keyboard up are the ones being typed.
     // A page starts with it as the last page left it on a wide screen.
     let sidebarCollapsed = $state(startsCollapsed());
+    let sidebarToggle = $state<HTMLButtonElement | null>(null);
+
+    // The sidebar's keys do what the button does, wherever focus is on the
+    // page. Not while a dialog is open, and once for a key held down rather
+    // than a flicker. Hidden while the keys are in it, the sidebar hands
+    // focus to the button, rather than leaving it nowhere.
+    function handleKeydown(event: KeyboardEvent) {
+        if (!customShortcuts.matches('sidebar', event)) return;
+        event.preventDefault();
+        if (event.repeat || document.querySelector('[aria-modal="true"]')) return;
+        const focusInside = document.getElementById('sidebar')?.contains(document.activeElement);
+        sidebarCollapsed = !sidebarCollapsed;
+        if (sidebarCollapsed && focusInside) sidebarToggle?.focus();
+    }
+
+    // Named with its keys in the tooltip, the way the Edit button is.
+    let toggleKeys = $derived(customShortcuts.labelFor('sidebar'));
+    let toggleHint = $derived(
+        `${sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}${toggleKeys ? ` (${toggleKeys})` : ''}`,
+    );
 
     // How tall this header is. On a small screen the sidebar opens over the
     // page, and it opens below this, so the button that closes it is still
@@ -33,6 +54,8 @@
     // makes the header taller.
     let headerHeight = $state(57);
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <main class="app" style:--workspace-header-height="{headerHeight}px">
     <div class="workspace">
@@ -47,8 +70,9 @@
                          there, which looked like something missing. -->
                     <button
                         class="sidebar-toggle"
+                        bind:this={sidebarToggle}
                         onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
-                        title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                        title={toggleHint}
                         aria-label="Sidebar"
                         aria-expanded={!sidebarCollapsed}
                         aria-controls="sidebar"
