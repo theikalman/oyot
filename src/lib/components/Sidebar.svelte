@@ -159,9 +159,13 @@
         dismissOnSmallScreen();
     }
 
-    // Named in the tooltip, the way the Edit button names its own.
-    let helpKeys = $derived(customShortcuts.labelFor('help'));
-    let helpHint = $derived(`Help and keyboard shortcuts${helpKeys ? ` (${helpKeys})` : ''}`);
+    // A button's tooltip, naming the keys that do the same from anywhere,
+    // the way the Edit button names its own. The keys in use, which the user
+    // may have changed, or left it without.
+    function withKeys(label: string, id: string): string {
+        const keys = customShortcuts.labelFor(id);
+        return keys ? `${label} (${keys})` : label;
+    }
 
     // The document on screen, which is not always the store's open document.
     // The store keeps the last one after the user leaves it for an index
@@ -300,7 +304,12 @@
                 <!-- First, since it is the way into all the rest: it finds
                      notes and journals by their words, and todos and tags
                      as well. Nothing to count beside it. -->
-                <button class="nav-item" class:active={onSearchPage} onclick={goToSearch}>
+                <button
+                    class="nav-item"
+                    class:active={onSearchPage}
+                    onclick={goToSearch}
+                    title={withKeys('Search', 'search')}
+                >
                     <svg
                         width="16"
                         height="16"
@@ -316,7 +325,12 @@
                     </svg>
                     <span class="nav-label">Search</span>
                 </button>
-                <button class="nav-item" class:active={onNotesPage} onclick={goToNotes}>
+                <button
+                    class="nav-item"
+                    class:active={onNotesPage}
+                    onclick={goToNotes}
+                    title={withKeys('Notes', 'notes')}
+                >
                     <svg
                         width="16"
                         height="16"
@@ -339,7 +353,12 @@
                 <!-- The calendar above shows one month; this is the whole
                      run of them, which is the only way to see how far back
                      the journal goes. -->
-                <button class="nav-item" class:active={onJournalsPage} onclick={goToJournals}>
+                <button
+                    class="nav-item"
+                    class:active={onJournalsPage}
+                    onclick={goToJournals}
+                    title={withKeys('Journals', 'journals')}
+                >
                     <svg
                         width="16"
                         height="16"
@@ -358,7 +377,12 @@
                         <span class="nav-count">{journalDayCount}</span>
                     {/if}
                 </button>
-                <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
+                <button
+                    class="nav-item"
+                    class:active={onTodosPage}
+                    onclick={goToTodos}
+                    title={withKeys('Todos', 'todos')}
+                >
                     <svg
                         width="16"
                         height="16"
@@ -379,7 +403,12 @@
                         <span class="nav-count">{openTodoCount}</span>
                     {/if}
                 </button>
-                <button class="nav-item" class:active={onTagsPage} onclick={goToTags}>
+                <button
+                    class="nav-item"
+                    class:active={onTagsPage}
+                    onclick={goToTags}
+                    title={withKeys('Tags', 'tags')}
+                >
                     <svg
                         width="16"
                         height="16"
@@ -420,7 +449,7 @@
                     class="footer-btn"
                     class:active={onHelpPage}
                     onclick={goToHelp}
-                    title={helpHint}
+                    title={withKeys('Help and keyboard shortcuts', 'help')}
                     aria-label="Help"
                     aria-current={onHelpPage ? 'page' : undefined}
                 >
@@ -439,7 +468,14 @@
                         <path d="M12 17h.01" />
                     </svg>
                 </button>
-                <button class="footer-btn" onclick={goToSettings} title="Settings">
+                <!-- Named by aria-label, as Help is, so the keys in the
+                     tooltip are not read out as part of its name. -->
+                <button
+                    class="footer-btn"
+                    onclick={goToSettings}
+                    title={withKeys('Settings', 'settings')}
+                    aria-label="Settings"
+                >
                     <svg
                         width="18"
                         height="18"

@@ -10,6 +10,7 @@
         monthLabel,
     } from '$lib/calendar/calendar';
     import { dayLabel, dayMarks, type DayMark } from '$lib/calendar/dayMarks';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import CalendarDay from './CalendarDay.svelte';
 
     interface Props {
@@ -50,6 +51,11 @@
         monthOf = new Date(today);
         onPick(journalTitleForDay(today, today.getDate()));
     }
+
+    // Today's keys, which open its journal from anywhere, named the way the
+    // Edit button names its own.
+    let todayKeys = $derived(customShortcuts.labelFor('today'));
+    let todayHint = $derived(`Today's journal${todayKeys ? ` (${todayKeys})` : ''}`);
 
     function isSelected(day: number | null): boolean {
         if (day === null || !currentJournalTitle) return false;
@@ -93,7 +99,7 @@
         </button>
         <div class="cal-center">
             <span class="calendar-title">{monthLabel(monthOf)}</span>
-            <button class="today-btn" onclick={goToToday}>Today</button>
+            <button class="today-btn" onclick={goToToday} title={todayHint}>Today</button>
         </div>
         <button
             class="cal-nav-btn"
