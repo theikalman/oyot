@@ -781,11 +781,23 @@ pub struct SearchHit {
     pub id: String,
     pub doc_type: String,
     pub title: String,
+    /// The title again, with the words the query matched wrapped in the same
+    /// markers as `snippet`. Exactly `title` when none of its words matched.
+    pub marked_title: String,
     /// A fragment of the body around the match, with the matched terms
-    /// wrapped in the control characters the frontend splits on. Empty when
-    /// the match was in the title only.
+    /// wrapped in the control characters the frontend splits on. When only
+    /// the title matched, the start of the body, with nothing marked; empty
+    /// when there is no body.
     pub snippet: String,
 }
+
+/// How many hits a search returns when the caller does not say.
+const DEFAULT_SEARCH_LIMIT: usize = 50;
+
+/// The most hits one search returns, whatever the caller asks for. Every hit
+/// carries a snippet across IPC, and nobody reads past a few hundred of them:
+/// a query that finds more wants another word, not a longer list.
+const MAX_SEARCH_LIMIT: usize = 500;
 
 /// Full-text search over titles and bodies.
 ///
@@ -793,7 +805,22 @@ pub struct SearchHit {
 /// the user had actually written. Bodies are indexed at save time (see
 /// `indexer`), because document content lives in the CRDT and is not otherwise
 /// queryable.
-pub fn run_search(db: &Connection, query: &str) -> Result<Vec<SearchHit>, String> {
+///
+/// `doc_type` narrows it to notes or to journals, and `None` searches both.
+/// Narrowed in SQL rather than by the caller, because the caller only sees
+/// the best `limit` hits: filtered afterwards, a query whose best hits were
+/// all notes would find no journal at all, however many matched.
+pub fn run_search(
+    db: &Connection,
+    query: &str,
+    doc_type: Option<&str>,
+    limit: usize,
+) -> Result<Vec<SearchHit>, String> {
+    if let Some(kind) = doc_type {
+        if kind != "note" && kind != "journal" {
+            return Err(format!("{kind:?} is not a kind of document"));
+        }
+    }
     let Some(match_query) = indexer::to_fts_query(query) else {
         return Ok(Vec::new());
     };
@@ -804,26 +831,45 @@ pub fn run_search(db: &Connection, query: &str) -> Result<Vec<SearchHit>, String
     // an element. The previous `[` and `]` were rendered verbatim, so every
     // result showed literal brackets and no highlight.
     // Kept in step with src/lib/search/snippet.ts.
+    //
+    // The title is marked from the search row's copy of it, which the indexer
+    // keeps in step with the document's. Should the two ever disagree, the
+    // document's own title is shown unmarked: a hit must never read as a
+    // title the document does not have.
+    //
+    // Ranked by BM25 with a word in the title worth ten in the body: a note
+    // named for what was searched is the likelier answer than one that
+    // mentions it, and weighted alike a short body outranks a title. The
+    // first weight is the unindexed id column's, which has nothing to score.
     let mut stmt = db
         .prepare(
             "SELECT d.id, d.type, d.title,
-                    snippet(document_search, 2, char(2), char(3), '…', 12) AS snippet
+                    CASE WHEN document_search.title = d.title
+                         THEN highlight(document_search, 1, char(2), char(3))
+                         ELSE d.title
+                    END AS marked_title,
+                    snippet(document_search, 2, char(2), char(3), '…', 16) AS snippet
                FROM document_search
                JOIN documents d ON d.id = document_search.document_id
               WHERE document_search MATCH ?1
                 AND d.is_deleted = 0
-              ORDER BY rank
-              LIMIT 50",
+                AND (?2 IS NULL OR d.type = ?2)
+              ORDER BY bm25(document_search, 0.0, 10.0, 1.0)
+              LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
 
     let results: Vec<SearchHit> = stmt
-        .query_map(params![&match_query], |row| {
+        .query_map(params![&match_query, doc_type, limit as i64], |row| {
+            let title: String = row.get(2)?;
             Ok(SearchHit {
                 id: row.get(0)?,
                 doc_type: row.get(1)?,
-                title: row.get(2)?,
-                snippet: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                marked_title: row
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| title.clone()),
+                title,
+                snippet: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -833,13 +879,21 @@ pub fn run_search(db: &Connection, query: &str) -> Result<Vec<SearchHit>, String
     Ok(results)
 }
 
+/// `doc_type` is `"note"` or `"journal"`, or absent for both. `limit` is how
+/// many hits to return, best first. A caller that asks for one more than it
+/// shows learns whether there are more than it is showing.
 #[tauri::command]
 pub fn search_documents(
     state: tauri::State<'_, AppState>,
     query: String,
+    doc_type: Option<String>,
+    limit: Option<usize>,
 ) -> Result<Vec<SearchHit>, String> {
+    let limit = limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
     let db = state.db.lock();
-    run_search(&db, &query)
+    run_search(&db, &query, doc_type.as_deref(), limit)
 }
 
 /// Documents that link to `doc_id`.
@@ -1852,6 +1906,31 @@ mod tests {
         assert!(query_all_documents(&db).unwrap().documents.is_empty());
     }
 
+    /// A search of every kind of document, as many hits as a caller gets
+    /// without asking for a number.
+    fn search(db: &Connection, query: &str) -> Result<Vec<SearchHit>, String> {
+        run_search(db, query, None, DEFAULT_SEARCH_LIMIT)
+    }
+
+    /// Record `text` as what the document says, as a save would.
+    fn index_text(db: &Connection, id: &str, title: &str, text: &str) {
+        crate::indexer::update_document_index(
+            db,
+            id,
+            title,
+            &crate::indexer::DocumentIndexInput {
+                text: text.into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+
+    /// The ids of the hits, in the order they came back.
+    fn hit_ids(hits: &[SearchHit]) -> Vec<&str> {
+        hits.iter().map(|hit| hit.id.as_str()).collect()
+    }
+
     // `char(2)` and `char(3)` have to be something SQLite's snippet() accepts
     // as markers, and the result has to come back with them in place, or the
     // frontend has nothing to split on and shows an unhighlighted fragment.
@@ -1869,7 +1948,7 @@ mod tests {
         )
         .unwrap();
 
-        let hits = run_search(&db, "meeting").unwrap();
+        let hits = search(&db, "meeting").unwrap();
 
         assert_eq!(hits.len(), 1);
         assert!(
@@ -1889,9 +1968,61 @@ mod tests {
     }
 
     #[test]
+    fn a_search_hit_marks_the_matched_words_in_its_title() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Quarterly review", 2);
+        index_text(&db, "d2", "Quarterly review", "talked about the budget");
+        index_text(&db, "d1", "One", "the quarterly numbers");
+
+        let hits = search(&db, "quarterly").unwrap();
+        let marked = |id: &str| {
+            hits.iter()
+                .find(|hit| hit.id == id)
+                .map(|hit| hit.marked_title.clone())
+                .unwrap()
+        };
+
+        assert_eq!(marked("d2"), "\u{2}Quarterly\u{3} review");
+        // Matched in the body only: the title comes back as it is.
+        assert_eq!(marked("d1"), "One");
+    }
+
+    // The search row keeps its own copy of the title. Were it ever behind
+    // the document's, a hit would show a title the document does not have.
+    #[test]
+    fn a_hit_never_shows_a_title_the_document_does_not_have() {
+        let db = db();
+        // Indexed under another title than the row's, which is "One".
+        index_text(&db, "d1", "Quarterly", "the numbers");
+
+        let hits = search(&db, "quarterly").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "One");
+        assert_eq!(hits[0].marked_title, "One");
+    }
+
+    // A note called "Pineapple" is what someone searching for pineapple is
+    // after, more than a short list that mentions one in passing. Weighted
+    // alike, the short list wins: a short body scores a match highly.
+    #[test]
+    fn a_match_in_the_title_ranks_above_one_in_the_text() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Pineapple", 2);
+        add_doc(&db, "d3", "note", "Groceries", 3);
+        index_text(&db, "d1", "One", "nothing to do with it");
+        index_text(&db, "d2", "Pineapple", "how to tell when one is ripe");
+        index_text(&db, "d3", "Groceries", "milk, pineapple");
+
+        assert_eq!(
+            hit_ids(&search(&db, "pineapple").unwrap()),
+            vec!["d2", "d3"]
+        );
+    }
+
+    #[test]
     fn a_search_for_nothing_returns_nothing() {
         let db = db();
-        assert!(run_search(&db, "   ").unwrap().is_empty());
+        assert!(search(&db, "   ").unwrap().is_empty());
     }
 
     #[test]
@@ -1907,10 +2038,66 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(run_search(&db, "findable").unwrap().len(), 1);
+        assert_eq!(search(&db, "findable").unwrap().len(), 1);
 
         tombstone_document(&db, "d1", 900).unwrap();
-        assert!(run_search(&db, "findable").unwrap().is_empty());
+        assert!(search(&db, "findable").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_search_can_ask_for_notes_or_journals_alone() {
+        let db = db();
+        add_doc(&db, "j1", "journal", "2026-09-30", 2);
+        index_text(&db, "d1", "One", "a pineapple for lunch");
+        index_text(&db, "j1", "2026-09-30", "bought a pineapple");
+
+        let hits = search(&db, "pineapple").unwrap();
+        let mut both = hit_ids(&hits);
+        both.sort_unstable();
+        assert_eq!(both, vec!["d1", "j1"]);
+
+        let notes = run_search(&db, "pineapple", Some("note"), DEFAULT_SEARCH_LIMIT).unwrap();
+        assert_eq!(hit_ids(&notes), vec!["d1"]);
+
+        let journals = run_search(&db, "pineapple", Some("journal"), DEFAULT_SEARCH_LIMIT).unwrap();
+        assert_eq!(hit_ids(&journals), vec!["j1"]);
+    }
+
+    // Narrowed in SQL, not afterwards: a search capped at one hit whose best
+    // hit is a note still has a journal to give when asked for journals.
+    #[test]
+    fn narrowing_happens_before_the_cap() {
+        let db = db();
+        add_doc(&db, "j1", "journal", "2026-09-30", 2);
+        // The note says it twice, so it is the better hit of the two.
+        index_text(&db, "d1", "One", "pineapple, pineapple");
+        index_text(&db, "j1", "2026-09-30", "one pineapple among other words");
+
+        assert_eq!(hit_ids(&search(&db, "pineapple").unwrap())[0], "d1");
+        let journals = run_search(&db, "pineapple", Some("journal"), 1).unwrap();
+        assert_eq!(hit_ids(&journals), vec!["j1"]);
+    }
+
+    // The column is checked by the schema, so an unknown kind would only ever
+    // find nothing. Said out loud instead, since it is the caller's mistake.
+    #[test]
+    fn a_search_for_an_unknown_kind_of_document_is_refused() {
+        let db = db();
+        index_text(&db, "d1", "One", "pineapple");
+        assert!(run_search(&db, "pineapple", Some("tag"), DEFAULT_SEARCH_LIMIT).is_err());
+    }
+
+    #[test]
+    fn a_search_returns_no_more_hits_than_it_was_asked_for() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 2);
+        add_doc(&db, "d3", "note", "Three", 3);
+        for (id, title) in [("d1", "One"), ("d2", "Two"), ("d3", "Three")] {
+            index_text(&db, id, title, "pineapple");
+        }
+
+        assert_eq!(search(&db, "pineapple").unwrap().len(), 3);
+        assert_eq!(run_search(&db, "pineapple", None, 2).unwrap().len(), 2);
     }
 
     fn tombstone_entry(id: &str) -> EnsureDocumentRequest {

@@ -47,13 +47,24 @@ export async function loadAllTags(): Promise<TagSummary[]> {
  * list is, which is also what makes it cover documents this device has only
  * ever received.
  *
+ * Throws on failure. For a caller whose answer is the tags themselves, such
+ * as a search by tag, where nothing found and nothing asked must not read
+ * the same.
+ */
+export async function fetchTagsByDocument(): Promise<TagsByDocument> {
+    return tagsByDocument(await invoke<DocumentTagHit[]>('get_document_tags'));
+}
+
+/**
+ * `fetchTagsByDocument` for a list the tags only decorate.
+ *
  * Failure returns nothing rather than throwing, as `loadAllTags` does: the
  * tags decorate a list that is worth reading without them, so a failed query
  * should cost the chips and not the page.
  */
 export async function loadTagsByDocument(): Promise<TagsByDocument> {
     try {
-        return tagsByDocument(await invoke<DocumentTagHit[]>('get_document_tags'));
+        return await fetchTagsByDocument();
     } catch (error) {
         console.error('[tags] failed to load the tags of each document:', error);
         return NO_TAGS;

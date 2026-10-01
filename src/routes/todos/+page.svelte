@@ -44,7 +44,7 @@
     let found = $derived(searchSections(todos.sections, terms));
     let foundCount = $derived(countAll(found));
 
-    // Escape empties the box, as it does the sidebar's search.
+    // Escape empties the box, as it does on the Search page.
     function handleSearchKeydown(event: KeyboardEvent) {
         if (event.key === 'Escape') query = '';
     }
@@ -407,7 +407,7 @@
         color: var(--text-muted);
     }
 
-    /* What the search found, in the sidebar search's highlight, and in the
+    /* What the search found, in the Search page's highlight, and in the
        colour of the words around it, which is muted on a finished row. No
        padding, which would nudge the letters sideways as marks come and go
        with each key pressed. */

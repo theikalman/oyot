@@ -134,7 +134,7 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
     {
         id: 'search',
         title: 'Search',
-        where: 'In the search box at the top of the sidebar',
+        where: 'In the box on the Search page',
         shortcuts: [
             { action: 'Move through the results', keys: ['ArrowUp', 'ArrowDown'] },
             { action: 'Open the highlighted result', keys: ['Enter'] },

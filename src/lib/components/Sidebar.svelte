@@ -22,13 +22,12 @@
         openHelp,
         openJournals,
         openNotes,
+        openSearch,
         openTags,
         openTodos,
     } from '../services/navigation';
     import { page } from '$app/state';
     import { toasts } from '../services/toast';
-    import { snippetParts } from '../search/snippet';
-    import { createSearch, type SearchHit } from '../search/searchStore.svelte';
     import AboutDialog from './AboutDialog.svelte';
     import NewNoteDialog from './NewNoteDialog.svelte';
     import RenameNoteDialog from './RenameNoteDialog.svelte';
@@ -60,7 +59,6 @@
         dismissOnSmallScreen();
     }
 
-    let searchInput = $state('');
     let showModal = $state(false);
     let small = $state(isSmallScreen());
 
@@ -114,6 +112,7 @@
             0,
         ),
     );
+    let onSearchPage = $derived(page.url.pathname === '/search');
     let onTodosPage = $derived(page.url.pathname === '/todos');
     let onJournalsPage = $derived(page.url.pathname === '/journals');
     let onNotesPage = $derived(page.url.pathname === '/notes');
@@ -131,6 +130,11 @@
         void $indexRevision;
         void refreshTagCount();
     });
+
+    function goToSearch() {
+        void openSearch();
+        dismissOnSmallScreen();
+    }
 
     function goToNotes() {
         void openNotes();
@@ -184,45 +188,6 @@
     let noteCount = $derived(
         $documents.filter((d: DocumentSummary) => d.doc_type === 'note').length,
     );
-
-    // Search runs in SQL over an FTS index of titles and bodies, so it finds
-    // what the user wrote, not just what they named it, and covers journals as
-    // well as notes. The debounce, the sequencing and the selection live in
-    // $lib/search: three pieces of state that have to stay in step, which they
-    // did not reliably do as loose variables among everything else here.
-    const search = createSearch();
-
-    let isSearchActive = $derived(searchInput.trim().length > 0);
-
-    $effect(() => search.schedule(searchInput.trim()));
-
-    // Arrow keys move through the results and Enter opens one, so a search can
-    // be completed without leaving the keyboard. Escape clears the box, which
-    // is also how you get back to the document list.
-    function handleSearchKeydown(event: KeyboardEvent) {
-        if (event.key === 'Escape') {
-            searchInput = '';
-            return;
-        }
-        if (search.results.length === 0) return;
-
-        if (event.key === 'ArrowDown') {
-            event.preventDefault();
-            search.move(1);
-        } else if (event.key === 'ArrowUp') {
-            event.preventDefault();
-            search.move(-1);
-        } else if (event.key === 'Enter') {
-            event.preventDefault();
-            const hit = search.current();
-            if (hit) openSearchHit(hit);
-        }
-    }
-
-    function openSearchHit(hit: SearchHit) {
-        void openDocument(hit.id);
-        dismissOnSmallScreen();
-    }
 
     let openMenuId = $state<string | null>(null);
     let renameDoc = $state<DocumentSummary | null>(null);
@@ -292,213 +257,158 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar" class:collapsed class:overlay={small && !collapsed}>
-    <div class="sidebar-header">
-        {#if !collapsed}
-            <input
-                type="text"
-                placeholder="Search documents..."
-                bind:value={searchInput}
-                onkeydown={handleSearchKeydown}
-                class="search-input"
-                aria-label="Search documents"
-            />
-            <button class="collapse-btn" onclick={() => (collapsed = true)} title="Collapse">
-                <svg
-                    width="20"
-                    height="20"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    ><path
-                        stroke="currentColor"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="m11 17-5-5 5-5M18 17l-5-5 5-5"
-                    /></svg
-                >
-            </button>
-        {/if}
-    </div>
-
+<!-- Shown and hidden by the button before the page's title, in the
+     workspace's header. -->
+<aside id="sidebar" class="sidebar" class:collapsed class:overlay={small && !collapsed}>
     {#if !collapsed}
         <div class="sidebar-content">
-            {#if isSearchActive}
-                <div class="sidebar-section">
-                    <h3>
-                        Results {#if !search.searching}({search.results.length}){/if}
-                    </h3>
-                    {#if search.searching && search.results.length === 0}
-                        <p class="search-note">Searching...</p>
-                    {:else if search.failed}
-                        <p class="search-note error">Search is unavailable right now</p>
-                    {:else if search.results.length === 0}
-                        <p class="search-note">Nothing matches "{searchInput.trim()}"</p>
-                    {:else}
-                        <ul class="doc-list">
-                            {#each search.results as hit, i (hit.id)}
-                                <li class="doc-item">
-                                    <button
-                                        class="search-hit"
-                                        class:current={currentDocId === hit.id}
-                                        class:selected={i === search.selected}
-                                        onclick={() => openSearchHit(hit)}
-                                    >
-                                        <span class="search-hit-title">
-                                            {hit.title}
-                                            {#if hit.doc_type === 'journal'}
-                                                <span class="search-hit-kind">journal</span>
-                                            {/if}
-                                        </span>
-                                        {#if hit.snippet}
-                                            <span class="search-hit-snippet">
-                                                {#each snippetParts(hit.snippet) as part, pi (pi)}{#if part.match}<mark
-                                                            >{part.text}</mark
-                                                        >{:else}{part.text}{/if}{/each}
-                                            </span>
-                                        {/if}
-                                    </button>
-                                </li>
-                            {/each}
-                        </ul>
-                    {/if}
-                </div>
-            {:else}
-                <!-- The calendar, always, and no heading over it. It is how a
-                     journal is found: a journal is named for its day, so a
-                     month grid marking the days with something written in
-                     them beats a column of dates, and it says what it is
-                     without being told. -->
-                <div class="sidebar-section">
-                    <JournalCalendar
-                        {journals}
-                        {currentJournalTitle}
-                        {today}
-                        onPick={openJournalFor}
+            <!-- The calendar, always, and no heading over it. It is how a
+                 journal is found: a journal is named for its day, so a
+                 month grid marking the days with something written in
+                 them beats a column of dates, and it says what it is
+                 without being told. -->
+            <div class="sidebar-section">
+                <JournalCalendar {journals} {currentJournalTitle} {today} onPick={openJournalFor} />
+            </div>
+
+            <div class="sidebar-section">
+                <h3>
+                    Pinned notes
+                    <button
+                        class="add-doc-btn"
+                        onclick={() => (showModal = true)}
+                        title="New note"
+                        aria-label="New note">+</button
+                    >
+                </h3>
+                {#if pinned.length > 0}
+                    <DocumentList
+                        documents={pinned}
+                        {currentDocId}
+                        {openMenuId}
+                        onOpen={handleDocClick}
+                        onToggleMenu={toggleMenu}
+                        onRename={startRename}
+                        onDelete={startDelete}
+                        onTogglePin={togglePin}
                     />
-                </div>
+                {:else}
+                    <!-- Where everyone starts after updating, since no note
+                         was pinned before pins existed. It has to say where
+                         the notes that used to be listed here went. -->
+                    <p class="pinned-empty">
+                        Pin a note to keep it here. All your notes are in
+                        <button class="pinned-empty-link" onclick={goToNotes}>Notes</button>.
+                    </p>
+                {/if}
+            </div>
 
-                <div class="sidebar-section">
-                    <h3>
-                        Pinned notes
-                        <button
-                            class="add-doc-btn"
-                            onclick={() => (showModal = true)}
-                            title="New note"
-                            aria-label="New note">+</button
-                        >
-                    </h3>
-                    {#if pinned.length > 0}
-                        <DocumentList
-                            documents={pinned}
-                            {currentDocId}
-                            {openMenuId}
-                            onOpen={handleDocClick}
-                            onToggleMenu={toggleMenu}
-                            onRename={startRename}
-                            onDelete={startDelete}
-                            onTogglePin={togglePin}
+            <div class="sidebar-section">
+                <h3>Index</h3>
+                <!-- First, since it is the way into all the rest: it finds
+                     notes and journals by their words, and todos and tags
+                     as well. Nothing to count beside it. -->
+                <button class="nav-item" class:active={onSearchPage} onclick={goToSearch}>
+                    <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <circle cx="11" cy="11" r="7" />
+                        <path d="m20 20-3.5-3.5" />
+                    </svg>
+                    <span class="nav-label">Search</span>
+                </button>
+                <button class="nav-item" class:active={onNotesPage} onclick={goToNotes}>
+                    <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
                         />
-                    {:else}
-                        <!-- Where everyone starts after updating, since no note
-                             was pinned before pins existed. It has to say where
-                             the notes that used to be listed here went. -->
-                        <p class="pinned-empty">
-                            Pin a note to keep it here. All your notes are in
-                            <button class="pinned-empty-link" onclick={goToNotes}>Notes</button>.
-                        </p>
+                    </svg>
+                    <span class="nav-label">Notes</span>
+                    {#if noteCount > 0}
+                        <span class="nav-count">{noteCount}</span>
                     {/if}
-                </div>
-
-                <div class="sidebar-section">
-                    <h3>Index</h3>
-                    <button class="nav-item" class:active={onNotesPage} onclick={goToNotes}>
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path
-                                d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
-                            />
-                        </svg>
-                        <span class="nav-label">Notes</span>
-                        {#if noteCount > 0}
-                            <span class="nav-count">{noteCount}</span>
-                        {/if}
-                    </button>
-                    <!-- The calendar above shows one month; this is the whole
-                         run of them, which is the only way to see how far back
-                         the journal goes. -->
-                    <button class="nav-item" class:active={onJournalsPage} onclick={goToJournals}>
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path d="M8 2v4M16 2v4M3 10h18" />
-                            <rect x="3" y="4" width="18" height="18" rx="2" />
-                        </svg>
-                        <span class="nav-label">Journals</span>
-                        {#if journalDayCount > 0}
-                            <span class="nav-count">{journalDayCount}</span>
-                        {/if}
-                    </button>
-                    <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path d="m7.5 12 3 3 6-6" />
-                            <path
-                                d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
-                            />
-                        </svg>
-                        <span class="nav-label">Todos</span>
-                        {#if openTodoCount > 0}
-                            <span class="nav-count">{openTodoCount}</span>
-                        {/if}
-                    </button>
-                    <button class="nav-item" class:active={onTagsPage} onclick={goToTags}>
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path d="M9 9h.01" />
-                            <path
-                                d="M3.6 13.83l6.58 6.58a2 2 0 0 0 2.83 0l6.59-6.59a2 2 0 0 0 .58-1.41V4a2 2 0 0 0-2-2h-7.83a2 2 0 0 0-1.41.58L3.6 11a2 2 0 0 0 0 2.83"
-                            />
-                        </svg>
-                        <span class="nav-label">Tags</span>
-                        {#if $tagCount > 0}
-                            <span class="nav-count">{$tagCount}</span>
-                        {/if}
-                    </button>
-                </div>
-            {/if}
+                </button>
+                <!-- The calendar above shows one month; this is the whole
+                     run of them, which is the only way to see how far back
+                     the journal goes. -->
+                <button class="nav-item" class:active={onJournalsPage} onclick={goToJournals}>
+                    <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M8 2v4M16 2v4M3 10h18" />
+                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                    </svg>
+                    <span class="nav-label">Journals</span>
+                    {#if journalDayCount > 0}
+                        <span class="nav-count">{journalDayCount}</span>
+                    {/if}
+                </button>
+                <button class="nav-item" class:active={onTodosPage} onclick={goToTodos}>
+                    <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="m7.5 12 3 3 6-6" />
+                        <path
+                            d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
+                        />
+                    </svg>
+                    <span class="nav-label">Todos</span>
+                    {#if openTodoCount > 0}
+                        <span class="nav-count">{openTodoCount}</span>
+                    {/if}
+                </button>
+                <button class="nav-item" class:active={onTagsPage} onclick={goToTags}>
+                    <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 9h.01" />
+                        <path
+                            d="M3.6 13.83l6.58 6.58a2 2 0 0 0 2.83 0l6.59-6.59a2 2 0 0 0 .58-1.41V4a2 2 0 0 0-2-2h-7.83a2 2 0 0 0-1.41.58L3.6 11a2 2 0 0 0 0 2.83"
+                        />
+                    </svg>
+                    <span class="nav-label">Tags</span>
+                    {#if $tagCount > 0}
+                        <span class="nav-count">{$tagCount}</span>
+                    {/if}
+                </button>
+            </div>
 
             <SidebarDeviceList onManage={goToSync} />
         </div>
@@ -560,8 +470,7 @@
 </aside>
 
 {#if small && !collapsed}
-    <!-- Tapping away closes it, which is the only way out on a phone once the
-         sidebar covers the editor. -->
+    <!-- Tapping away closes it, as the « before the page's title does. -->
     <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
 {/if}
 
@@ -603,71 +512,24 @@
     }
 
     /* Over the editor, not beside it. As a column on a 375px screen it left
-       about 125px to write in. */
+       about 125px to write in. Below the page's header, which holds the
+       button that closes it again. */
     .sidebar.overlay {
         position: fixed;
-        top: var(--safe-top);
+        top: calc(var(--safe-top) + var(--workspace-header-height, 57px));
         bottom: var(--safe-bottom);
         left: var(--safe-left);
         z-index: 120;
         box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
     }
 
+    /* Under the header too, which stays as it is while the sidebar is open,
+       its button included. */
     .sidebar-scrim {
         position: fixed;
-        inset: 0;
+        inset: calc(var(--safe-top) + var(--workspace-header-height, 57px)) 0 0 0;
         z-index: 110;
         background: rgba(0, 0, 0, 0.35);
-    }
-
-    /* Beside the search box, sized to match it. */
-    .collapse-btn {
-        flex-shrink: 0;
-        width: 32px;
-        height: 32px;
-        padding: 0;
-        background: none;
-        border: none;
-        border-radius: 4px;
-        color: var(--text-secondary);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .collapse-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-    }
-
-    .sidebar-header {
-        padding: 12px;
-        border-bottom: 1px solid var(--border-color);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        flex-shrink: 0;
-        height: 57px;
-        box-sizing: border-box;
-    }
-
-    .search-input {
-        flex: 1;
-        padding: 8px 12px;
-        border: 1px solid var(--border-light);
-        border-radius: 4px;
-        font-size: 14px;
-        background: var(--bg-primary);
-        color: var(--text-primary);
-        height: 32px;
-        box-sizing: border-box;
-        min-width: 0;
-    }
-
-    .search-input::placeholder {
-        color: var(--text-muted);
     }
 
     /* scrollable middle area */
@@ -688,68 +550,6 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-    }
-
-    .search-note {
-        margin: 0;
-        padding: 8px 4px;
-        font-size: 12px;
-        color: var(--text-muted);
-    }
-    .search-note.error {
-        color: var(--error-text);
-    }
-    .search-hit {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        width: 100%;
-        padding: 6px 8px;
-        text-align: left;
-        background: transparent;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        color: var(--text-primary);
-    }
-    .search-hit:hover {
-        background: var(--bg-hover);
-    }
-    .search-hit.current {
-        background: var(--accent-bg);
-    }
-    .search-hit-title {
-        font-size: 13px;
-        font-weight: 500;
-    }
-    .search-hit-kind {
-        margin-left: 6px;
-        font-size: 10px;
-        font-weight: 400;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--text-muted);
-    }
-    .search-hit.selected {
-        background: var(--bg-hover);
-        outline: 2px solid var(--accent-color);
-        outline-offset: -2px;
-    }
-    .search-hit-snippet :global(mark) {
-        background: var(--accent-bg-hover);
-        color: var(--text-primary);
-        border-radius: 2px;
-        padding: 0 1px;
-    }
-    .search-hit-snippet {
-        font-size: 11px;
-        line-height: 1.4;
-        color: var(--text-secondary);
-        overflow: hidden;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        line-clamp: 2;
-        -webkit-box-orient: vertical;
     }
 
     /* ── Index section ── */

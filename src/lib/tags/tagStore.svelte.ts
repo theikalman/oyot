@@ -1,6 +1,7 @@
-import { loadAllTags, loadDocumentsForTag } from '$lib/services/tags';
+import { fetchTagsByDocument, loadAllTags, loadDocumentsForTag } from '$lib/services/tags';
 import type { TagSummary } from '$lib/tiptap/tags';
 import type { DocumentSummary } from '$lib/types';
+import { NO_TAGS, type TagsByDocument } from './documentTags';
 
 /**
  * The state behind the tag index page.
@@ -116,3 +117,51 @@ export function createTaggedDocuments() {
 }
 
 export type TaggedDocuments = ReturnType<typeof createTaggedDocuments>;
+
+/**
+ * The state behind a search by tag: what every document is tagged with.
+ *
+ * The same rows the Notes and Journals pages draw their chips from, but read
+ * so that a failure says so. There the tags decorate a list; here they are
+ * the answer, and a failed read shown as "no tag matches" would be a lie.
+ */
+export function createDocumentTags() {
+    let tags = $state<TagsByDocument>(NO_TAGS);
+    let loading = $state(true);
+    let failed = $state(false);
+
+    let seq = 0;
+
+    async function load(): Promise<void> {
+        const mine = ++seq;
+        loading = true;
+        try {
+            const rows = await fetchTagsByDocument();
+            if (mine !== seq) return;
+            tags = rows;
+            failed = false;
+        } catch (err) {
+            if (mine !== seq) return;
+            console.error('[tags] failed to load the tags of each document:', err);
+            tags = NO_TAGS;
+            failed = true;
+        } finally {
+            if (mine === seq) loading = false;
+        }
+    }
+
+    return {
+        get tags() {
+            return tags;
+        },
+        get loading() {
+            return loading;
+        },
+        get failed() {
+            return failed;
+        },
+        load,
+    };
+}
+
+export type DocumentTags = ReturnType<typeof createDocumentTags>;

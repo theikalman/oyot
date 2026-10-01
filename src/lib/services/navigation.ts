@@ -34,6 +34,12 @@ export function openDocumentAtTodo(docId: string, ordinal: number): Promise<void
     return goto(resolve(`/doc/[id]?todo=${ordinal}`, { id: docId }), { keepFocus: true });
 }
 
+// The search page: every note and journal by its words, or one kind of
+// thing at a time.
+export function openSearch(): Promise<void> {
+    return goto(resolve('/search'));
+}
+
 // The todo index: every task item in every note and journal.
 export function openTodos(): Promise<void> {
     return goto(resolve('/todos'));

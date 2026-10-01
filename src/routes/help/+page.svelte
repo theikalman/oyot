@@ -152,7 +152,7 @@
                         today's journal.
                     </li>
                     <li>
-                        Opening a journal any other way, from search or the Journals page, moves the
+                        Opening a journal any other way, from Search or the Journals page, moves the
                         calendar to its month.
                     </li>
                 </ul>
@@ -326,8 +326,12 @@
                 <h2 id="finding-title">Finding things</h2>
                 <ul class="points">
                     <li>
-                        <strong>Search.</strong> The box at the top of the sidebar searches the words
-                        in every note and journal, not just their titles.
+                        <strong>Search.</strong> The Search page, first under Index in the sidebar, finds
+                        the notes and journals with every word you type, in the title or anywhere in the
+                        text, best matches first. Choose Notes or Journals to look in one kind alone,
+                        Todos to find a task by its words, done or not, or Tags to find what carries a
+                        tag. Click what it finds to open it, or use the arrow keys and Enter. Back from
+                        there, the search is as you left it.
                     </li>
                     <li>
                         <strong>Pinned notes.</strong> The sidebar lists only the notes you pin. Pin one
@@ -335,8 +339,9 @@
                         + beside Pinned notes is pinned from the start.
                     </li>
                     <li>
-                        <strong>The Index.</strong> Each page under Index in the sidebar lists one kind
-                        of thing, with how many beside it. Beside Todos, that is the tasks still to do.
+                        <strong>The Index.</strong> Below Search, each page under Index in the sidebar
+                        lists one kind of thing, with how many beside it. Beside Todos, that is the tasks
+                        still to do.
                     </li>
                     <li>
                         <strong>Notes</strong> lists every note, newest first. Its filter finds a note
@@ -403,9 +408,9 @@
                         and dark.
                     </li>
                     <li>
-                        <strong>More room to write.</strong> The « beside the search box hides the sidebar,
-                        and the » before the page's title brings it back. On a small screen the sidebar
-                        gets out of the way by itself once you pick something.
+                        <strong>More room to write.</strong> The « before the page's title hides the sidebar,
+                        and the » in its place brings it back. On a small screen the sidebar opens over
+                        the page, below its title, and gets out of the way by itself once you pick something.
                     </li>
                     <li>
                         <strong>Long titles.</strong> On a phone or a tablet, a title too long for the

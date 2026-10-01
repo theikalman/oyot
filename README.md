@@ -27,8 +27,11 @@ and move between paired devices over an encrypted peer-to-peer connection.
   you have just created opens ready to write in.
 - **Document links and backlinks.** Link one note to another with `/document`.
   Each note shows what links back to it.
-- **Full-text search.** Searches the text of your notes and journals, not just
-  their titles.
+- **Search.** The Search page, first under Index in the sidebar, finds your
+  notes and journals by the words in their titles and text, best matches
+  first, or looks in only notes, only journals, only tasks or only tags. A
+  click opens what it found, and back from there the search is as you left
+  it.
 - **Task lists.** Every task in every note and journal is on the Todos page,
   under the note or day it belongs to. Its search finds a task by the words in
   it, and a click opens the note right at that task.
