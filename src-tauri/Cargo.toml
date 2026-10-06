@@ -1,6 +1,6 @@
 [package]
 name = "oyot"
-version = "0.0.29-alpha"
+version = "0.0.30-alpha"
 description = "Simple note taking app"
 authors = ["AjiYakin"]
 edition = "2021"

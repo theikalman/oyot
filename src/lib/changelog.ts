@@ -36,6 +36,26 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.30-alpha',
+        date: '2026-10-06',
+        summary:
+            'Devices on the same network reconnect over it again, rather than only over an address you added, and Reconnect tries every way to reach a device, starting with the network you are on.',
+        changes: [
+            {
+                kind: 'fixed',
+                text: 'Devices on the same network reconnect over it after a sleep, or anything else that drops their connection. Oyot forgot a device it had found on the network about two minutes after finding it, even though the device was still there, so the connection was not made again that way. A device with an address you added, such as a Tailscale one, went on syncing, but only over that address.',
+            },
+            {
+                kind: 'improved',
+                text: 'When a device cannot be reached over the network you are on, Oyot tries the address you added for it, such as a Tailscale one, rather than the same network again and again. That helps on a network that lets devices find each other but not connect, and behind a firewall. Settings > Sync now checks those addresses even while the device is on the same network, so an address that works says so.',
+            },
+            {
+                kind: 'improved',
+                text: 'Reconnect tries at once, even when Oyot has not found the device: over the network you are on, then where the device was last seen on it, then at every address you added for it.',
+            },
+        ],
+    },
+    {
         version: '0.0.29-alpha',
         date: '2026-10-01',
         summary:
