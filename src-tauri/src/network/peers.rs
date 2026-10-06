@@ -178,10 +178,19 @@ impl PeerTable {
 
     /// The best route to one peer, or `None` if there is none.
     pub fn best(&self, node_id: &str) -> Option<&Peer> {
-        self.peers
+        self.routes(node_id).into_iter().next()
+    }
+
+    /// Every route to one peer, best first: a dial tries the next when one
+    /// fails.
+    pub fn routes(&self, node_id: &str) -> Vec<&Peer> {
+        let mut routes: Vec<&Peer> = self
+            .peers
             .values()
             .filter(|p| p.node_id == node_id)
-            .min_by_key(|p| p.source.rank())
+            .collect();
+        routes.sort_by_key(|p| p.source.rank());
+        routes
     }
 
     pub fn all(&self) -> Vec<Peer> {
@@ -281,6 +290,16 @@ impl Peers {
     /// The best route to one peer, if there is one.
     pub fn best(&self, node_id: &str) -> Option<Peer> {
         self.table.lock().best(node_id).cloned()
+    }
+
+    /// Every route to one peer, best first.
+    pub fn routes(&self, node_id: &str) -> Vec<Peer> {
+        self.table
+            .lock()
+            .routes(node_id)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     pub fn all(&self) -> Vec<Peer> {
@@ -429,6 +448,20 @@ mod tests {
 
         assert!(gone.is_empty());
         assert_eq!(table.best("a").map(|p| p.source), Some(PeerSource::Mdns));
+    }
+
+    // A dial goes down this list until one route works, so a stored address
+    // is still tried when the local route is there and fails.
+    #[test]
+    fn every_route_to_a_device_comes_this_network_first() {
+        let mut table = PeerTable::default();
+        table.upsert(peer("a", PeerSource::Address, 99, 1_000));
+        table.upsert(peer("a", PeerSource::Mdns, 20, 1_000));
+        table.upsert(peer("b", PeerSource::Mdns, 21, 1_000));
+
+        let sources: Vec<PeerSource> = table.routes("a").iter().map(|p| p.source).collect();
+        assert_eq!(sources, vec![PeerSource::Mdns, PeerSource::Address]);
+        assert!(table.routes("nobody").is_empty());
     }
 
     #[test]

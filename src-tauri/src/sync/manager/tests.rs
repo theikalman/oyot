@@ -174,6 +174,12 @@ fn on_this_network(to: &Device, port: u16, seen_at: i64) -> Peer {
     }
 }
 
+/// A port on this machine that nothing listens on.
+async fn dead_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 fn pair(a: &Device, b: &Device) {
     let room = pairing::derive_room_id(&a.user_id, &b.user_id);
     pairing::save_pair(&a.db.lock(), &a.user_id, &b.node_id, &b.name, &room).unwrap();
@@ -319,6 +325,26 @@ async fn a_device_found_on_this_network_long_ago_is_still_dialled() {
     a.manager.start();
 
     eventually("the note over this network", || {
+        text_of(&a, "groceries") == "milk, eggs"
+    })
+    .await;
+}
+
+// A network can carry mDNS and still refuse connections between devices, and
+// so can a firewall. The address the prober proved is the way in then.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dial_falls_back_to_a_stored_address_when_this_network_fails() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    write_note(&b, "groceries", "milk, eggs");
+    a.peers
+        .observe(on_this_network(&b, dead_port().await, now_ms()));
+    route(&a, &b);
+
+    b.manager.start();
+    a.manager.start();
+
+    eventually("the note over the stored address", || {
         text_of(&a, "groceries") == "milk, eggs"
     })
     .await;

@@ -130,16 +130,11 @@ async fn probe_all(
         }
     };
 
+    // Probed even when the device is on this network too. A dial tries that
+    // route first and falls back to this one when it fails, which a network
+    // that carries mDNS but not connections between devices, or a firewall,
+    // makes it do.
     for (node_id, addresses) in by_peer(stored) {
-        // Already here on this network, so there is nothing an address could
-        // add. If wifi goes away, the next pass finds it the other way.
-        if peers
-            .best(&node_id)
-            .is_some_and(|p| p.source == PeerSource::Mdns)
-        {
-            continue;
-        }
-
         match probe_peer(manager, boot_id, &node_id, &addresses).await {
             Some((peer, answered)) => {
                 peers.observe(peer);

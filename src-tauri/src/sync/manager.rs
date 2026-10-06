@@ -4,6 +4,8 @@
 //! - **One connection per device pair,** dialled by whichever device can
 //!   reach the other: at start, when a device is found, after a wake or a
 //!   network change, and after a drop on a backoff from one to thirty seconds.
+//!   A dial tries every route to the device, this network first, until one
+//!   finishes a handshake.
 //! - **Two connections at once** (both dialled): the one dialled by the lower
 //!   node_id is kept, so both sides keep the same one, unless the existing one
 //!   has gone quiet, in which case it is probably dead and the new one wins.
@@ -646,29 +648,33 @@ fn phase_name(phase: Phase) -> &'static str {
     }
 }
 
-async fn connect_any(addrs: &[IpAddr], port: u16) -> Result<TcpStream, String> {
-    let mut last = "no addresses".to_string();
-    for addr in addrs {
-        let target = SocketAddr::new(*addr, port);
-        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target)).await {
-            Ok(Ok(stream)) => return Ok(stream),
-            Ok(Err(e)) => last = format!("{target}: {e}"),
-            Err(_) => last = format!("{target}: timed out"),
-        }
+fn add_target(targets: &mut Vec<SocketAddr>, target: SocketAddr) {
+    if !targets.contains(&target) {
+        targets.push(target);
     }
-    Err(last)
 }
 
-async fn connect_tls(
-    inner: &Inner,
-    node_id: &str,
+/// Where to dial `node_id`, in the order to try: every route the peer table
+/// holds for it, this network first.
+fn dial_targets(inner: &Inner, node_id: &str) -> Vec<SocketAddr> {
+    let mut targets = Vec::new();
+    for route in inner.peers.routes(node_id) {
+        for addr in &route.addrs {
+            add_target(&mut targets, SocketAddr::new(*addr, route.port));
+        }
+    }
+    targets
+}
+
+/// Connect to one address and finish a handshake with the device there.
+async fn handshake(
+    connector: &TlsConnector,
+    target: SocketAddr,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
-    let route = inner
-        .peers
-        .best(node_id)
-        .ok_or_else(|| format!("{node_id} is not reachable"))?;
-    let stream = connect_any(&route.addrs, route.port).await?;
-    let connector = TlsConnector::from(tls::client_config(&inner.me.signing, node_id)?);
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
+        .await
+        .map_err(|_| "timed out".to_string())?
+        .map_err(|e| e.to_string())?;
     tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         connector.connect(tls::server_name(), stream),
@@ -676,6 +682,29 @@ async fn connect_tls(
     .await
     .map_err(|_| "the handshake timed out".to_string())?
     .map_err(|e| format!("the handshake failed: {e}"))
+}
+
+/// Reach `node_id` at the first of `dial_targets` that answers as it.
+async fn connect_tls(
+    inner: &Inner,
+    node_id: &str,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
+    let targets = dial_targets(inner, node_id);
+    if targets.is_empty() {
+        return Err(format!("{node_id} is not reachable"));
+    }
+    let connector = TlsConnector::from(tls::client_config(&inner.me.signing, node_id)?);
+    let mut last = String::new();
+    for target in targets {
+        match handshake(&connector, target).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                trace!("[sync] {node_id} is not at {target}: {e}");
+                last = format!("{target}: {e}");
+            }
+        }
+    }
+    Err(last)
 }
 
 /// Check a device can be dialled and mark it as being dialled, then dial it.
