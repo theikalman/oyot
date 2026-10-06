@@ -708,6 +708,20 @@ the targets below and attached to the draft by hand. Uncommenting those jobs
 is what it would take to change that; until then a tag produces one artifact,
 not five.
 
+**macOS builds are signed ad hoc, as `com.ajiyakin.oyot`.** That is what
+`bundle.macOS.signingIdentity: "-"` in `src-tauri/tauri.conf.json` does: `tauri
+build` signs `Oyot.app` with the bundle identifier before it makes the DMG.
+Without it the app keeps only the linker's ad-hoc signature, whose identifier
+is new on every build (`oyot-<hash>`). macOS Local Network privacy keys its
+permission on the signature, so each such build is an app it has never
+allowed: its LAN traffic is dropped, macOS may not ask again, and Settings >
+Sync sits at "Searching, no other devices found yet". `make dev` never shows
+this, because anything started from a terminal is allowed. With one identity,
+one approval in System Settings > Privacy & Security > Local Network covers
+every build. Tauri also turns on the hardened runtime, which nothing in the app
+needs an entitlement for. An ad-hoc signature cannot be notarized; that would
+take a Developer ID.
+
 ### Bumping the version
 
 ```bash
