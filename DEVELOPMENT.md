@@ -269,10 +269,15 @@ There are two ways, and only two. Everything after being found is the same
 TLS connection and the same sync protocol either way.
 
 `network/peers.rs` is where both answers land: one table, each entry tagged
-with the source that found it, and `best()` preferring the local one when a
-device is reachable both ways. `lan_discovery.rs` fills it from mDNS.
-`remote_peers.rs` fills it by probing stored addresses. A device appearing in
-it is what the sync engine (`src-tauri/src/sync/manager.rs`) dials.
+with the source that found it, and `routes()` listing the local one first when
+a device is reachable both ways. `lan_discovery.rs` fills it from mDNS, and an
+entry stays until mdns-sd says the device left: mdns-sd reports a device once
+and refreshes its records without a word, then lets them lapse within two
+minutes of the device going quiet. `remote_peers.rs` fills it by probing
+stored addresses, and drops an entry the probe stops getting answers from. A
+device appearing in it is what the sync engine (`src-tauri/src/sync/manager.rs`)
+dials, trying each route in turn until one finishes a handshake, so a stored
+address is what a dial falls back to when the local route fails.
 `lan_signaling.rs` listens on 19701 where it can, and reads the first byte of
 each connection: a TLS handshake goes to the sync engine, and anything else is
 a signed probe from `message.rs`, answered on the same connection.
@@ -281,6 +286,10 @@ The engine runs in Rust for the life of the process, with or without a window
 (ADR 0031). It keeps one connection per paired device, dialled by whichever
 device can reach the other, redials a dropped one on a backoff from one to
 thirty seconds, and drops a connection that has heard nothing for a minute.
+Reconnect, in the device list, dials at once whether or not the device is in
+the table: this network's route, then where discovery last found the device,
+then the prober's route, then every address stored for it. The handshake
+checks the device's key, so an address nothing has proved is safe to try.
 The page only shows what it is doing and asks for what the user does
 (`src/lib/sync/client.ts`).
 
@@ -387,8 +396,10 @@ reachable at a stored address.
 stored address every 45 seconds and expects a signed `pong` on the same
 connection. The answer is verified like any other message and then checked for
 coming from the node we addressed; otherwise anything occupying an address
-could answer for any device the user has an address for. A peer already found
-on this network is skipped, because there is nothing an address could add.
+could answer for any device the user has an address for. A peer found on this
+network is probed too: a dial tries the local route first, and the address is
+what it falls back to when a network carries mDNS but not connections between
+devices, or a firewall gets in the way.
 
 **Only the dialling side needs a route.** The device with the address dials,
 and the one TLS connection that results carries sync both ways, pairing
@@ -399,7 +410,7 @@ rewriting for a VPN. Neither is true any more.
 ### Trying it over a tailnet
 
 Two machines, both on a tailnet, and not on the same wifi - or the same wifi
-with the local route confirmed off, since `best()` prefers it whenever it is
+with the local route confirmed off, since a dial tries it first whenever it is
 available and you would be testing the wrong thing.
 
 1. On one device, Settings > Sync, "Pair a Device": choose **Somewhere else**,
