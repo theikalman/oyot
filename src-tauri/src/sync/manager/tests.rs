@@ -350,6 +350,82 @@ async fn a_dial_falls_back_to_a_stored_address_when_this_network_fails() {
     .await;
 }
 
+// The engine dials only what the peer table holds, this network first. A
+// dial the user asked for also tries where discovery last found the device,
+// after this network's route, and every stored address, after the one the
+// prober proved, each once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dial_tries_this_network_before_any_stored_address() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    let at = |port: u16| SocketAddr::from(([127, 0, 0, 1], port));
+    // Nothing is dialled, so the ports only have to differ.
+    a.peers.observe(Peer {
+        node_id: b.node_id.clone(),
+        source: PeerSource::Address,
+        boot_id: None,
+        addrs: vec!["127.0.0.1".parse().unwrap()],
+        host: Some("127.0.0.1".to_string()),
+        port: 3,
+        seen_at: now_ms(),
+        key: "127.0.0.1:3".to_string(),
+    });
+    a.peers.observe(on_this_network(&b, 1, now_ms()));
+    {
+        let db = a.db.lock();
+        let last_seen = LanRoute {
+            peer_node_id: b.node_id.clone(),
+            addrs: vec!["127.0.0.1".parse().unwrap()],
+            port: 2,
+            seen_at: now_ms(),
+        };
+        routes::remember(&db, &a.user_id, &last_seen).unwrap();
+        for port in [4, 3] {
+            endpoints::save_endpoint(&db, &a.user_id, &b.node_id, "127.0.0.1", port, 0).unwrap();
+        }
+    }
+
+    assert_eq!(
+        dial_targets(&a.manager.inner, &b.node_id, false).await,
+        vec![at(1), at(3)]
+    );
+    assert_eq!(
+        dial_targets(&a.manager.inner, &b.node_id, true).await,
+        vec![at(1), at(2), at(3), at(4)]
+    );
+}
+
+// Reconnect is the user saying "now": it dials with nothing in the peer
+// table, rather than waiting for discovery or the next probe, and gets past
+// where the device used to be on this network to an address stored for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn reconnect_dials_at_once_wherever_the_device_might_be() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    write_note(&b, "groceries", "milk, eggs");
+    let moved_on = LanRoute {
+        peer_node_id: b.node_id.clone(),
+        addrs: vec!["127.0.0.1".parse().unwrap()],
+        port: dead_port().await,
+        seen_at: now_ms(),
+    };
+    {
+        let db = a.db.lock();
+        routes::remember(&db, &a.user_id, &moved_on).unwrap();
+        endpoints::save_endpoint(&db, &a.user_id, &b.node_id, "127.0.0.1", b.port, 0).unwrap();
+    }
+    b.manager.start();
+    a.manager.start();
+    assert!(!a.manager.is_connected(&b.node_id));
+
+    a.manager.reconnect(&b.node_id).unwrap();
+
+    eventually("the note over the stored address", || {
+        text_of(&a, "groceries") == "milk, eggs"
+    })
+    .await;
+}
+
 // ADR 0032, decision 3: one port, so one firewall prompt and one number in a
 // stored address. A probe still gets its pong, and a TLS handshake on the
 // same port reaches the engine.
