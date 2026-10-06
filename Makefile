@@ -1,5 +1,5 @@
 .PHONY: help install dev build run clean check fmt lint test verify clippy \
-        release release-android release-android-aab release-ios release-tag bump install-android
+        release resign-mac release-android release-android-aab release-ios release-tag bump install-android
 
 # Only apply the custom Rust path on macOS (Apple Silicon); not needed on CI
 # or Linux/Windows. `$(filter darwin,Darwin)` never matched, because filter is
@@ -39,6 +39,7 @@ help:
 	@echo ""
 	@echo "Release commands:"
 	@echo "  make release                    - Build current platform → dist/"
+	@echo "  make resign-mac                 - Re-sign /Applications/Oyot.app so LAN sync works"
 	@echo "  make release-android            - Build Android APK → dist/android/"
 	@echo "  make release-android-aab        - Build Android AAB (Play Store) → dist/android/"
 	@echo "  make release-ios                - Build iOS IPA → dist/ios/"
@@ -159,6 +160,23 @@ release:
 		find src-tauri/target/release/bundle/nsis -name "*-setup.exe" -exec cp {} dist/windows/ \; 2>/dev/null || true; \
 		echo "Windows artifacts → dist/windows/"; \
 	fi
+
+# `make release` leaves only the linker's ad-hoc signature, whose identifier is
+# new on every build (oyot-<hash>). macOS Local Network privacy keys its
+# permission on the signature, so each build is an app it has never allowed:
+# LAN traffic is silently dropped and sync stays at "Searching, no other
+# devices found yet". `make dev` is exempt, as is anything started from a
+# terminal.
+#
+# Signing with the bundle identifier gives every build the same identity, so
+# one Local Network approval covers them all. Run after installing a build,
+# then quit and reopen Oyot.
+MAC_APP ?= /Applications/Oyot.app
+MAC_IDENTIFIER = $(shell node -p 'require("./src-tauri/tauri.conf.json").identifier')
+
+resign-mac:
+	codesign --force --deep -s - --identifier $(MAC_IDENTIFIER) "$(MAC_APP)"
+	@echo "Quit and reopen Oyot so it starts with the new signature."
 
 release-android:
 	$(require_signing)
