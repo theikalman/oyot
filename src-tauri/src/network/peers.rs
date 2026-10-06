@@ -18,12 +18,13 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use tauri::{AppHandle, Emitter};
 
-/// How long a peer stays in the table after we last heard from it.
+/// How long a peer found at a stored address stays in the table after it last
+/// answered.
 ///
-/// Comfortably longer than both the mDNS re-announcement interval and the
-/// probe interval, so a device is not dropped and re-found on a slow network,
-/// and short enough that a laptop carried out of the house stops being offered
-/// as reachable.
+/// Comfortably longer than the probe interval, so a device is not dropped and
+/// re-found on a slow network, and short enough that a laptop carried out of
+/// the house stops being offered as reachable. A device found on this network
+/// is not timed out by it: see `PeerSource::ages_out`.
 pub const PEER_TTL_MS: i64 = 90_000;
 
 /// How a peer was found.
@@ -43,6 +44,25 @@ impl PeerSource {
         match self {
             PeerSource::Mdns => 0,
             PeerSource::Address => 1,
+        }
+    }
+
+    /// Whether the table drops this source's entries once `seen_at` is older
+    /// than the TTL.
+    ///
+    /// A stored address's are: its prober writes a fresh `seen_at` every time
+    /// the device answers. mDNS entries are not, because mdns-sd reports a
+    /// device when it is first resolved and when its records change, and
+    /// refreshes them without a word, so `seen_at` is when it was first found.
+    /// Timing that out dropped every device on this network a minute and a
+    /// half after it was found, nothing ever found it again, and every dial
+    /// from then on had no route. mdns-sd times the records out itself,
+    /// within two minutes of the device going quiet, and says so with
+    /// `ServiceRemoved`.
+    fn ages_out(self) -> bool {
+        match self {
+            PeerSource::Mdns => false,
+            PeerSource::Address => true,
         }
     }
 }
@@ -135,17 +155,19 @@ impl PeerTable {
         self.peers.remove(&(node_id.to_string(), source)).is_some()
     }
 
-    /// Drop peers we have not heard from inside the TTL.
+    /// Drop peers we have not heard from inside the TTL, from the sources
+    /// that say each time they hear from one (`PeerSource::ages_out`).
     ///
-    /// mDNS announces a departure when a device leaves politely. A laptop that
-    /// is closed, or carried out of range, leaves nothing behind at all, and
-    /// without this it would stay in the table as a route that cannot work.
-    /// The same is true of an address whose prober stopped running.
+    /// An address that stopped answering is forgotten by the probe that
+    /// found out, but an entry nothing probes any more would otherwise stay
+    /// in the table as a route that may not work. A device on this network
+    /// that is closed, or carried out of range, is mdns-sd's to notice: its
+    /// records lapse, and discovery forgets it then.
     pub fn prune(&mut self, now: i64) -> Vec<(String, PeerSource)> {
         let expired: Vec<(String, PeerSource)> = self
             .peers
             .values()
-            .filter(|p| now - p.seen_at > PEER_TTL_MS)
+            .filter(|p| p.source.ages_out() && now - p.seen_at > PEER_TTL_MS)
             .map(|p| (p.node_id.clone(), p.source))
             .collect();
         for key in &expired {
@@ -156,10 +178,19 @@ impl PeerTable {
 
     /// The best route to one peer, or `None` if there is none.
     pub fn best(&self, node_id: &str) -> Option<&Peer> {
-        self.peers
+        self.routes(node_id).into_iter().next()
+    }
+
+    /// Every route to one peer, best first: a dial tries the next when one
+    /// fails.
+    pub fn routes(&self, node_id: &str) -> Vec<&Peer> {
+        let mut routes: Vec<&Peer> = self
+            .peers
             .values()
             .filter(|p| p.node_id == node_id)
-            .min_by_key(|p| p.source.rank())
+            .collect();
+        routes.sort_by_key(|p| p.source.rank());
+        routes
     }
 
     pub fn all(&self) -> Vec<Peer> {
@@ -259,6 +290,16 @@ impl Peers {
     /// The best route to one peer, if there is one.
     pub fn best(&self, node_id: &str) -> Option<Peer> {
         self.table.lock().best(node_id).cloned()
+    }
+
+    /// Every route to one peer, best first.
+    pub fn routes(&self, node_id: &str) -> Vec<Peer> {
+        self.table
+            .lock()
+            .routes(node_id)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     pub fn all(&self) -> Vec<Peer> {
@@ -383,15 +424,44 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_that_went_quiet_is_pruned() {
+    fn an_address_that_went_quiet_is_pruned() {
         let mut table = PeerTable::default();
-        table.upsert(peer("a", PeerSource::Mdns, 20, 1_000));
+        table.upsert(peer("a", PeerSource::Address, 20, 1_000));
         table.upsert(peer("b", PeerSource::Address, 21, 1_000 + PEER_TTL_MS));
 
         let gone = table.prune(1_000 + PEER_TTL_MS + 1);
 
-        assert_eq!(gone, vec![("a".to_string(), PeerSource::Mdns)]);
+        assert_eq!(gone, vec![("a".to_string(), PeerSource::Address)]);
         assert!(table.best("b").is_some(), "still inside its TTL");
+    }
+
+    // mdns-sd reports a device once, and again only when its records change,
+    // so hearing nothing more is the device staying put. Timing it out left
+    // a device on the same wifi with no route a minute and a half after it
+    // was found, and only a stored address ever reached it after that.
+    #[test]
+    fn a_device_on_this_network_is_not_timed_out() {
+        let mut table = PeerTable::default();
+        table.upsert(peer("a", PeerSource::Mdns, 20, 1_000));
+
+        let gone = table.prune(1_000 + 100 * PEER_TTL_MS);
+
+        assert!(gone.is_empty());
+        assert_eq!(table.best("a").map(|p| p.source), Some(PeerSource::Mdns));
+    }
+
+    // A dial goes down this list until one route works, so a stored address
+    // is still tried when the local route is there and fails.
+    #[test]
+    fn every_route_to_a_device_comes_this_network_first() {
+        let mut table = PeerTable::default();
+        table.upsert(peer("a", PeerSource::Address, 99, 1_000));
+        table.upsert(peer("a", PeerSource::Mdns, 20, 1_000));
+        table.upsert(peer("b", PeerSource::Mdns, 21, 1_000));
+
+        let sources: Vec<PeerSource> = table.routes("a").iter().map(|p| p.source).collect();
+        assert_eq!(sources, vec![PeerSource::Mdns, PeerSource::Address]);
+        assert!(table.routes("nobody").is_empty());
     }
 
     #[test]

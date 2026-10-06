@@ -4,7 +4,7 @@
 use super::*;
 use crate::commands::documents;
 use crate::commands::sync::merge_into_document;
-use crate::network::peers::{Peer, PeerSource};
+use crate::network::peers::{Peer, PeerSource, PEER_TTL_MS};
 use crate::sync::events::Events;
 use tokio::net::TcpListener;
 use yrs::updates::decoder::Decode;
@@ -159,6 +159,27 @@ fn route(from: &Device, to: &Device) {
     });
 }
 
+/// `to`, as discovery reports it on this network: at `port` on this machine,
+/// first heard at `seen_at`.
+fn on_this_network(to: &Device, port: u16, seen_at: i64) -> Peer {
+    Peer {
+        node_id: to.node_id.clone(),
+        source: PeerSource::Mdns,
+        boot_id: None,
+        addrs: vec!["127.0.0.1".parse().unwrap()],
+        host: None,
+        port,
+        seen_at,
+        key: format!("{}._oyot._tcp.local.", to.name),
+    }
+}
+
+/// A port on this machine that nothing listens on.
+async fn dead_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 fn pair(a: &Device, b: &Device) {
     let room = pairing::derive_room_id(&a.user_id, &b.user_id);
     pairing::save_pair(&a.db.lock(), &a.user_id, &b.node_id, &b.name, &room).unwrap();
@@ -283,6 +304,126 @@ async fn where_discovery_finds_a_paired_device_is_remembered() {
         vec!["192.168.1.20".parse::<IpAddr>().unwrap()],
         "a link-local address means nothing on a later visit"
     );
+}
+
+// mdns-sd reports a device once, when it is first resolved, and refreshes its
+// records without a word, so discovery's sighting of a device that never left
+// is as old as its stay. The sweep used to drop it a minute and a half in,
+// every dial after that found no route, and only a stored address ever
+// reached a device on the same wifi.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_found_on_this_network_long_ago_is_still_dialled() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    write_note(&b, "groceries", "milk, eggs");
+    a.peers
+        .observe(on_this_network(&b, b.port, now_ms() - 10 * PEER_TTL_MS));
+    // What discovery's sweep does every 30 seconds.
+    a.peers.sweep(now_ms());
+
+    b.manager.start();
+    a.manager.start();
+
+    eventually("the note over this network", || {
+        text_of(&a, "groceries") == "milk, eggs"
+    })
+    .await;
+}
+
+// A network can carry mDNS and still refuse connections between devices, and
+// so can a firewall. The address the prober proved is the way in then.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dial_falls_back_to_a_stored_address_when_this_network_fails() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    write_note(&b, "groceries", "milk, eggs");
+    a.peers
+        .observe(on_this_network(&b, dead_port().await, now_ms()));
+    route(&a, &b);
+
+    b.manager.start();
+    a.manager.start();
+
+    eventually("the note over the stored address", || {
+        text_of(&a, "groceries") == "milk, eggs"
+    })
+    .await;
+}
+
+// The engine dials only what the peer table holds, this network first. A
+// dial the user asked for also tries where discovery last found the device,
+// after this network's route, and every stored address, after the one the
+// prober proved, each once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dial_tries_this_network_before_any_stored_address() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    let at = |port: u16| SocketAddr::from(([127, 0, 0, 1], port));
+    // Nothing is dialled, so the ports only have to differ.
+    a.peers.observe(Peer {
+        node_id: b.node_id.clone(),
+        source: PeerSource::Address,
+        boot_id: None,
+        addrs: vec!["127.0.0.1".parse().unwrap()],
+        host: Some("127.0.0.1".to_string()),
+        port: 3,
+        seen_at: now_ms(),
+        key: "127.0.0.1:3".to_string(),
+    });
+    a.peers.observe(on_this_network(&b, 1, now_ms()));
+    {
+        let db = a.db.lock();
+        let last_seen = LanRoute {
+            peer_node_id: b.node_id.clone(),
+            addrs: vec!["127.0.0.1".parse().unwrap()],
+            port: 2,
+            seen_at: now_ms(),
+        };
+        routes::remember(&db, &a.user_id, &last_seen).unwrap();
+        for port in [4, 3] {
+            endpoints::save_endpoint(&db, &a.user_id, &b.node_id, "127.0.0.1", port, 0).unwrap();
+        }
+    }
+
+    assert_eq!(
+        dial_targets(&a.manager.inner, &b.node_id, false).await,
+        vec![at(1), at(3)]
+    );
+    assert_eq!(
+        dial_targets(&a.manager.inner, &b.node_id, true).await,
+        vec![at(1), at(2), at(3), at(4)]
+    );
+}
+
+// Reconnect is the user saying "now": it dials with nothing in the peer
+// table, rather than waiting for discovery or the next probe, and gets past
+// where the device used to be on this network to an address stored for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn reconnect_dials_at_once_wherever_the_device_might_be() {
+    let (a, b) = (device("laptop").await, device("desktop").await);
+    pair(&a, &b);
+    write_note(&b, "groceries", "milk, eggs");
+    let moved_on = LanRoute {
+        peer_node_id: b.node_id.clone(),
+        addrs: vec!["127.0.0.1".parse().unwrap()],
+        port: dead_port().await,
+        seen_at: now_ms(),
+    };
+    {
+        let db = a.db.lock();
+        routes::remember(&db, &a.user_id, &moved_on).unwrap();
+        endpoints::save_endpoint(&db, &a.user_id, &b.node_id, "127.0.0.1", b.port, 0).unwrap();
+    }
+    b.manager.start();
+    a.manager.start();
+    assert!(!a.manager.is_connected(&b.node_id));
+
+    a.manager.reconnect(&b.node_id).unwrap();
+
+    eventually("the note over the stored address", || {
+        text_of(&a, "groceries") == "milk, eggs"
+    })
+    .await;
 }
 
 // ADR 0032, decision 3: one port, so one firewall prompt and one number in a

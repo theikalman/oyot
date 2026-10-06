@@ -4,6 +4,8 @@
 //! - **One connection per device pair,** dialled by whichever device can
 //!   reach the other: at start, when a device is found, after a wake or a
 //!   network change, and after a drop on a backoff from one to thirty seconds.
+//!   A dial tries every route to the device, this network first, until one
+//!   finishes a handshake. One the user asks for goes further (`dial_targets`).
 //! - **Two connections at once** (both dialled): the one dialled by the lower
 //!   node_id is kept, so both sides keep the same one, unless the existing one
 //!   has gone quiet, in which case it is probably dead and the new one wins.
@@ -28,7 +30,8 @@ use super::routes::{self, LanRoute};
 use super::session::{Moved, Out, Phase, Session};
 use super::tls;
 use crate::crypto::now_ms;
-use crate::network::peers::{PeerSource, Peers};
+use crate::endpoints;
+use crate::network::peers::{Peer, PeerSource, Peers};
 use crate::pairing;
 use ed25519_dalek::SigningKey;
 use parking_lot::Mutex;
@@ -54,6 +57,8 @@ pub const DEAD_AFTER_MS: i64 = 60_000;
 const DUPLICATE_WINDOW_MS: i64 = 5_000;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a stored host name may take to resolve before a dial moves on.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long an unpaired device has to send its pair request.
 const PAIR_REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a pair request waits for the user to answer it. The page gives
@@ -296,7 +301,7 @@ impl SyncManager {
     /// Dial one device, if it is paired, not disconnected, reachable, and not
     /// connected or being dialled already.
     pub fn dial(&self, node_id: &str) {
-        start_dial(&self.inner, node_id);
+        start_dial(&self.inner, node_id, false);
     }
 
     /// A connection arrived on the shared listener starting with a TLS
@@ -334,13 +339,17 @@ impl SyncManager {
 
     /// Lift a disconnect, and dial at once, skipping the backoff. A live
     /// connection is left alone (ADR 0004, decision 1).
+    ///
+    /// The user asked, so this dials whether or not discovery or a probe has
+    /// found the device, and tries everywhere it might be: this network
+    /// first, then the addresses stored for it (`dial_targets`).
     pub fn reconnect(&self, node_id: &str) -> Result<(), String> {
         {
             let db = self.inner.db.lock();
             pairing::set_disconnected(&db, &self.inner.me.user_id, node_id, false)?;
         }
         self.inner.state.lock().attempts.remove(node_id);
-        self.dial(node_id);
+        start_dial(&self.inner, node_id, true);
         Ok(())
     }
 
@@ -618,6 +627,29 @@ impl Inner {
         }
     }
 
+    /// Where discovery last found `node_id`, and the addresses stored for
+    /// it: what a dial the user asked for tries beyond the peer table.
+    fn known_places(&self, node_id: &str) -> (Vec<LanRoute>, Vec<endpoints::DeviceEndpoint>) {
+        let db = self.db.lock();
+        let last_seen = routes::load(&db, &self.me.user_id)
+            .unwrap_or_else(|e| {
+                warn_log!("[sync] could not read where devices were last found: {e}");
+                Vec::new()
+            })
+            .into_iter()
+            .filter(|route| route.peer_node_id == node_id)
+            .collect();
+        let stored = endpoints::load_endpoints(&db, &self.me.user_id)
+            .unwrap_or_else(|e| {
+                warn_log!("[sync] could not read stored addresses: {e}");
+                Vec::new()
+            })
+            .into_iter()
+            .filter(|endpoint| endpoint.peer_node_id == node_id)
+            .collect();
+        (last_seen, stored)
+    }
+
     fn should_redial(&self, node_id: &str) -> bool {
         self.state.lock().running && self.pair(node_id).is_some() && !self.is_disconnected(node_id)
     }
@@ -646,29 +678,69 @@ fn phase_name(phase: Phase) -> &'static str {
     }
 }
 
-async fn connect_any(addrs: &[IpAddr], port: u16) -> Result<TcpStream, String> {
-    let mut last = "no addresses".to_string();
-    for addr in addrs {
-        let target = SocketAddr::new(*addr, port);
-        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target)).await {
-            Ok(Ok(stream)) => return Ok(stream),
-            Ok(Err(e)) => last = format!("{target}: {e}"),
-            Err(_) => last = format!("{target}: timed out"),
-        }
+fn add_target(targets: &mut Vec<SocketAddr>, target: SocketAddr) {
+    if !targets.contains(&target) {
+        targets.push(target);
     }
-    Err(last)
 }
 
-async fn connect_tls(
-    inner: &Inner,
-    node_id: &str,
-) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
-    let route = inner
+/// Where to dial `node_id`, in the order to try: every route the peer table
+/// holds for it, this network first.
+///
+/// A dial the user `asked` for goes further, since discovery or a probe may
+/// not have found the device yet: after this network's route, where
+/// discovery last found the device, which a connection can still reach when
+/// mDNS has not heard it this time; and after the routes the prober found,
+/// every address stored for it. Neither is proved first, and neither needs
+/// to be: the handshake checks the device's own key, so a stale or wrong
+/// address costs a failed attempt and nothing else.
+async fn dial_targets(inner: &Inner, node_id: &str, asked: bool) -> Vec<SocketAddr> {
+    let (here, elsewhere): (Vec<Peer>, Vec<Peer>) = inner
         .peers
-        .best(node_id)
-        .ok_or_else(|| format!("{node_id} is not reachable"))?;
-    let stream = connect_any(&route.addrs, route.port).await?;
-    let connector = TlsConnector::from(tls::client_config(&inner.me.signing, node_id)?);
+        .routes(node_id)
+        .into_iter()
+        .partition(|route| route.source == PeerSource::Mdns);
+    let (last_seen, stored) = if asked {
+        inner.known_places(node_id)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    let mut targets = Vec::new();
+    let routes = here
+        .iter()
+        .map(|route| (&route.addrs, route.port))
+        .chain(last_seen.iter().map(|route| (&route.addrs, route.port)))
+        .chain(elsewhere.iter().map(|route| (&route.addrs, route.port)));
+    for (addrs, port) in routes {
+        for addr in addrs {
+            add_target(&mut targets, SocketAddr::new(*addr, port));
+        }
+    }
+    for endpoint in &stored {
+        let lookup = tokio::net::lookup_host((endpoint.host.as_str(), endpoint.port));
+        match tokio::time::timeout(RESOLVE_TIMEOUT, lookup).await {
+            Ok(Ok(resolved)) => {
+                for target in resolved {
+                    add_target(&mut targets, target);
+                }
+            }
+            Ok(Err(e)) => trace!("[sync] {} does not resolve: {e}", endpoint.host),
+            Err(_) => trace!("[sync] {} took too long to resolve", endpoint.host),
+        }
+    }
+    targets
+}
+
+/// Connect to one address and finish a handshake with the device there.
+async fn handshake(
+    connector: &TlsConnector,
+    target: SocketAddr,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
+        .await
+        .map_err(|_| "timed out".to_string())?
+        .map_err(|e| e.to_string())?;
     tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
         connector.connect(tls::server_name(), stream),
@@ -678,16 +750,45 @@ async fn connect_tls(
     .map_err(|e| format!("the handshake failed: {e}"))
 }
 
+/// Reach `node_id` at the first of `dial_targets` that answers as it.
+async fn connect_tls(
+    inner: &Inner,
+    node_id: &str,
+    asked: bool,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
+    let targets = dial_targets(inner, node_id, asked).await;
+    if targets.is_empty() {
+        return Err(format!("{node_id} is not reachable"));
+    }
+    let connector = TlsConnector::from(tls::client_config(&inner.me.signing, node_id)?);
+    let mut last = String::new();
+    for target in targets {
+        match handshake(&connector, target).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                trace!("[sync] {node_id} is not at {target}: {e}");
+                last = format!("{target}: {e}");
+            }
+        }
+    }
+    Err(last)
+}
+
 /// Check a device can be dialled and mark it as being dialled, then dial it.
+///
+/// A dial the engine starts on its own waits for a route in the peer table,
+/// since one with nowhere to go would only fail. One the user `asked` for is
+/// made anyway: it also tries places the table does not hold
+/// (`dial_targets`).
 ///
 /// The mark is set here, before anything is spawned, and cleared only once
 /// the connection is established or has failed: a bounded run that looked in
 /// between would otherwise see nothing in flight and stop (ADR 0034).
-fn start_dial(inner: &Arc<Inner>, node_id: &str) {
+fn start_dial(inner: &Arc<Inner>, node_id: &str, asked: bool) {
     let Some(pair) = inner.pair(node_id) else {
         return;
     };
-    if inner.is_disconnected(node_id) || inner.peers.best(node_id).is_none() {
+    if inner.is_disconnected(node_id) || (!asked && inner.peers.best(node_id).is_none()) {
         return;
     }
     let dial_id = inner.ids.fetch_add(1, Ordering::Relaxed);
@@ -705,7 +806,7 @@ fn start_dial(inner: &Arc<Inner>, node_id: &str) {
     inner.changed.notify_waiters();
     let inner = inner.clone();
     let node_id = node_id.to_string();
-    tokio::spawn(async move { dial(inner, node_id, pair, dial_id).await });
+    tokio::spawn(async move { dial(inner, node_id, pair, dial_id, asked).await });
 }
 
 /// Clear the mark `start_dial` set for this dial, and no other: by the time
@@ -720,8 +821,14 @@ fn finish_dial(inner: &Inner, node_id: &str, dial_id: u64) {
     inner.changed.notify_waiters();
 }
 
-async fn dial(inner: Arc<Inner>, node_id: String, pair: pairing::DevicePair, dial_id: u64) {
-    let result = connect_tls(&inner, &node_id).await;
+async fn dial(
+    inner: Arc<Inner>,
+    node_id: String,
+    pair: pairing::DevicePair,
+    dial_id: u64,
+    asked: bool,
+) {
+    let result = connect_tls(&inner, &node_id, asked).await;
     match result {
         Ok(stream) => {
             let peer = PeerInfo {
@@ -762,7 +869,7 @@ fn schedule_redial(inner: Arc<Inner>, node_id: String) {
             return;
         }
         if inner.peers.best(&node_id).is_some() {
-            start_dial(&inner, &node_id);
+            start_dial(&inner, &node_id, false);
         } else {
             // Nowhere left to dial: the device reads as offline, and being
             // found again dials it (`start`).
@@ -903,7 +1010,7 @@ where
 }
 
 async fn request_pair(inner: Arc<Inner>, node_id: String) -> Result<(), String> {
-    let mut stream = connect_tls(&inner, &node_id).await?;
+    let mut stream = connect_tls(&inner, &node_id, true).await?;
     let request = Message::PairRequest {
         user_id: inner.me.user_id.clone(),
         display_name: inner.me.display_name.lock().clone(),
