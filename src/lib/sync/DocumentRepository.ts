@@ -205,6 +205,48 @@ export class DocumentRepository {
 
     // --- writes ----------------------------------------------------------
 
+    /**
+     * Run `edit` on a document as one step of its write queue, and save what
+     * it changed, the way a tag rename is saved.
+     *
+     * The open copy when there is one, which its editor then saves like any
+     * other edit, since `edit`'s changes carry no remote origin. Otherwise
+     * the stored state, saved here: only what the edit added is sent, and
+     * nothing at all when it changed nothing.
+     *
+     * `edit` must be synchronous, so the editor cannot swap the document out
+     * from under it. For a caller outside the editor, such as an assistant
+     * writing to a note over MCP (ADR 0037).
+     */
+    async editDocument<T>(docId: string, edit: (ydoc: Y.Doc) => T): Promise<T> {
+        return this.write(docId, async () => {
+            // Resolved before the document is touched, so the edit below
+            // stays synchronous from lookup to encode.
+            const indexer = await loadIndexer();
+
+            const live = getOpenDoc(docId);
+            if (live) return edit(live);
+
+            const { ydoc } = await this.loadDoc(docId);
+            try {
+                const before = Y.encodeStateVector(ydoc);
+                // Watched rather than read off the state vector, which a
+                // deletion leaves as it was (ADR 0033).
+                let changed = false;
+                ydoc.on('update', () => (changed = true));
+                const result = edit(ydoc);
+                if (changed) {
+                    const delta = Y.encodeStateAsUpdate(ydoc, before);
+                    await this.save(docId, delta, readIndex(indexer, ydoc));
+                    bumpIndexRevision();
+                }
+                return result;
+            } finally {
+                ydoc.destroy();
+            }
+        });
+    }
+
     // Hand the editor the document's state as a Y.Doc, registered as the open
     // copy so a peer's updates can be applied straight into it.
     //
