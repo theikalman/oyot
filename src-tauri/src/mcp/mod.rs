@@ -11,6 +11,7 @@
 //! listening, and only the second is a reason to start the app.
 
 pub mod access;
+pub mod bridge;
 pub mod endpoint;
 mod listener;
 mod server;
