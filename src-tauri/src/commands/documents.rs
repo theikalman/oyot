@@ -130,7 +130,7 @@ fn current_timestamp() -> i64 {
 // frontend, which is the same constant the save path checks before writing.
 const HAS_CONTENT: &str = "CASE WHEN length(d.crdt_state) > 2 THEN 1 ELSE 0 END";
 
-fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData, String> {
+pub(crate) fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData, String> {
     // No content filter. Requiring content to appear in the list meant a note
     // created with a title but never typed in vanished on the next launch:
     // still in the database, but unreachable, so it could not be opened,
@@ -906,7 +906,7 @@ pub fn search_documents(
 /// the real SQL. Inline in the command it was reachable only from a running
 /// app, and it shipped with an unsubstituted `{HAS_CONTENT}` in it that
 /// SQLite rejected on every call.
-fn query_backlinks(
+pub(crate) fn query_backlinks(
     db: &rusqlite::Connection,
     doc_id: &str,
 ) -> Result<Vec<DocumentSummary>, String> {
@@ -1096,7 +1096,7 @@ pub fn get_tag_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
 /// The name is matched exactly. Tags are normalized to one spelling before they
 /// are ever written (see src/lib/tiptap/tags.ts), so a LIKE here would only
 /// find tags that should not exist.
-fn query_documents_with_tag(
+pub(crate) fn query_documents_with_tag(
     db: &rusqlite::Connection,
     name: &str,
 ) -> Result<Vec<DocumentSummary>, String> {

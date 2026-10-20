@@ -115,6 +115,14 @@ keyring = "4"
 # moving Tauri is a change of its own.
 tauri-plugin-single-instance = "~2.4.5"
 tauri-plugin-autostart = "~2.5.1"
+# The MCP server and its bridge (ADR 0037). The server half only, without
+# the macros, which would bring a proc-macro tree for a router of a handful
+# of tools. Pinned exactly: the protocol types change between minors.
+rmcp = { version = "=3.5.1", default-features = false, features = ["server"] }
+# Where the bridge finds the app's socket: Tauri's app data dir is
+# `dirs::data_dir()` joined with the identifier. Already in the tree through
+# Tauri, which uses this major.
+dirs = "6"
 # Noticing a network change, by the interface addresses changing. Already in
 # the tree through mdns-sd.
 if-addrs = "0.15"

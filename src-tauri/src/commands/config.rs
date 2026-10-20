@@ -54,6 +54,26 @@ pub(crate) fn write_flag(app: &tauri::AppHandle, key: &str, value: bool) -> Resu
     write_config(app, json)
 }
 
+/// A preference stored as a string, or `None` when it was never set or is
+/// not a string.
+pub(crate) fn read_string(app: &tauri::AppHandle, key: &str) -> Option<String> {
+    read_config(app)
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+pub(crate) fn write_string(app: &tauri::AppHandle, key: &str, value: &str) -> Result<(), String> {
+    let mut json = read_config(app);
+    // As in write_flag: a file holding something other than an object has
+    // nothing worth keeping.
+    if !json.is_object() {
+        json = serde_json::Value::Object(Default::default());
+    }
+    json[key] = serde_json::json!(value);
+    write_config(app, json)
+}
+
 /// `key` read as a boolean. Missing, or anything that is not a boolean, is
 /// `default`: a hand-edited file should not change a behaviour by accident.
 fn flag(json: &serde_json::Value, key: &str, default: bool) -> bool {
