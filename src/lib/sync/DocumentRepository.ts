@@ -181,6 +181,28 @@ export class DocumentRepository {
         return { ydoc, contentHash: res.content_hash };
     }
 
+    /**
+     * Run `read` on a document as it stands, as one step of its write queue,
+     * so it sees every write queued before it and none after: the open copy
+     * when there is one, which has edits the store may not have yet, and
+     * otherwise the stored state, thrown away after.
+     *
+     * For a caller outside the editor, such as an assistant reading the note
+     * over MCP (ADR 0037). `read` must not change the document.
+     */
+    async readDocument<T>(docId: string, read: (ydoc: Y.Doc) => T): Promise<T> {
+        return this.write(docId, async () => {
+            const live = getOpenDoc(docId);
+            if (live) return read(live);
+            const { ydoc } = await this.loadDoc(docId);
+            try {
+                return read(ydoc);
+            } finally {
+                ydoc.destroy();
+            }
+        });
+    }
+
     // --- writes ----------------------------------------------------------
 
     // Hand the editor the document's state as a Y.Doc, registered as the open

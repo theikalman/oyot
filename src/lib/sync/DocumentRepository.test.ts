@@ -160,6 +160,35 @@ describe('DocumentRepository', () => {
         expect(textOfB64(storedState)).toBe('stored!');
     });
 
+    it('reads the open copy, which has what the store does not yet', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('stored')));
+        const ydoc = await repo.openDocument('doc');
+        ydoc.getText('content').insert(6, ', and typed');
+        calls.length = 0;
+
+        const read = await repo.readDocument('doc', (d) => d.getText('content').toString());
+
+        expect(read).toBe('stored, and typed');
+        expect(calls).toEqual([]);
+        unregisterOpenDoc('doc', ydoc);
+    });
+
+    it('reads a closed document from the store, and sees a write queued before it', async () => {
+        const repo = new DocumentRepository();
+        const stored = docWith('stored');
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(stored));
+
+        const merge = repo.mergeDelta(
+            'doc',
+            deltaFrom(stored, (d) => d.getText('content').insert(6, '!')),
+        );
+        const read = repo.readDocument('doc', (d) => d.getText('content').toString());
+
+        await merge;
+        expect(await read).toBe('stored!');
+    });
+
     it('openDocument registers the document it returns', async () => {
         const repo = new DocumentRepository();
         storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('opened')));
