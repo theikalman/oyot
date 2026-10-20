@@ -13,13 +13,18 @@
 pub mod access;
 pub mod bridge;
 pub mod endpoint;
+mod imagesize;
 mod listener;
+mod notes;
+pub mod page;
 mod server;
 #[cfg(test)]
 mod tests;
 mod tools;
+mod writes;
 
 use crate::db::AppState;
+use crate::sync::manager::SyncManager;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -30,6 +35,8 @@ pub use access::Access;
 pub struct McpState {
     access: Arc<access::Current>,
     listener: parking_lot::Mutex<Option<listener::Listener>>,
+    /// Requests waiting on the page.
+    pub page: Arc<page::PageRelay>,
 }
 
 impl McpState {
@@ -37,11 +44,17 @@ impl McpState {
         Self {
             access: Arc::new(access::Current::new(access::read(app))),
             listener: parking_lot::Mutex::new(None),
+            page: Arc::new(page::PageRelay::new(app.clone())),
         }
     }
 
     pub fn access(&self) -> Access {
         self.access.get()
+    }
+
+    /// How many clients are connected now.
+    pub fn clients(&self) -> usize {
+        self.listener.lock().as_ref().map_or(0, |l| l.connected())
     }
 
     /// Change the setting, and drop every connected client, so none keeps
@@ -62,9 +75,17 @@ impl McpState {
 pub fn start(app: &AppHandle) {
     let state = app.state::<AppState>();
     let mcp = app.state::<McpState>();
+    let sync_app = app.clone();
     let ctx = Arc::new(tools::Context {
         db: state.db.clone(),
         access: mcp.access.clone(),
+        data_dir: state.data_dir.clone(),
+        page: mcp.page.clone(),
+        fetch_attachment: Arc::new(move |hash| {
+            if let Some(sync) = sync_app.try_state::<SyncManager>() {
+                sync.request_attachment(hash);
+            }
+        }),
     });
     let endpoint = endpoint::Endpoint::in_dir(&state.data_dir);
     if let Some(expected) = endpoint::Endpoint::for_this_user() {

@@ -15,6 +15,7 @@
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { GO_TO_SHORTCUTS, destination } from '$lib/keyboard/goTo';
     import { watchCloseRequests } from '$lib/desktop';
+    import { watchMcpRequests } from '$lib/mcp/relay';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import CloseNoticeDialog from '$lib/components/CloseNoticeDialog.svelte';
     import '../app.css';
@@ -28,6 +29,7 @@
     // flashed the loading overlay, and put the user back on the journal
     // instead of the note they had been reading.
     let stopWatchingBackups: (() => void) | null = null;
+    let stopWatchingMcp: (() => void) | null = null;
     let stopWatchingCloses: (() => void) | null = null;
 
     // Set while the first-close notice is up: the function its buttons answer
@@ -48,6 +50,9 @@
         // Here for the same reason: a failing backup schedule should be
         // heard of wherever the user is, not only on the settings page.
         stopWatchingBackups = watchScheduledBackups();
+        // An assistant reading a note, over MCP (ADR 0037). Rust asks the
+        // page to render it, on whatever route the user is.
+        stopWatchingMcp = watchMcpRequests();
         // And closing the window, which has to save the open note whatever
         // page it is on (ADR 0030, decision 5). Only a desktop sends these.
         stopWatchingCloses = watchCloseRequests(
@@ -64,6 +69,7 @@
     onDestroy(() => {
         shutdownSync();
         stopWatchingBackups?.();
+        stopWatchingMcp?.();
         stopWatchingCloses?.();
         document.removeEventListener('visibilitychange', handleVisibilityChange);
     });

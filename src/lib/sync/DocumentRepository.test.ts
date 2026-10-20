@@ -160,6 +160,89 @@ describe('DocumentRepository', () => {
         expect(textOfB64(storedState)).toBe('stored!');
     });
 
+    it('reads the open copy, which has what the store does not yet', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('stored')));
+        const ydoc = await repo.openDocument('doc');
+        ydoc.getText('content').insert(6, ', and typed');
+        calls.length = 0;
+
+        const read = await repo.readDocument('doc', (d) => d.getText('content').toString());
+
+        expect(read).toBe('stored, and typed');
+        expect(calls).toEqual([]);
+        unregisterOpenDoc('doc', ydoc);
+    });
+
+    it('reads a closed document from the store, and sees a write queued before it', async () => {
+        const repo = new DocumentRepository();
+        const stored = docWith('stored');
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(stored));
+
+        const merge = repo.mergeDelta(
+            'doc',
+            deltaFrom(stored, (d) => d.getText('content').insert(6, '!')),
+        );
+        const read = repo.readDocument('doc', (d) => d.getText('content').toString());
+
+        await merge;
+        expect(await read).toBe('stored!');
+    });
+
+    it('edits a closed document and saves only what the edit added', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('stored')));
+        calls.length = 0;
+
+        const result = await repo.editDocument('doc', (d) => {
+            d.getText('content').insert(6, '!');
+            return 'done';
+        });
+
+        expect(result).toBe('done');
+        expect(textOfB64(storedState)).toBe('stored!');
+        const saves = calls.filter((c) => c.cmd === 'save_yjs_update');
+        expect(saves).toHaveLength(1);
+        // The delta, not the document: one character's worth.
+        expect(base64ToBytes(saves[0].args.update as string).length).toBeLessThan(40);
+    });
+
+    it('saves a deletion, which leaves the state vector as it was', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('stored')));
+
+        await repo.editDocument('doc', (d) => d.getText('content').delete(0, 3));
+
+        expect(textOfB64(storedState)).toBe('red');
+    });
+
+    it('saves nothing for an edit that changes nothing', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('stored')));
+        calls.length = 0;
+
+        await repo.editDocument('doc', () => 'looked, did not touch');
+
+        expect(calls.some((c) => c.cmd === 'save_yjs_update')).toBe(false);
+    });
+
+    it('edits the open copy and leaves saving it to its editor', async () => {
+        const repo = new DocumentRepository();
+        storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('stored')));
+        const ydoc = await repo.openDocument('doc');
+        const origins: unknown[] = [];
+        ydoc.on('update', (_u: Uint8Array, origin: unknown) => origins.push(origin));
+        calls.length = 0;
+
+        await repo.editDocument('doc', (d) => d.getText('content').insert(0, '> '));
+
+        expect(ydoc.getText('content').toString()).toBe('> stored');
+        expect(calls.some((c) => c.cmd === 'save_yjs_update')).toBe(false);
+        // Not tagged as remote, so the editor's listener saves it.
+        expect(origins).toEqual([null]);
+        unregisterOpenDoc('doc', ydoc);
+    });
+
     it('openDocument registers the document it returns', async () => {
         const repo = new DocumentRepository();
         storedState = bytesToBase64(Y.encodeStateAsUpdate(docWith('opened')));

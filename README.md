@@ -132,6 +132,28 @@ and says when it last ran. Opening Oyot always syncs straight away.
 The design decisions behind all of this, including what each one gives up, are
 in [docs/decisions](./docs/decisions).
 
+## AI assistants
+
+An assistant on the same computer, such as Claude Desktop or Claude Code, can
+use your notes through Oyot itself, over the Model Context Protocol. Turn it on
+in Settings > AI assistants, which also gives the exact setup for each:
+
+- **Read only** lets it search and read notes and journals, list todos, tags
+  and backlinks, and look at the images in a note.
+- **Read and write** also lets it create and rename notes, rewrite one, add to
+  a note or a day's journal, and tick tasks. Its changes are made the way
+  your own are: into the open editor, and on to your other devices. A
+  rewrite is checked against the version it read, so nothing typed in the
+  meantime is lost, and it changes only the parts of the note that changed.
+- Nothing lets it delete a note.
+
+The assistant launches `oyot --mcp`, which talks to the running app over a
+local socket, and starts Oyot in the tray if it is not running. On macOS and
+Linux only your user account can open that socket; on Windows it is a named
+pipe that refuses other machines.
+[ADR 0037](./docs/decisions/0037-let-mcp-clients-read-and-edit-notes-through-the-running-app.md)
+has the design, and what it gives up.
+
 ## Platforms
 
 Desktop (macOS, Windows, Linux) and mobile (Android, iOS). Android release

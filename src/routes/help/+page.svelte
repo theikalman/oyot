@@ -411,6 +411,15 @@
                         file, with its images, in one zip.
                     </li>
                     <li>
+                        <strong>AI assistants.</strong> On a computer, Settings, under AI assistants,
+                        lets an assistant such as Claude Desktop or Claude Code use your notes, through
+                        Oyot itself. Off is the default. Read only lets it search and read your notes,
+                        journals, todos and images. Read and write also lets it create notes, change them,
+                        add to them and tick tasks, the way your own typing would, on every device. It
+                        can never delete a note. It reaches Oyot only from this computer, and starts Oyot
+                        in the tray if it is not running.
+                    </li>
+                    <li>
                         <strong>Import.</strong> The Notes page, or Settings under Data, makes a note
                         of each Markdown file you pick. Its title comes from the file's front matter,
                         a heading at the top, or the file's name, and a #word becomes a tag. Links between

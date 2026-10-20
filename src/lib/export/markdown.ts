@@ -53,6 +53,21 @@ export function serializeDocument(doc: ProseMirrorNode, options: MarkdownOptions
     return body ? `${body}\n` : '';
 }
 
+/**
+ * Each of a document's top-level blocks, rendered on its own and in order,
+ * one entry per block. An empty paragraph is an empty string here rather than
+ * dropped, so the entries line up with the document's children.
+ *
+ * What `serializeDocument` writes is exactly these, without the empty ones,
+ * joined by a blank line, which lets a caller compare a document with a
+ * rewrite of it block by block.
+ */
+export function serializeBlocks(doc: ProseMirrorNode, options: MarkdownOptions): string[] {
+    const out: string[] = [];
+    doc.forEach((child) => out.push(block(child, options) ?? ''));
+    return out;
+}
+
 // --- blocks ---------------------------------------------------------------
 
 function blocks(parent: ProseMirrorNode, options: MarkdownOptions): string {

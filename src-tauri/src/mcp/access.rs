@@ -13,6 +13,8 @@ pub enum Access {
     Off,
     /// The tools that read, and none that write.
     ReadOnly,
+    /// Every tool: reading, and writing to notes. Never deleting one.
+    ReadWrite,
 }
 
 impl Access {
@@ -20,6 +22,7 @@ impl Access {
         match self {
             Access::Off => "off",
             Access::ReadOnly => "read_only",
+            Access::ReadWrite => "read_write",
         }
     }
 
@@ -30,6 +33,7 @@ impl Access {
         match value {
             "off" => Some(Access::Off),
             "read_only" => Some(Access::ReadOnly),
+            "read_write" => Some(Access::ReadWrite),
             _ => None,
         }
     }
@@ -38,12 +42,14 @@ impl Access {
         match self {
             Access::Off => 0,
             Access::ReadOnly => 1,
+            Access::ReadWrite => 2,
         }
     }
 
     fn from_u8(value: u8) -> Access {
         match value {
             1 => Access::ReadOnly,
+            2 => Access::ReadWrite,
             _ => Access::Off,
         }
     }
@@ -83,7 +89,7 @@ mod tests {
 
     #[test]
     fn every_setting_reads_back_as_itself() {
-        for access in [Access::Off, Access::ReadOnly] {
+        for access in [Access::Off, Access::ReadOnly, Access::ReadWrite] {
             assert_eq!(Access::parse(access.as_str()), Some(access));
             assert_eq!(Access::from_u8(access.to_u8()), access);
         }
@@ -91,7 +97,7 @@ mod tests {
 
     #[test]
     fn anything_else_is_not_a_setting() {
-        for value in ["", "on", "READ_ONLY", "read_write", "true"] {
+        for value in ["", "on", "READ_ONLY", "write", "true"] {
             assert_eq!(Access::parse(value), None, "{value:?}");
         }
     }

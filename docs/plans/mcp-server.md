@@ -7,6 +7,39 @@ device.
 
 Desktop only (macOS, Windows, Linux). Phones are out of scope.
 
+## Status (2026-10-21)
+
+All seven PRs are built, each on its own branch, stacked in this order:
+
+| PR  | Branch                    | What                                                      |
+| --- | ------------------------- | --------------------------------------------------------- |
+| 1   | `docs/adr-0037-mcp`       | ADR 0037, this plan, the Phase 0 findings                 |
+| 2   | `fix/markdown-round-trip` | Converter fixes and the round-trip suite                  |
+| 3   | `feat/mcp-note-markdown`  | Render, plan and apply edits; todos; images               |
+| 4   | `feat/mcp-server`         | Server, socket, bridge, index tools, Off and Read only    |
+| 5   | `feat/mcp-read-note`      | Page relay, `read_note`, `get_journal`, `read_attachment` |
+| 6   | `feat/mcp-write`          | Write tools, Read and write                               |
+| 7   | `feat/mcp-settings`       | Settings card, help, README                               |
+
+Built differently from the plan below, and recorded in ADR 0037:
+
+- The app listens whatever the access setting says (decision 4, amended).
+- The page says when it is listening, and Rust holds requests until then,
+  since an event sent before it listens is lost (decision 6).
+- An image of a type Claude cannot read is redrawn as one it can, not refused
+  (decision 10).
+- `revisionOf` computes the revision; `renderNote` does not return it.
+
+Still to do before ADR 0037 is accepted and this ships:
+
+- Windows: does the GUI-subsystem binary serve stdio to Claude Desktop, and
+  should the named pipe get an owner-only security descriptor rather than the
+  default one, which lets other local users open it for reading?
+- macOS: how promptly a hidden page answers, and that the ad hoc signed
+  binary inside the bundle can be launched by Claude Desktop.
+- An edit while the note is open in the editor, tried by hand.
+- The changelog entries, which go in with the version bump.
+
 ## Architecture
 
 ```

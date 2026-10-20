@@ -114,7 +114,14 @@ already maintains. They don't wait on the page.
 **6. Everything that needs the document goes to the page.** Rust relays the
 request as an event. The page handles it as one step in that document's
 write queue and answers through a command. If the page doesn't answer within
-a timeout, the call fails with an error saying so. The page renders with the
+a timeout, the call fails with an error saying so.
+
+An event sent before the page listens is lost, and a client that starts Oyot
+calls as soon as Rust listens, well before the page has loaded. So the page
+says when it is listening, and Rust holds requests until it has, for up to
+30 seconds.
+
+The page renders with the
 existing exporter and parses with the existing importer, with options for
 MCP:
 
@@ -182,7 +189,8 @@ of deleted notes stay private:
   under the 1 MB that Claude Desktop is reported to enforce.
 - **Embedded but not yet on this device:** asked for from connected peers,
   and reported as not here yet, so a retry can succeed.
-- **Not one of the four types Claude reads:** refused.
+- **Not one of the four types Claude reads:** redrawn by the page as one
+  that is, when the page can decode it, and refused when it can't.
 
 The assistant can't add images.
 
@@ -279,9 +287,8 @@ the page can already decode and encode every format the editor shows.
    timer throttling seen. macOS hasn't been measured. Neither has a window
    hidden for hours. Those two decide whether the relay timeout needs to be
    longer than the 10 s planned.
-3. **Which MCP library?** `rmcp`, the official Rust SDK, can serve any tokio
-   `AsyncRead + AsyncWrite` (its `transport-async-rw` feature). Use it,
-   pinned to a release that has been out for a couple of weeks, unless it
-   pulls in more than its features suggest. Version 3.6.0 came out on the
-   day of writing, 3.5.1 before it. The fallback is the five messages a
-   server needs, by hand.
+3. **Which MCP library?** Settled: `rmcp` 3.5.1, the official Rust SDK,
+   with only its `server` feature. It serves the socket through its
+   `transport-async-rw` feature and adds four crates. Its macros were left
+   out, and the router of a handful of tools is written by hand, which also
+   keeps what each access setting offers in plain code.

@@ -481,6 +481,15 @@ describe('readMarkdown: links between notes', () => {
 describe('readMarkdown: images', () => {
     const count = (markdown: string) => readMarkdown(markdown, schema).imagesKeptAsText;
 
+    it('reads an image under the address a caller maps it to', () => {
+        const uri = 'data:image/png;base64,iVBORw0KGgo=';
+        const imageSource = (src: string) => (src === 'mine://1' ? uri : src);
+        expect(read('![dot](mine://1)', { imageSource })).toEqual([
+            { type: 'image', attrs: expect.objectContaining({ src: uri, alt: 'dot' }) },
+        ]);
+        expect(count('![dot](mine://2)')).toBe(1);
+    });
+
     it('stores an image the exporter wrote as the attachment it names', () => {
         expect(read(`![](../attachments/${HASH}.png)`)).toEqual([
             {

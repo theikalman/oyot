@@ -69,6 +69,13 @@ export interface MarkdownReadOptions {
      * back as it was.
      */
     noteLinkLabelIsTitle?: boolean;
+    /**
+     * The address to store for an image written with `src`, or `src` itself
+     * when it names nothing the caller knows. For a caller that wrote an
+     * image under an address of its own and needs it read back as what it
+     * stood for.
+     */
+    imageSource?: (src: string) => string;
 }
 
 export interface MarkdownDocument {
@@ -290,6 +297,7 @@ export function readMarkdown(
         options.noteLink ?? (() => null),
         knownTags,
         options.noteLinkLabelIsTitle ?? false,
+        options.imageSource ?? ((src) => src),
     );
     const doc = reader.document(parse(markdown, knownTags));
     doc.check();
@@ -397,6 +405,7 @@ class DocumentReader {
         private readonly noteLink: (href: string) => NoteLinkTarget | null,
         private readonly knownTags: readonly string[],
         private readonly labelIsTitle: boolean,
+        private readonly imageSource: (src: string) => string,
     ) {}
 
     document(tokens: Token[]): ProseMirrorNode {
@@ -644,7 +653,7 @@ class DocumentReader {
     }
 
     private image(token: Token, active: readonly Mark[]): ProseMirrorNode {
-        const src = String(token.attrGet('src') ?? '');
+        const src = this.imageSource(String(token.attrGet('src') ?? ''));
         const alt = plainText(token.children ?? []).trim();
         const title = String(token.attrGet('title') ?? '');
         const stored = src ? storedImage(src, alt) : null;

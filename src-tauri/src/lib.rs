@@ -847,6 +847,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_mcp_settings,
             set_mcp_access,
+            mcp_respond,
+            mcp_page_ready,
             get_all_documents,
             get_document,
             create_document,
