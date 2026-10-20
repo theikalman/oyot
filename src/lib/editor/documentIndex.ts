@@ -25,7 +25,7 @@ export interface TodoEntry {
 }
 
 /** Enough of a task item to recognise it; the rest is a row nobody reads. */
-const MAX_TODO_TEXT = 500;
+export const MAX_TODO_TEXT = 500;
 
 /** Node types that hold nested items rather than this item's own words. */
 const LIST_NODES = new Set(['taskList', 'bulletList', 'orderedList']);

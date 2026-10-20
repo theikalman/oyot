@@ -448,10 +448,47 @@ describe('readMarkdown: links between notes', () => {
             para(text('gone', [link('gone.md')])),
         ]);
     });
+
+    // What this exporter wrote, read back as it was: the words are the title
+    // the chip held, even after the note they point at was renamed.
+    describe("with the link's words as the chip's title", () => {
+        const options = { noteLink, noteLinkLabelIsTitle: true };
+
+        it('titles the chip with the words, not the note as it is now', () => {
+            expect(read('see [Old name](other-note.md)', options)).toEqual([
+                para(text('see '), chip('other', 'Old name')),
+            ]);
+        });
+
+        it("falls back to the note's title when the link has no words", () => {
+            expect(read('[](other-note.md)', options)).toEqual([para(chip('other', 'Other note'))]);
+        });
+
+        it('carries emphasis around the link onto the chip', () => {
+            expect(read('**[Other note](other-note.md)**', options)).toEqual([
+                para({ ...chip('other', 'Other note'), marks: [{ type: 'bold' }] }),
+            ]);
+        });
+
+        it('still keeps an image inside the link as the words they were', () => {
+            expect(read('[![map](maps/kyoto.png)](other-note.md)', options)).toEqual([
+                para(text('![map](maps/kyoto.png) '), chip('other', 'Other note')),
+            ]);
+        });
+    });
 });
 
 describe('readMarkdown: images', () => {
     const count = (markdown: string) => readMarkdown(markdown, schema).imagesKeptAsText;
+
+    it('reads an image under the address a caller maps it to', () => {
+        const uri = 'data:image/png;base64,iVBORw0KGgo=';
+        const imageSource = (src: string) => (src === 'mine://1' ? uri : src);
+        expect(read('![dot](mine://1)', { imageSource })).toEqual([
+            { type: 'image', attrs: expect.objectContaining({ src: uri, alt: 'dot' }) },
+        ]);
+        expect(count('![dot](mine://2)')).toBe(1);
+    });
 
     it('stores an image the exporter wrote as the attachment it names', () => {
         expect(read(`![](../attachments/${HASH}.png)`)).toEqual([
@@ -611,7 +648,27 @@ describe('readMarkdown: tables and HTML', () => {
     });
 
     it('keeps inline HTML as the text it is', () => {
-        expect(read('a <u>b</u> <!-- note -->')).toEqual([para(text('a <u>b</u> <!-- note -->'))]);
+        expect(read('a <span>b</span> <!-- note -->')).toEqual([
+            para(text('a <span>b</span> <!-- note -->')),
+        ]);
+    });
+
+    it('reads <u> as underline, the one tag the exporter writes for a mark', () => {
+        const underline = { type: 'underline' };
+        expect(read('a <u>b *c*</u> d')).toEqual([
+            para(
+                text('a '),
+                text('b ', [underline]),
+                text('c', [{ type: 'italic' }, underline]),
+                text(' d'),
+            ),
+        ]);
+        expect(read('<U>loud</U>')).toEqual([para(text('loud', [underline]))]);
+    });
+
+    it('keeps a <u> nothing closes, and a stray </u>, as text', () => {
+        expect(read('a <u>b')).toEqual([para(text('a <u>b'))]);
+        expect(read('a</u> b')).toEqual([para(text('a</u> b'))]);
     });
 
     it('reads a <br> on a line of its own as an empty line', () => {

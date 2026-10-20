@@ -58,6 +58,24 @@ export interface MarkdownReadOptions {
      * alongside this one. Null leaves the link a link.
      */
     noteLink?: (href: string) => NoteLinkTarget | null;
+    /**
+     * Take a note link's words as the title its chip shows.
+     *
+     * A chip's title is a snapshot taken when the link was inserted, and the
+     * exporter writes that snapshot as the link's words. A file from anywhere
+     * else has words of its writer's choosing, so by default they stay as
+     * text beside the chip, which is titled after the note as it is now. Text
+     * this exporter wrote, and nothing else, can set this to read the chip
+     * back as it was.
+     */
+    noteLinkLabelIsTitle?: boolean;
+    /**
+     * The address to store for an image written with `src`, or `src` itself
+     * when it names nothing the caller knows. For a caller that wrote an
+     * image under an address of its own and needs it read back as what it
+     * stood for.
+     */
+    imageSource?: (src: string) => string;
 }
 
 export interface MarkdownDocument {
@@ -274,7 +292,13 @@ export function readMarkdown(
     options: MarkdownReadOptions = {},
 ): MarkdownDocument {
     const knownTags = options.knownTags ?? [];
-    const reader = new DocumentReader(schema, options.noteLink ?? (() => null), knownTags);
+    const reader = new DocumentReader(
+        schema,
+        options.noteLink ?? (() => null),
+        knownTags,
+        options.noteLinkLabelIsTitle ?? false,
+        options.imageSource ?? ((src) => src),
+    );
     const doc = reader.document(parse(markdown, knownTags));
     doc.check();
     return { doc, imagesKeptAsText: reader.imagesKeptAsText };
@@ -337,8 +361,12 @@ export function oneLine(text: string): string {
     return text.replace(/\s+/g, ' ').trim();
 }
 
-/** `<br>`, `<br/>` and `<br />`: the one piece of HTML with a place in a note. */
+/** `<br>`, `<br/>` and `<br />`: HTML with a place in a note, as a line break. */
 const BREAK_TAG = /^<br\s*\/?>$/i;
+
+/** `<u>` and `</u>`: HTML with a place in a note, as the underline mark. */
+const UNDERLINE_OPEN = /^<u>$/i;
+const UNDERLINE_CLOSE = /^<\/u>$/i;
 
 /** A block token and what it holds, from markdown-it's flat open/close list. */
 interface Branch {
@@ -376,6 +404,8 @@ class DocumentReader {
         private readonly schema: Schema,
         private readonly noteLink: (href: string) => NoteLinkTarget | null,
         private readonly knownTags: readonly string[],
+        private readonly labelIsTitle: boolean,
+        private readonly imageSource: (src: string) => string,
     ) {}
 
     document(tokens: Token[]): ProseMirrorNode {
@@ -551,6 +581,11 @@ class DocumentReader {
                     const close = closingLink(tokens, i);
                     const label = tokens.slice(i + 1, close);
                     const words = oneLine(plainText(label));
+                    if (this.labelIsTitle && !label.some((part) => part.type === 'image')) {
+                        out.push(chip(words ? { ...target, title: words } : target));
+                        i = close;
+                        break;
+                    }
                     const onlyTitle =
                         !label.some((part) => part.type === 'image') &&
                         (!words ||
@@ -579,6 +614,13 @@ class DocumentReader {
                 case 'html_inline':
                     if (BREAK_TAG.test(token.content)) {
                         out.push(schema.nodes.hardBreak.create());
+                    } else if (UNDERLINE_OPEN.test(token.content) && closesUnderline(tokens, i)) {
+                        active.push(schema.marks.underline.create());
+                    } else if (
+                        UNDERLINE_CLOSE.test(token.content) &&
+                        active.some((mark) => mark.type.name === 'underline')
+                    ) {
+                        dropLast(active, 'underline');
                     } else {
                         // A tag written across lines, on one. Split rather
                         // than matched, which runs in linear time however much
@@ -611,7 +653,7 @@ class DocumentReader {
     }
 
     private image(token: Token, active: readonly Mark[]): ProseMirrorNode {
-        const src = String(token.attrGet('src') ?? '');
+        const src = this.imageSource(String(token.attrGet('src') ?? ''));
         const alt = plainText(token.children ?? []).trim();
         const title = String(token.attrGet('title') ?? '');
         const stored = src ? storedImage(src, alt) : null;
@@ -761,6 +803,21 @@ class DocumentReader {
             );
         return built.length > 0 ? [nodes.table.create(null, built)] : [];
     }
+}
+
+/**
+ * Whether a `<u>` at `open` is closed later in the same line of tokens. One
+ * that is not is kept as the text it is, rather than underlining everything
+ * after it.
+ */
+function closesUnderline(tokens: Token[], open: number): boolean {
+    let depth = 0;
+    for (let i = open + 1; i < tokens.length; i++) {
+        if (tokens[i].type !== 'html_inline') continue;
+        if (UNDERLINE_OPEN.test(tokens[i].content)) depth++;
+        else if (UNDERLINE_CLOSE.test(tokens[i].content) && depth-- === 0) return true;
+    }
+    return false;
 }
 
 /** Where a link's tokens end, so a link that became a chip can skip its words. */
