@@ -5,7 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-export type McpAccess = 'off' | 'read_only';
+export type McpAccess = 'off' | 'read_only' | 'read_write';
 
 export interface McpSettings {
     access: McpAccess;

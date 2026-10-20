@@ -646,3 +646,208 @@ async fn a_note_can_bring_its_images_with_it() {
         .unwrap()
         .starts_with("Image 1: oyot-attachment://"));
 }
+
+// --- the tools that write ---------------------------------------------------
+
+#[tokio::test]
+async fn read_only_offers_no_tool_that_writes_and_refuses_one() {
+    let s = setup(Access::ReadOnly);
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    assert!(!client.tools().await.contains(&"edit_note".to_string()));
+    let refused = client
+        .call("append_to_note", json!({ "id": "n1", "markdown": "x" }))
+        .await;
+    assert_eq!(refused["isError"], true);
+    assert!(s.page.methods().is_empty());
+}
+
+#[tokio::test]
+async fn read_write_offers_the_tools_that_write_and_none_that_delete() {
+    let (mut client, _) = connected(Access::ReadWrite).await;
+    let tools = client.tools().await;
+    assert_eq!(tools.len(), 15);
+    for name in [
+        "create_note",
+        "edit_note",
+        "append_to_note",
+        "append_to_journal",
+        "rename_note",
+        "toggle_todo",
+    ] {
+        assert!(tools.contains(&name.to_string()), "{name}");
+    }
+    assert!(!tools.iter().any(|t| t.contains("delete")));
+}
+
+#[tokio::test]
+async fn an_edit_is_passed_on_and_its_new_revision_returned() {
+    let s = setup(Access::ReadWrite);
+    s.page.answer(
+        "editNote",
+        json!({ "status": "changed", "revision": "rev-2", "blocks": 1 }),
+    );
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    let result = client
+        .call(
+            "edit_note",
+            json!({ "id": "n1", "markdown": "new\n", "revision": "rev-1" }),
+        )
+        .await;
+    assert_eq!(text(&result), "Saved, 1 block changed. Revision: rev-2\n");
+    assert_eq!(
+        s.page.asked.lock()[0].1,
+        json!({ "docId": "n1", "markdown": "new\n", "revision": "rev-1", "acceptFormattingLoss": false })
+    );
+}
+
+#[tokio::test]
+async fn an_edit_from_a_stale_revision_comes_back_with_the_note_as_it_is() {
+    let s = setup(Access::ReadWrite);
+    s.page.answer(
+        "editNote",
+        json!({ "status": "conflict", "revision": "rev-3", "markdown": "typed meanwhile\n" }),
+    );
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    let result = client
+        .call(
+            "edit_note",
+            json!({ "id": "n1", "markdown": "new\n", "revision": "rev-1" }),
+        )
+        .await;
+    assert_eq!(result["isError"], true);
+    assert!(text(&result).contains("at revision rev-3"));
+    assert!(text(&result).ends_with("typed meanwhile\n"));
+}
+
+#[tokio::test]
+async fn an_edit_that_would_lose_formatting_says_what_and_where() {
+    let s = setup(Access::ReadWrite);
+    s.page.answer(
+        "editNote",
+        json!({ "status": "lossy", "lossy": [{ "index": 2, "markdown": "| a |\n| --- |", "losses": ["a table's column widths"] }] }),
+    );
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    let result = client
+        .call(
+            "edit_note",
+            json!({ "id": "n1", "markdown": "x\n", "revision": "r" }),
+        )
+        .await;
+    assert_eq!(result["isError"], true);
+    let shown = text(&result);
+    assert!(shown
+        .contains("- block 3, which would lose a table's column widths:\n    | a |\n    | --- |"));
+    assert!(shown.contains("accept_formatting_loss: true"));
+}
+
+#[tokio::test]
+async fn a_journal_is_made_for_a_day_that_has_none_before_it_is_added_to() {
+    let s = setup(Access::ReadWrite);
+    s.page
+        .answer("createJournal", json!({ "id": "21 Oct 2026" }));
+    s.page.answer(
+        "appendNote",
+        json!({ "status": "changed", "revision": "r" }),
+    );
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+
+    let existing = client
+        .call(
+            "append_to_journal",
+            json!({ "date": "2026-10-20", "markdown": "- a" }),
+        )
+        .await;
+    assert_eq!(existing["isError"], false, "{existing}");
+    let missing = client
+        .call(
+            "append_to_journal",
+            json!({ "date": "2026-10-21", "markdown": "- b" }),
+        )
+        .await;
+    assert_eq!(missing["isError"], false, "{missing}");
+
+    let asked = s.page.asked.lock();
+    assert_eq!(
+        asked[0].1,
+        json!({ "docId": "20 Oct 2026", "markdown": "- a" })
+    );
+    assert_eq!(asked[1].0, "createJournal");
+    assert_eq!(asked[1].1, json!({ "date": "2026-10-21" }));
+    assert_eq!(
+        asked[2].1,
+        json!({ "docId": "21 Oct 2026", "markdown": "- b" })
+    );
+}
+
+#[tokio::test]
+async fn a_journal_cannot_be_renamed_and_a_note_needs_a_title() {
+    let s = setup(Access::ReadWrite);
+    s.page
+        .answer("renameNote", json!({ "title": "Kyoto, again" }));
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+
+    let journal = client
+        .call(
+            "rename_note",
+            json!({ "id": "20 Oct 2026", "title": "Mine" }),
+        )
+        .await;
+    assert_eq!(journal["isError"], true);
+    let blank = client
+        .call("rename_note", json!({ "id": "n1", "title": "   " }))
+        .await;
+    assert_eq!(text(&blank), "A title cannot be empty.");
+    let renamed = client
+        .call(
+            "rename_note",
+            json!({ "id": "n1", "title": "Kyoto, again" }),
+        )
+        .await;
+    assert_eq!(text(&renamed), "Renamed Kyoto trip to Kyoto, again.\n");
+    assert_eq!(s.page.methods(), ["renameNote"]);
+}
+
+#[tokio::test]
+async fn a_task_that_moved_is_not_ticked_and_the_tasks_are_shown() {
+    let s = setup(Access::ReadWrite);
+    s.page.answer(
+        "toggleTodo",
+        json!({ "status": "moved", "todos": [{ "ordinal": 0, "text": "charger", "checked": false, "depth": 0 }] }),
+    );
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    let result = client
+        .call(
+            "toggle_todo",
+            json!({ "note_id": "n2", "ordinal": 1, "text": "charger", "checked": true }),
+        )
+        .await;
+    assert_eq!(result["isError"], true);
+    assert!(text(&result).ends_with("- [ ] charger (ordinal 0)\n"));
+
+    let missing = client
+        .call(
+            "toggle_todo",
+            json!({ "note_id": "n2", "text": "x", "checked": true }),
+        )
+        .await;
+    assert_eq!(text(&missing), "ordinal is required.");
+}
+
+#[tokio::test]
+async fn a_new_note_is_made_by_the_page() {
+    let s = setup(Access::ReadWrite);
+    s.page
+        .answer("createNote", json!({ "id": "new-1", "revision": "r1" }));
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    let result = client
+        .call(
+            "create_note",
+            json!({ "title": " Ideas ", "markdown": "one\n" }),
+        )
+        .await;
+    assert_eq!(text(&result), "Created Ideas (id new-1). Revision: r1\n");
+    assert_eq!(
+        s.page.asked.lock()[0].1,
+        json!({ "title": "Ideas", "markdown": "one\n" })
+    );
+}

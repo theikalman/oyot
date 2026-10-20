@@ -104,14 +104,14 @@ pub async fn answer(ctx: &Arc<Context>, name: &str, args: &Args) -> Result<Answe
     }
 }
 
-struct NoteRow {
-    kind: String,
-    title: String,
+pub(super) struct NoteRow {
+    pub kind: String,
+    pub title: String,
     created_at: i64,
     updated_at: i64,
 }
 
-fn note_row(db: &Connection, id: &str) -> Result<Option<NoteRow>, String> {
+pub(super) fn note_row(db: &Connection, id: &str) -> Result<Option<NoteRow>, String> {
     db.query_row(
         "SELECT type, title, created_at, updated_at FROM documents WHERE id = ?1 AND is_deleted = 0",
         params![id],
@@ -144,7 +144,11 @@ struct RenderedImage {
     alt: Option<String>,
 }
 
-async fn read_note(ctx: &Arc<Context>, id: String, include_images: bool) -> Result<Answer, String> {
+pub(super) async fn read_note(
+    ctx: &Arc<Context>,
+    id: String,
+    include_images: bool,
+) -> Result<Answer, String> {
     let row = {
         let id = id.clone();
         ctx.sql(move |db| note_row(db, &id)).await?

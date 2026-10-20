@@ -8,7 +8,7 @@ const NOT_HERE: &str = "AI assistants reach Oyot on a desktop only";
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpSettings {
-    /// `off` or `read_only`.
+    /// `off`, `read_only` or `read_write`.
     pub access: String,
     /// What a client launches, for the settings page to show: this binary,
     /// and `--mcp`.

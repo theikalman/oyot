@@ -10,6 +10,7 @@
 use super::access::{Access, Current};
 use super::notes;
 use super::page::Page;
+use super::writes;
 use crate::commands::documents::{
     query_all_documents, query_all_tags, query_all_todos, query_backlinks,
     query_documents_with_tag, run_search, DocumentSummary,
@@ -57,6 +58,11 @@ pub fn list(access: Access) -> Vec<Tool> {
     match access {
         Access::Off => Vec::new(),
         Access::ReadOnly => read_tools(),
+        Access::ReadWrite => {
+            let mut tools = read_tools();
+            tools.extend(writes::tools());
+            tools
+        }
     }
 }
 
@@ -166,6 +172,8 @@ pub async fn call(ctx: Arc<Context>, name: &str, args: JsonObject) -> CallToolRe
     let args = Args(args);
     let answer = if notes::handles(name) {
         notes::answer(&ctx, name, &args).await
+    } else if writes::handles(name) {
+        writes::answer(&ctx, name, &args).await
     } else {
         let name = name.to_string();
         ctx.sql(move |db| answer(db, &name, &args)).await
@@ -515,6 +523,11 @@ impl Args {
         }
     }
 
+    pub(super) fn required_bool(&self, key: &str) -> Result<bool, String> {
+        self.optional_bool(key)?
+            .ok_or_else(|| format!("{key} is required."))
+    }
+
     pub(super) fn optional_bool(&self, key: &str) -> Result<Option<bool>, String> {
         match self.0.get(key) {
             None | Some(Value::Null) => Ok(None),
@@ -523,7 +536,7 @@ impl Args {
         }
     }
 
-    fn count(&self, key: &str, default: u64, min: u64, max: u64) -> Result<u64, String> {
+    pub(super) fn count(&self, key: &str, default: u64, min: u64, max: u64) -> Result<u64, String> {
         match self.0.get(key) {
             None | Some(Value::Null) => Ok(default),
             Some(v) => v

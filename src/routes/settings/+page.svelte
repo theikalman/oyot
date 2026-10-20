@@ -318,15 +318,17 @@
             <div class="section-card">
                 <label class="setting-row">
                     <span class="setting-info">
-                        <span class="setting-label">Let AI assistants read your notes</span>
+                        <span class="setting-label">Let AI assistants use your notes</span>
                         <span class="setting-desc">
                             Assistants such as Claude Desktop, running on this computer, can search
-                            and read your notes and todos.
+                            and read your notes and todos. With Read and write they can also add to
+                            and change them. They can never delete a note.
                         </span>
                     </span>
                     <select value={mcp.access} onchange={handleMcpAccess} disabled={savingMcp}>
                         <option value="off">Off</option>
                         <option value="read_only">Read only</option>
+                        <option value="read_write">Read and write</option>
                     </select>
                 </label>
                 <div class="setting-row">

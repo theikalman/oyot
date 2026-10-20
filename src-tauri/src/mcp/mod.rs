@@ -21,6 +21,7 @@ mod server;
 #[cfg(test)]
 mod tests;
 mod tools;
+mod writes;
 
 use crate::db::AppState;
 use crate::sync::manager::SyncManager;
