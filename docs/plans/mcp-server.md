@@ -164,7 +164,7 @@ New module `src/lib/mcp/`, pure and tested without Tauri, like the converters.
 
 ### 2.1 `noteMarkdown.ts`: render
 
-`renderNote(root, ctx) -> { markdown, revision, blocks }`
+`renderNote(root) -> { markdown, blocks, inlineImages, images }`, and `revisionOf(markdown)` separately, async because the browser's SHA-256 is
 
 - `ctx.notePath(id)` gives `oyot://note/<id>`. `ctx.attachmentPath()` gives
   null, so images come out as `oyot-attachment://<hash>`.
@@ -432,9 +432,11 @@ fn main() {
    `app_data_dir()`.
 2. **Connect.** If nothing is listening, launch the app with `--hidden` (the
    existing autostart flag, `desktop::HIDDEN_FLAG`) and retry for up to 15 s.
-3. **Handle a disabled setting.** If the app is running but the setting is
-   Off, the socket doesn't exist. Answer `initialize` locally, list no tools,
-   and log to stderr "Enable AI assistant access in Oyot settings".
+3. **Handle a disabled setting.** Nothing to do in the bridge. The app
+   listens whatever the setting says, and with access Off it lists no tools
+   and refuses calls (ADR 0037, decision 4, as amended). If Off meant
+   nothing was listening, the bridge would relaunch Oyot, and pop its
+   window up, every time the client started.
 4. **Pipe.** Copy stdin to the socket and the socket to stdout until either
    side closes. Write nothing else to stdout.
 
