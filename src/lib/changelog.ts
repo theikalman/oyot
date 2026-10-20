@@ -36,6 +36,26 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.31-alpha',
+        date: '2026-10-21',
+        summary:
+            'AI assistants on your computer, such as Claude Desktop and Claude Code, can use your notes, as far as you allow, and exported Markdown keeps more of its formatting.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'AI assistants on your computer, such as Claude Desktop and Claude Code, can use your notes. Settings > AI assistants turns it on and gives the setup for each. Read only lets them search and read your notes, journals, todos and the images in them. Read and write also lets them create notes, change them, add to them and tick tasks, and their changes are made the way your own are, in the open note and on your other devices. Nothing lets them delete a note, and it is off until you turn it on.',
+            },
+            {
+                kind: 'improved',
+                text: 'Exported Markdown keeps underlined text, the words a link shows on hover, how each table column is aligned, and bold or italic on tags and on links to other notes. All of these were dropped before.',
+            },
+            {
+                kind: 'improved',
+                text: 'Importing a Markdown file reads <u>…</u> as underlined text instead of showing the tags.',
+            },
+        ],
+    },
+    {
         version: '0.0.30-alpha',
         date: '2026-10-06',
         summary:
