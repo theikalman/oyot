@@ -22,6 +22,13 @@
     import { openDocument, openHelp, openNotes } from '$lib/services/navigation';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import ColorSchemePicker from '$lib/settings/ColorSchemePicker.svelte';
+    import {
+        getMcpSettings,
+        launchLine,
+        setMcpAccess,
+        type McpAccess,
+        type McpSettings,
+    } from '$lib/mcp/settings';
     import { onDestroy, onMount } from 'svelte';
 
     let syncSummary = $derived(
@@ -110,7 +117,42 @@
         }
     }
 
+    // AI assistants over MCP (ADR 0037). Desktop only, like the section above.
+    let mcp = $state<McpSettings | null>(null);
+    let savingMcp = $state(false);
+
+    async function handleMcpAccess(event: Event) {
+        const select = event.currentTarget as HTMLSelectElement;
+        const wanted = select.value as McpAccess;
+        const before = mcp?.access ?? 'off';
+        savingMcp = true;
+        try {
+            await setMcpAccess(wanted);
+            if (mcp) mcp = { ...mcp, access: wanted };
+        } catch (error) {
+            console.error('Failed to change AI assistant access:', error);
+            toasts.error(`Could not change that: ${message(error)}`);
+            select.value = before;
+        } finally {
+            savingMcp = false;
+        }
+    }
+
+    async function copyMcpCommand() {
+        if (!mcp) return;
+        try {
+            await navigator.clipboard.writeText(launchLine(mcp));
+            toasts.success('Copied');
+        } catch (error) {
+            console.error('Failed to copy the command:', error);
+            toasts.error('Could not copy it');
+        }
+    }
+
     onMount(() => {
+        getMcpSettings()
+            .then((settings) => (mcp = settings))
+            .catch(() => (mcp = null));
         getDesktopSettings()
             .then((settings) => (desktop = settings))
             .catch((error) => console.error('Failed to load the desktop settings:', error));
@@ -266,6 +308,34 @@
                         disabled={savingDesktop}
                     />
                 </label>
+            </div>
+        </section>
+    {/if}
+
+    {#if desktop?.supported && mcp}
+        <section class="settings-section">
+            <h2 class="section-title">AI assistants</h2>
+            <div class="section-card">
+                <label class="setting-row">
+                    <span class="setting-info">
+                        <span class="setting-label">Let AI assistants read your notes</span>
+                        <span class="setting-desc">
+                            Assistants such as Claude Desktop, running on this computer, can search
+                            and read your notes and todos.
+                        </span>
+                    </span>
+                    <select value={mcp.access} onchange={handleMcpAccess} disabled={savingMcp}>
+                        <option value="off">Off</option>
+                        <option value="read_only">Read only</option>
+                    </select>
+                </label>
+                <div class="setting-row">
+                    <span class="setting-info">
+                        <span class="setting-label">Command to give the assistant</span>
+                        <code class="setting-desc mcp-command">{launchLine(mcp)}</code>
+                    </span>
+                    <button class="action-btn" onclick={copyMcpCommand}>Copy</button>
+                </div>
             </div>
         </section>
     {/if}
@@ -439,6 +509,11 @@
 
     label.setting-row {
         cursor: pointer;
+    }
+
+    .mcp-command {
+        font-family: var(--font-mono, monospace);
+        word-break: break-all;
     }
 
     .setting-row input[type='checkbox'] {
