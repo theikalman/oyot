@@ -14,6 +14,7 @@ pub mod access;
 pub mod bridge;
 pub mod endpoint;
 mod listener;
+pub mod page;
 mod server;
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,8 @@ pub use access::Access;
 pub struct McpState {
     access: Arc<access::Current>,
     listener: parking_lot::Mutex<Option<listener::Listener>>,
+    /// Requests waiting on the page.
+    pub page: Arc<page::PageRelay>,
 }
 
 impl McpState {
@@ -37,6 +40,7 @@ impl McpState {
         Self {
             access: Arc::new(access::Current::new(access::read(app))),
             listener: parking_lot::Mutex::new(None),
+            page: Arc::new(page::PageRelay::new(app.clone())),
         }
     }
 

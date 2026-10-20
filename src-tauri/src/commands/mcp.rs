@@ -36,6 +36,44 @@ pub fn get_mcp_settings(app: tauri::AppHandle) -> Result<McpSettings, String> {
     }
 }
 
+/// The page's answer to an `mcp-request`: a result, or an error to give the
+/// assistant.
+#[tauri::command]
+pub fn mcp_respond(
+    app: tauri::AppHandle,
+    id: u64,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        let answer = match error {
+            Some(error) => Err(error),
+            None => Ok(result.unwrap_or(serde_json::Value::Null)),
+        };
+        app.state::<crate::mcp::McpState>().page.respond(id, answer);
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, id, result, error);
+    }
+}
+
+/// The page is listening for `mcp-request` events, so requests can be sent.
+#[tauri::command]
+pub fn mcp_page_ready(app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        app.state::<crate::mcp::McpState>().page.page_ready();
+    }
+    #[cfg(mobile)]
+    {
+        let _ = app;
+    }
+}
+
 #[tauri::command]
 pub fn set_mcp_access(app: tauri::AppHandle, access: String) -> Result<(), String> {
     #[cfg(desktop)]
