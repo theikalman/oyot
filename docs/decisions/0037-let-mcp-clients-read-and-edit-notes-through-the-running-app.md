@@ -263,9 +263,12 @@ the page can already decode and encode every format the editor shows.
    Desktop spawns its servers with explicit pipes, which should work, but
    this has to be tried on Windows. If it fails, the bridge moves to a
    console sidecar.
-2. **How promptly does a hidden page answer?** This needs measuring on
-   macOS and Linux, with the window hidden for a while. It decides the relay
-   timeout and whether the page-backed tools say "open the Oyot window".
+2. **How promptly does a hidden page answer?** On Linux (Wayland, WebKitGTK
+   2.52.6), an event to the page answered by a command took a median of
+   4.3 ms over 15 minutes with the window hidden, with nothing lost and no
+   timer throttling seen. macOS hasn't been measured. Neither has a window
+   hidden for hours. Those two decide whether the relay timeout needs to be
+   longer than the 10 s planned.
 3. **Which MCP library?** `rmcp`, the official Rust SDK, can serve any tokio
    `AsyncRead + AsyncWrite` (its `transport-async-rw` feature). Use it,
    pinned to a release that has been out for a couple of weeks, unless it
