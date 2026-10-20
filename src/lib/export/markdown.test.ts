@@ -4,7 +4,7 @@ import { prosemirrorJSONToYDoc } from '@tiptap/y-tiptap';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { createContentExtensions } from '$lib/editor/extensions';
 import { rootFromYDoc } from '$lib/editor/headlessIndex';
-import { serializeDocument, type MarkdownOptions } from './markdown';
+import { serializeBlocks, serializeDocument, type MarkdownOptions } from './markdown';
 
 const schema = getSchema(createContentExtensions());
 
@@ -550,6 +550,18 @@ describe('serializeDocument', () => {
 
     it('renders nothing for an empty document', () => {
         expect(render([])).toBe('');
+    });
+
+    it('renders each top-level block on its own, an empty one as nothing', () => {
+        const blocks = serializeBlocks(
+            doc([
+                { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'a' }] },
+                { type: 'paragraph' },
+                para('b'),
+            ]),
+            options,
+        );
+        expect(blocks).toEqual(['# a', '', 'b']);
     });
 
     // The export reads documents nobody has opened, straight out of the CRDT,
