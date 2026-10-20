@@ -4,6 +4,7 @@ use super::endpoint::Endpoint;
 use super::server::OyotServer;
 use super::tools::Context;
 use rmcp::ServiceExt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::watch;
@@ -13,12 +14,16 @@ pub struct Listener {
     task: tauri::async_runtime::JoinHandle<()>,
     /// Bumped to end every session, which each one watches.
     generation: watch::Sender<u64>,
+    /// Clients connected now, for the settings page to show.
+    connected: Arc<AtomicUsize>,
 }
 
 impl Listener {
     pub fn start(endpoint: Endpoint, ctx: Arc<Context>) -> Result<Self, String> {
         let (generation, _) = watch::channel(0u64);
         let sessions = generation.clone();
+        let connected = Arc::new(AtomicUsize::new(0));
+        let counter = connected.clone();
 
         #[cfg(unix)]
         let task = {
@@ -31,7 +36,12 @@ impl Listener {
                 };
                 loop {
                     match listener.accept().await {
-                        Ok((stream, _)) => spawn_session(stream, ctx.clone(), sessions.subscribe()),
+                        Ok((stream, _)) => spawn_session(
+                            stream,
+                            ctx.clone(),
+                            sessions.subscribe(),
+                            counter.clone(),
+                        ),
                         Err(e) => {
                             warn_log!("[mcp] could not accept a client: {e}");
                             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -45,7 +55,7 @@ impl Listener {
         let task = {
             let Endpoint::Pipe(name) = endpoint.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = windows::accept(&name, ctx, sessions).await {
+                if let Err(e) = windows::accept(&name, ctx, sessions, counter).await {
                     warn_log!("[mcp] stopped listening: {e}");
                 }
             })
@@ -56,7 +66,13 @@ impl Listener {
             endpoint,
             task,
             generation,
+            connected,
         })
+    }
+
+    /// How many clients are connected now.
+    pub fn connected(&self) -> usize {
+        self.connected.load(Ordering::Relaxed)
     }
 
     /// End every connected session. The listener keeps accepting.
@@ -75,8 +91,12 @@ impl Listener {
     }
 }
 
-fn spawn_session<S>(stream: S, ctx: Arc<Context>, mut generation: watch::Receiver<u64>)
-where
+fn spawn_session<S>(
+    stream: S,
+    ctx: Arc<Context>,
+    mut generation: watch::Receiver<u64>,
+    connected: Arc<AtomicUsize>,
+) where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     tauri::async_runtime::spawn(async move {
@@ -84,11 +104,14 @@ where
             Ok(running) => running,
             Err(e) => return trace!("[mcp] a client left before it began: {e}"),
         };
+        // Counted once it has said who it is, not while it is connecting.
+        connected.fetch_add(1, Ordering::Relaxed);
         let token = running.cancellation_token();
         tokio::select! {
             _ = running.waiting() => {}
             _ = generation.changed() => token.cancel(),
         }
+        connected.fetch_sub(1, Ordering::Relaxed);
         trace!("[mcp] a session ended");
     });
 }
@@ -134,6 +157,7 @@ mod unix {
 #[cfg(windows)]
 mod windows {
     use super::{spawn_session, Context};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use tokio::net::windows::named_pipe::ServerOptions;
     use tokio::sync::watch;
@@ -146,6 +170,7 @@ mod windows {
         name: &str,
         ctx: Arc<Context>,
         sessions: watch::Sender<u64>,
+        connected: Arc<AtomicUsize>,
     ) -> std::io::Result<()> {
         let mut server = ServerOptions::new()
             .first_pipe_instance(true)
@@ -153,11 +178,16 @@ mod windows {
             .create(name)?;
         loop {
             server.connect().await?;
-            let connected = server;
+            let connected_pipe = server;
             server = ServerOptions::new()
                 .reject_remote_clients(true)
                 .create(name)?;
-            spawn_session(connected, ctx.clone(), sessions.subscribe());
+            spawn_session(
+                connected_pipe,
+                ctx.clone(),
+                sessions.subscribe(),
+                connected.clone(),
+            );
         }
     }
 }

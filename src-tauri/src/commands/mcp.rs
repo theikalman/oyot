@@ -14,6 +14,8 @@ pub struct McpSettings {
     /// and `--mcp`.
     pub command: String,
     pub args: Vec<String>,
+    /// Assistants connected now.
+    pub clients: usize,
 }
 
 #[tauri::command]
@@ -21,12 +23,14 @@ pub fn get_mcp_settings(app: tauri::AppHandle) -> Result<McpSettings, String> {
     #[cfg(desktop)]
     {
         use tauri::Manager;
-        let access = app.state::<crate::mcp::McpState>().access();
+        let mcp = app.state::<crate::mcp::McpState>();
+        let access = mcp.access();
         let command = std::env::current_exe().map_err(|e| e.to_string())?;
         Ok(McpSettings {
             access: access.as_str().to_string(),
             command: command.to_string_lossy().into_owned(),
             args: vec!["--mcp".to_string()],
+            clients: mcp.clients(),
         })
     }
     #[cfg(mobile)]

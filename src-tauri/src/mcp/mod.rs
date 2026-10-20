@@ -52,6 +52,11 @@ impl McpState {
         self.access.get()
     }
 
+    /// How many clients are connected now.
+    pub fn clients(&self) -> usize {
+        self.listener.lock().as_ref().map_or(0, |l| l.connected())
+    }
+
     /// Change the setting, and drop every connected client, so none keeps
     /// what the old setting allowed (ADR 0037, decision 4). A client that
     /// reconnects gets the tools the new setting allows.

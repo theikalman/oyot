@@ -371,6 +371,7 @@ async fn the_socket_serves_clients_and_changing_the_setting_ends_their_sessions(
     let (mut client, info) = Client::start(stream).await;
     assert_eq!(info["result"]["serverInfo"]["name"], "oyot");
     assert_eq!(client.tools().await.len(), 9);
+    assert_eq!(listener.connected(), 1);
 
     listener.drop_sessions();
     let mut line = String::new();
@@ -381,6 +382,15 @@ async fn the_socket_serves_clients_and_changing_the_setting_ends_their_sessions(
     .await
     .expect("the session ends");
     assert_eq!(read.unwrap(), 0, "the server hung up");
+
+    // The count follows, a moment after the client sees the hang-up.
+    for _ in 0..100 {
+        if listener.connected() == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(listener.connected(), 0);
 
     // A new client is still welcome.
     let stream = tokio::net::UnixStream::connect(&path).await.unwrap();
