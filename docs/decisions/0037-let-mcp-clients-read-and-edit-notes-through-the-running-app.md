@@ -93,9 +93,19 @@ operating system decides who may connect, and that is the same user who can
 already read the database file.
 
 **4. Off by default, with three modes.** A setting chooses Off, Read only,
-or Read and write. When it's Off, the socket isn't there. In Read only,
-the write tools aren't listed, and a call to one is refused. Changing the
-mode drops connected sessions.
+or Read and write. The app listens whatever the setting says. When it's Off,
+no tools are listed and every call is refused. In Read only, the write tools
+aren't listed, and a call to one is refused. Changing the mode drops
+connected sessions.
+
+The socket stays up when access is off because the bridge needs it to tell
+two cases apart. With nothing listening, the bridge has to assume Oyot isn't
+running and start it. If Off also meant nothing listening, the bridge would
+relaunch Oyot every time the client started. The single-instance plugin
+turns that relaunch into showing the window, so Claude Desktop starting up
+would bring Oyot's window to the front each time. An Off server that
+answers, and says why it has no tools, avoids that. It gives a client no
+more than the socket's permissions already allow.
 
 **5. What SQL can answer, Rust answers.** Search, the note list, todos,
 tags, notes with a tag, and backlinks are read from the tables the index
