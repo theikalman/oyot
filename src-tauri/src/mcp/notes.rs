@@ -309,15 +309,12 @@ fn stored_attachments(
 async fn get_journal(ctx: &Arc<Context>, args: &Args) -> Result<Answer, String> {
     let date = args.required_str("date")?.to_string();
     let include = args.optional_bool("include_images")?.unwrap_or(false);
-    if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-        return Err("date must be a day, as YYYY-MM-DD.".to_string());
-    }
-    let title = format_journal_date(&date).ok_or("date must be a day, as YYYY-MM-DD.")?;
+    let id = journal_id(&date)?;
     let id: Option<String> = ctx
         .sql(move |db| {
             db.query_row(
-                "SELECT id FROM documents WHERE type = 'journal' AND title = ?1 AND is_deleted = 0",
-                params![title],
+                "SELECT id FROM documents WHERE type = 'journal' AND id = ?1 AND is_deleted = 0",
+                params![id],
                 |row| row.get(0),
             )
             .optional()
@@ -331,6 +328,15 @@ async fn get_journal(ctx: &Arc<Context>, args: &Args) -> Result<Answer, String> 
             json!({ "date": date, "found": false }),
         )),
     }
+}
+
+/// A journal's id, from its day: the title is the day as `YYYY-MM-DD`, and
+/// the id is the day written out (`20 Oct 2026`), which is what lets two
+/// devices that both make the day's journal end up with one.
+pub(super) fn journal_id(date: &str) -> Result<String, String> {
+    const BAD: &str = "date must be a day, as YYYY-MM-DD.";
+    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| BAD.to_string())?;
+    format_journal_date(date).ok_or_else(|| BAD.to_string())
 }
 
 /// An image, by where it is kept.

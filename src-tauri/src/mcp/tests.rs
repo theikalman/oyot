@@ -37,10 +37,11 @@ fn database() -> Arc<Mutex<Connection>> {
         1_000,
     );
     note("n2", "note", "Packing", "see the trip note", 2_000);
+    // A journal's title is its day; its id is the day written out.
     note(
         "20 Oct 2026",
         "journal",
-        "20 Oct 2026",
+        "2026-10-20",
         "wrote the plan",
         3_000,
     );
