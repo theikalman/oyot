@@ -58,6 +58,17 @@ export interface MarkdownReadOptions {
      * alongside this one. Null leaves the link a link.
      */
     noteLink?: (href: string) => NoteLinkTarget | null;
+    /**
+     * Take a note link's words as the title its chip shows.
+     *
+     * A chip's title is a snapshot taken when the link was inserted, and the
+     * exporter writes that snapshot as the link's words. A file from anywhere
+     * else has words of its writer's choosing, so by default they stay as
+     * text beside the chip, which is titled after the note as it is now. Text
+     * this exporter wrote, and nothing else, can set this to read the chip
+     * back as it was.
+     */
+    noteLinkLabelIsTitle?: boolean;
 }
 
 export interface MarkdownDocument {
@@ -274,7 +285,12 @@ export function readMarkdown(
     options: MarkdownReadOptions = {},
 ): MarkdownDocument {
     const knownTags = options.knownTags ?? [];
-    const reader = new DocumentReader(schema, options.noteLink ?? (() => null), knownTags);
+    const reader = new DocumentReader(
+        schema,
+        options.noteLink ?? (() => null),
+        knownTags,
+        options.noteLinkLabelIsTitle ?? false,
+    );
     const doc = reader.document(parse(markdown, knownTags));
     doc.check();
     return { doc, imagesKeptAsText: reader.imagesKeptAsText };
@@ -380,6 +396,7 @@ class DocumentReader {
         private readonly schema: Schema,
         private readonly noteLink: (href: string) => NoteLinkTarget | null,
         private readonly knownTags: readonly string[],
+        private readonly labelIsTitle: boolean,
     ) {}
 
     document(tokens: Token[]): ProseMirrorNode {
@@ -555,6 +572,11 @@ class DocumentReader {
                     const close = closingLink(tokens, i);
                     const label = tokens.slice(i + 1, close);
                     const words = oneLine(plainText(label));
+                    if (this.labelIsTitle && !label.some((part) => part.type === 'image')) {
+                        out.push(chip(words ? { ...target, title: words } : target));
+                        i = close;
+                        break;
+                    }
                     const onlyTitle =
                         !label.some((part) => part.type === 'image') &&
                         (!words ||

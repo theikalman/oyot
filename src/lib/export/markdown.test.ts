@@ -298,6 +298,15 @@ describe('serializeDocument', () => {
         expect(md).toBe(`![missing attachment](oyot-attachment://${hash})\n`);
     });
 
+    it('says nothing in place of a description when told to', () => {
+        const hash = 'b'.repeat(64);
+        const md = render([{ type: 'image', attrs: { src: `oyot-attachment://${hash}` } }], {
+            attachmentPath: () => null,
+            missingAttachmentAlt: '',
+        });
+        expect(md).toBe(`![](oyot-attachment://${hash})\n`);
+    });
+
     it('keeps an inline data URI as it is', () => {
         const src = 'data:image/gif;base64,R0lGOD';
         expect(render([{ type: 'image', attrs: { src, alt: 'a dot' } }])).toBe(

@@ -30,6 +30,13 @@ export interface MarkdownOptions {
      * then written as plain text.
      */
     notePath: (docId: string) => string | null;
+    /**
+     * The words written in place of a missing image's description. Defaults
+     * to `MISSING_ATTACHMENT_ALT`, which tells a reader of an archive why the
+     * picture is not there; a caller that resolves `oyot-attachment://`
+     * itself has no reason to say so, and passes ''.
+     */
+    missingAttachmentAlt?: string;
 }
 
 /**
@@ -179,7 +186,10 @@ function image(node: ProseMirrorNode, options: MarkdownOptions): string {
         return src ? `![${alt}](${src})` : '';
     }
     const path = options.attachmentPath(hash);
-    if (!path) return `![${alt || MISSING_ATTACHMENT_ALT}](oyot-attachment://${hash})`;
+    if (!path) {
+        const missing = options.missingAttachmentAlt ?? MISSING_ATTACHMENT_ALT;
+        return `![${alt || missing}](oyot-attachment://${hash})`;
+    }
     return `![${alt}](${encodeLinkTarget(path)})`;
 }
 

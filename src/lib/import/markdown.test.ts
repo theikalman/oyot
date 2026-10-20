@@ -448,6 +448,34 @@ describe('readMarkdown: links between notes', () => {
             para(text('gone', [link('gone.md')])),
         ]);
     });
+
+    // What this exporter wrote, read back as it was: the words are the title
+    // the chip held, even after the note they point at was renamed.
+    describe("with the link's words as the chip's title", () => {
+        const options = { noteLink, noteLinkLabelIsTitle: true };
+
+        it('titles the chip with the words, not the note as it is now', () => {
+            expect(read('see [Old name](other-note.md)', options)).toEqual([
+                para(text('see '), chip('other', 'Old name')),
+            ]);
+        });
+
+        it("falls back to the note's title when the link has no words", () => {
+            expect(read('[](other-note.md)', options)).toEqual([para(chip('other', 'Other note'))]);
+        });
+
+        it('carries emphasis around the link onto the chip', () => {
+            expect(read('**[Other note](other-note.md)**', options)).toEqual([
+                para({ ...chip('other', 'Other note'), marks: [{ type: 'bold' }] }),
+            ]);
+        });
+
+        it('still keeps an image inside the link as the words they were', () => {
+            expect(read('[![map](maps/kyoto.png)](other-note.md)', options)).toEqual([
+                para(text('![map](maps/kyoto.png) '), chip('other', 'Other note')),
+            ]);
+        });
+    });
 });
 
 describe('readMarkdown: images', () => {
