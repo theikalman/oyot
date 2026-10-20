@@ -217,8 +217,34 @@ function table(node: ProseMirrorNode, options: MarkdownOptions): string {
     // whether or not it was made of header cells. A borderless table is not
     // expressible; a table whose first row reads as a header is.
     const [header, ...body] = rows;
-    const divider = `| ${Array(width).fill('---').join(' | ')} |`;
+    const divider = `| ${columnAligns(node, width).map(alignDivider).join(' | ')} |`;
     return [pad(header), divider, ...body.map(pad)].join('\n');
+}
+
+/**
+ * Each column's alignment, as its first row's cell has it. GFM aligns a
+ * column, not a cell, so that is the only one it can say.
+ */
+function columnAligns(table: ProseMirrorNode, width: number): (string | null)[] {
+    const aligns: (string | null)[] = Array(width).fill(null);
+    table.firstChild?.forEach((cell, _offset, index) => {
+        const align = cell.attrs.align;
+        if (align === 'left' || align === 'center' || align === 'right') aligns[index] = align;
+    });
+    return aligns;
+}
+
+function alignDivider(align: string | null): string {
+    switch (align) {
+        case 'left':
+            return ':---';
+        case 'center':
+            return ':---:';
+        case 'right':
+            return '---:';
+        default:
+            return '---';
+    }
 }
 
 /**
@@ -241,12 +267,17 @@ function cellText(cell: ProseMirrorNode, options: MarkdownOptions): string {
 
 // --- inline ---------------------------------------------------------------
 
-/** Marks, innermost last, so nesting comes out in a stable order. */
-const MARK_DELIMITERS: Record<string, string> = {
-    bold: '**',
-    italic: '*',
-    strike: '~~',
-};
+/**
+ * Marks and what opens and closes each, innermost first, so nesting comes out
+ * in a stable order. Markdown has no underline; `<u>` is the HTML a reader
+ * renders as one, and the one tag the importer reads back as a mark.
+ */
+const MARK_DELIMITERS: [name: string, open: string, close: string][] = [
+    ['underline', '<u>', '</u>'],
+    ['strike', '~~', '~~'],
+    ['italic', '*', '*'],
+    ['bold', '**', '**'],
+];
 
 function inline(parent: ProseMirrorNode, options: MarkdownOptions): string {
     let out = '';
@@ -268,10 +299,12 @@ function inlineNode(node: ProseMirrorNode, options: MarkdownOptions): string {
             return image(node, options);
         case TAG_NODE_NAME: {
             const name = normalizeTagName(String(node.attrs.name ?? ''));
-            return name ? `#${name}` : '';
+            // Not underlined: `>#name` does not open a tag to the importer,
+            // which only takes a `#` after a space, a bracket or emphasis.
+            return name ? withMarks(`#${name}`, node, ['underline']) : '';
         }
         case 'documentLink':
-            return documentLink(node, options);
+            return withMarks(documentLink(node, options), node);
         default:
             return inline(node, options);
     }
@@ -302,23 +335,38 @@ function markedText(node: ProseMirrorNode): string {
     // the fence is grown past the longest run of backticks it contains.
     let text = code ? inlineCode(raw) : escapeInline(raw);
 
-    for (const name of ['strike', 'italic', 'bold']) {
-        if (!node.marks.some((mark) => mark.type.name === name)) continue;
-        const delimiter = MARK_DELIMITERS[name];
-        // Emphasis cannot span its own surrounding spaces: `** bold **` is not
-        // emphasis at all, so the padding is moved outside the delimiters.
-        text = text.replace(/^(\s*)([\s\S]*?)(\s*)$/, (_m, lead, body, trail) =>
-            body ? `${lead}${delimiter}${body}${delimiter}${trail}` : `${lead}${trail}`,
-        );
-    }
+    text = withMarks(text, node);
 
     const link = node.marks.find((mark) => mark.type.name === 'link');
     if (link) {
         const href = typeof link.attrs.href === 'string' ? link.attrs.href : '';
-        if (href) text = `[${text}](${encodeLinkTarget(href)})`;
+        if (href) text = `[${text}](${encodeLinkTarget(href)}${linkTitle(link.attrs.title)})`;
     }
 
     return text;
+}
+
+/**
+ * `text` inside the delimiters of every mark `node` carries, other than those
+ * in `skip`. Shared by text and by the chips, which carry marks too: a tag or a
+ * note link in a bold line is bold.
+ */
+function withMarks(text: string, node: ProseMirrorNode, skip: string[] = []): string {
+    for (const [name, open, close] of MARK_DELIMITERS) {
+        if (skip.includes(name) || !node.marks.some((mark) => mark.type.name === name)) continue;
+        // Emphasis cannot span its own surrounding spaces: `** bold **` is not
+        // emphasis at all, so the padding is moved outside the delimiters.
+        text = text.replace(/^(\s*)([\s\S]*?)(\s*)$/, (_m, lead, body, trail) =>
+            body ? `${lead}${open}${body}${close}${trail}` : `${lead}${trail}`,
+        );
+    }
+    return text;
+}
+
+/** A link's title, the words shown on hover, as Markdown writes one. */
+function linkTitle(title: unknown): string {
+    if (typeof title !== 'string' || !title) return '';
+    return ` "${title.replace(/(["\\])/g, '\\$1')}"`;
 }
 
 function inlineCode(text: string): string {

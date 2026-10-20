@@ -78,6 +78,45 @@ describe('serializeDocument', () => {
         ).toBe('[the docs](https://example.com/a%20b)\n');
     });
 
+    it("writes a link's title after its href, escaped", () => {
+        const titled = (title: string) =>
+            render([
+                {
+                    type: 'paragraph',
+                    content: [
+                        {
+                            type: 'text',
+                            text: 'docs',
+                            marks: [{ type: 'link', attrs: { href: 'https://x.org', title } }],
+                        },
+                    ],
+                },
+            ]);
+        expect(titled('Hover')).toBe('[docs](https://x.org "Hover")\n');
+        expect(titled('say "hi" \\o/')).toBe('[docs](https://x.org "say \\"hi\\" \\\\o/")\n');
+    });
+
+    // Markdown has no underline. `<u>` is what a reader renders as one, and
+    // the importer reads it back as the mark.
+    it('writes underline as <u>, inside the other marks', () => {
+        expect(
+            render([
+                {
+                    type: 'paragraph',
+                    content: [
+                        { type: 'text', text: 'a' },
+                        {
+                            type: 'text',
+                            text: ' both ',
+                            marks: [{ type: 'bold' }, { type: 'underline' }],
+                        },
+                        { type: 'text', text: 'b' },
+                    ],
+                },
+            ]),
+        ).toBe('a **<u>both</u>** b\n');
+    });
+
     it('writes inline code verbatim, with a fence long enough to hold it', () => {
         expect(
             render([
@@ -202,6 +241,40 @@ describe('serializeDocument', () => {
         expect(md).toBe('| Day | Plan |\n| --- | --- |\n| Mon | a \\| b |\n');
     });
 
+    it("writes each column's alignment from its first row", () => {
+        const cell = (text: string, align: string | null, type = 'tableCell') => ({
+            type,
+            attrs: { align },
+            content: [para(text)],
+        });
+        const md = render([
+            {
+                type: 'table',
+                content: [
+                    {
+                        type: 'tableRow',
+                        content: [
+                            cell('a', 'left', 'tableHeader'),
+                            cell('b', 'center', 'tableHeader'),
+                            cell('c', 'right', 'tableHeader'),
+                            cell('d', null, 'tableHeader'),
+                        ],
+                    },
+                    {
+                        type: 'tableRow',
+                        content: [
+                            cell('1', 'left'),
+                            cell('2', null),
+                            cell('3', null),
+                            cell('4', null),
+                        ],
+                    },
+                ],
+            },
+        ]);
+        expect(md).toBe('| a | b | c | d |\n| :--- | :---: | ---: | --- |\n| 1 | 2 | 3 | 4 |\n');
+    });
+
     it('links an image to the file the archive will hold', () => {
         const md = render([
             {
@@ -256,6 +329,29 @@ describe('serializeDocument', () => {
             },
         ]);
         expect(md).toBe('see [Other note](other-note.md)\n');
+    });
+
+    it('writes the marks a tag or a note link carries around it', () => {
+        const md = render([
+            {
+                type: 'paragraph',
+                content: [
+                    {
+                        type: 'documentLink',
+                        attrs: { targetId: 'other', title: 'Other note' },
+                        marks: [{ type: 'bold' }],
+                    },
+                    { type: 'text', text: ' ' },
+                    {
+                        type: 'tag',
+                        attrs: { name: 'urgent' },
+                        marks: [{ type: 'italic' }, { type: 'underline' }],
+                    },
+                ],
+            },
+        ]);
+        // Not underlined: the importer would not read `<u>#urgent` as a tag.
+        expect(md).toBe('**[Other note](other-note.md)** *#urgent*\n');
     });
 
     // A link whose target was deleted has no file to point at, and a link to
