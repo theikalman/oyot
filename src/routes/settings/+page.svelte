@@ -23,6 +23,9 @@
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import ColorSchemePicker from '$lib/settings/ColorSchemePicker.svelte';
     import {
+        claudeCodeCommand,
+        claudeDesktopConfig,
+        connectedLine,
         getMcpSettings,
         launchLine,
         setMcpAccess,
@@ -138,16 +141,27 @@
         }
     }
 
-    async function copyMcpCommand() {
-        if (!mcp) return;
+    async function copy(text: string) {
         try {
-            await navigator.clipboard.writeText(launchLine(mcp));
+            await navigator.clipboard.writeText(text);
             toasts.success('Copied');
         } catch (error) {
-            console.error('Failed to copy the command:', error);
+            console.error('Failed to copy:', error);
             toasts.error('Could not copy it');
         }
     }
+
+    // How many assistants are connected changes while the page is open,
+    // as they come and go, so it is read again every few seconds.
+    onMount(() => {
+        const timer = setInterval(() => {
+            if (!mcp) return;
+            getMcpSettings()
+                .then((settings) => (mcp = settings))
+                .catch(() => {});
+        }, 5000);
+        return () => clearInterval(timer);
+    });
 
     onMount(() => {
         getMcpSettings()
@@ -331,12 +345,45 @@
                         <option value="read_write">Read and write</option>
                     </select>
                 </label>
+                {#if mcp.access !== 'off'}
+                    <div class="setting-row">
+                        <span class="setting-info">
+                            <span class="setting-desc">{connectedLine(mcp.clients)}</span>
+                        </span>
+                    </div>
+                {/if}
                 <div class="setting-row">
                     <span class="setting-info">
-                        <span class="setting-label">Command to give the assistant</span>
+                        <span class="setting-label">Claude Desktop</span>
+                        <span class="setting-desc">
+                            In Claude Desktop, open Settings, then Developer, then Edit Config. Add
+                            this to the file, and restart Claude Desktop.
+                        </span>
+                        <pre class="setting-desc mcp-command">{claudeDesktopConfig(mcp)}</pre>
+                    </span>
+                    <button class="action-btn" onclick={() => copy(claudeDesktopConfig(mcp!))}>
+                        Copy
+                    </button>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-info">
+                        <span class="setting-label">Claude Code</span>
+                        <span class="setting-desc">Run this once in a terminal.</span>
+                        <code class="setting-desc mcp-command">{claudeCodeCommand(mcp)}</code>
+                    </span>
+                    <button class="action-btn" onclick={() => copy(claudeCodeCommand(mcp!))}>
+                        Copy
+                    </button>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-info">
+                        <span class="setting-label">Another assistant</span>
+                        <span class="setting-desc">
+                            Give it this command to start, as a local MCP server.
+                        </span>
                         <code class="setting-desc mcp-command">{launchLine(mcp)}</code>
                     </span>
-                    <button class="action-btn" onclick={copyMcpCommand}>Copy</button>
+                    <button class="action-btn" onclick={() => copy(launchLine(mcp!))}>Copy</button>
                 </div>
             </div>
         </section>
@@ -516,6 +563,8 @@
     .mcp-command {
         font-family: var(--font-mono, monospace);
         word-break: break-all;
+        white-space: pre-wrap;
+        margin: 6px 0 0;
     }
 
     .setting-row input[type='checkbox'] {
