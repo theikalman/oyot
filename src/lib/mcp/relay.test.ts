@@ -5,20 +5,14 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 
 const { handleMcpRequest, parseDataUri } = await import('./relay');
-const { doc, HASH, image, p, t, ydocOf } = await import('./testDocs');
+const { doc, fakeDeps, HASH, image, p, t, ydocOf } = await import('./testDocs');
 type Codec = import('./images').Codec;
 
 const DOT = 'data:image/png;base64,iVBORw0KGgo=';
 
 function depsFor(ydoc: Y.Doc, codec?: Partial<Codec>) {
-    return {
-        readDocument: async <T>(_id: string, read: (d: Y.Doc) => T) => read(ydoc),
-        codec: {
-            decode: async () => ({ width: 3000, height: 2000, hasAlpha: false, animated: false }),
-            encode: async () => new Uint8Array([1, 2, 3]),
-            ...codec,
-        },
-    };
+    const { deps } = fakeDeps(new Map([['n1', ydoc]]));
+    return { ...deps, codec: { ...deps.codec, ...codec } };
 }
 
 describe('handleMcpRequest', () => {

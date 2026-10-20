@@ -8,12 +8,15 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type * as Y from 'yjs';
+import { get } from 'svelte/store';
 import { rootFromYDoc } from '$lib/editor/headlessIndex';
+import { createJournalForDate, createNote, renameDocument } from '$lib/services/documentActions';
+import { appStore } from '$lib/stores/app';
 import { documentRepository } from '$lib/sync';
 import { base64ToBytes, bytesToBase64 } from '$lib/sync/protocol';
 import { browserCodec, prepareImage, type Codec } from './images';
 import { renderNote, revisionOf } from './noteMarkdown';
+import { appendToNote, createNoteWith, editNote, toggleTodo, type WriteDeps } from './writes';
 
 interface McpRequest {
     id: number;
@@ -21,15 +24,26 @@ interface McpRequest {
     params: Record<string, unknown>;
 }
 
-/** What answering needs, so the tests can stand in for the repository and the canvas. */
-export interface RelayDeps {
-    readDocument<T>(docId: string, read: (ydoc: Y.Doc) => T): Promise<T>;
+/** What answering needs, so the tests can stand in for the repository, the actions and the canvas. */
+export interface RelayDeps extends WriteDeps {
     codec: Codec;
 }
 
 const defaultDeps: RelayDeps = {
     readDocument: (docId, read) => documentRepository.readDocument(docId, read),
+    editDocument: (docId, edit) => documentRepository.editDocument(docId, edit),
     codec: browserCodec,
+    async noteContext() {
+        const tags = await invoke<{ name: string }[]>('get_all_tags');
+        const titles = new Map(get(appStore).documents.map((d) => [d.id, d.title]));
+        return {
+            knownTags: tags.map((t) => t.name),
+            noteTitle: (id) => titles.get(id) ?? null,
+        };
+    },
+    createNote: (title) => createNote(title),
+    createJournal: (date) => createJournalForDate(date),
+    renameNote: (docId, title) => renameDocument(docId, title),
 };
 
 /** Answer Rust's requests until the returned function is called. */
@@ -108,6 +122,36 @@ export async function handleMcpRequest(
                 firstFrameOnly: image.firstFrameOnly,
             };
         }
+        case 'editNote':
+            return editNote(
+                text(params, 'docId'),
+                text(params, 'markdown'),
+                text(params, 'revision'),
+                params.acceptFormattingLoss === true,
+                deps,
+            );
+        case 'appendNote':
+            return appendToNote(text(params, 'docId'), text(params, 'markdown'), deps);
+        case 'toggleTodo':
+            return toggleTodo(
+                text(params, 'docId'),
+                Number(params.ordinal),
+                text(params, 'text'),
+                params.checked === true,
+                deps,
+            );
+        case 'createNote':
+            return createNoteWith(
+                text(params, 'title'),
+                typeof params.markdown === 'string' ? params.markdown : '',
+                deps,
+            );
+        case 'createJournal':
+            return { id: (await deps.createJournal(text(params, 'date'))).id };
+        case 'renameNote':
+            return {
+                title: (await deps.renameNote(text(params, 'docId'), text(params, 'title'))).title,
+            };
         default:
             throw new Error(`Oyot's window does not know how to ${method}.`);
     }
