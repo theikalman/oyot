@@ -11,6 +11,8 @@ mod desktop;
 mod endpoints;
 mod identity;
 mod indexer;
+#[cfg(desktop)]
+pub mod mcp;
 #[cfg(mobile)]
 mod mobile;
 mod network;
@@ -832,6 +834,10 @@ pub fn run() {
                 if desktop::launched_hidden() {
                     desktop::started_hidden();
                 }
+                // After AppState, whose database and data directory the
+                // server reads (ADR 0037).
+                app.manage(mcp::McpState::new(app.handle()));
+                mcp::start(app.handle());
             }
 
             // Last, once everything the page's commands read is managed.
@@ -926,7 +932,11 @@ pub fn run() {
         .run(|app, event| match event {
             // Say goodbye on the network before going, so peers do not keep
             // dialling a port nothing answers.
-            tauri::RunEvent::Exit => crate::commands::signaling::stop_network(app),
+            tauri::RunEvent::Exit => {
+                crate::commands::signaling::stop_network(app);
+                #[cfg(desktop)]
+                mcp::stop(app);
+            }
             // Clicking the Dock icon of an Oyot hidden to the menu bar brings
             // its window back (ADR 0030, decision 3).
             #[cfg(target_os = "macos")]
