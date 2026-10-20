@@ -611,7 +611,27 @@ describe('readMarkdown: tables and HTML', () => {
     });
 
     it('keeps inline HTML as the text it is', () => {
-        expect(read('a <u>b</u> <!-- note -->')).toEqual([para(text('a <u>b</u> <!-- note -->'))]);
+        expect(read('a <span>b</span> <!-- note -->')).toEqual([
+            para(text('a <span>b</span> <!-- note -->')),
+        ]);
+    });
+
+    it('reads <u> as underline, the one tag the exporter writes for a mark', () => {
+        const underline = { type: 'underline' };
+        expect(read('a <u>b *c*</u> d')).toEqual([
+            para(
+                text('a '),
+                text('b ', [underline]),
+                text('c', [{ type: 'italic' }, underline]),
+                text(' d'),
+            ),
+        ]);
+        expect(read('<U>loud</U>')).toEqual([para(text('loud', [underline]))]);
+    });
+
+    it('keeps a <u> nothing closes, and a stray </u>, as text', () => {
+        expect(read('a <u>b')).toEqual([para(text('a <u>b'))]);
+        expect(read('a</u> b')).toEqual([para(text('a</u> b'))]);
     });
 
     it('reads a <br> on a line of its own as an empty line', () => {

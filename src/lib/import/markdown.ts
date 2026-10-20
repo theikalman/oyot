@@ -337,8 +337,12 @@ export function oneLine(text: string): string {
     return text.replace(/\s+/g, ' ').trim();
 }
 
-/** `<br>`, `<br/>` and `<br />`: the one piece of HTML with a place in a note. */
+/** `<br>`, `<br/>` and `<br />`: HTML with a place in a note, as a line break. */
 const BREAK_TAG = /^<br\s*\/?>$/i;
+
+/** `<u>` and `</u>`: HTML with a place in a note, as the underline mark. */
+const UNDERLINE_OPEN = /^<u>$/i;
+const UNDERLINE_CLOSE = /^<\/u>$/i;
 
 /** A block token and what it holds, from markdown-it's flat open/close list. */
 interface Branch {
@@ -579,6 +583,13 @@ class DocumentReader {
                 case 'html_inline':
                     if (BREAK_TAG.test(token.content)) {
                         out.push(schema.nodes.hardBreak.create());
+                    } else if (UNDERLINE_OPEN.test(token.content) && closesUnderline(tokens, i)) {
+                        active.push(schema.marks.underline.create());
+                    } else if (
+                        UNDERLINE_CLOSE.test(token.content) &&
+                        active.some((mark) => mark.type.name === 'underline')
+                    ) {
+                        dropLast(active, 'underline');
                     } else {
                         // A tag written across lines, on one. Split rather
                         // than matched, which runs in linear time however much
@@ -761,6 +772,21 @@ class DocumentReader {
             );
         return built.length > 0 ? [nodes.table.create(null, built)] : [];
     }
+}
+
+/**
+ * Whether a `<u>` at `open` is closed later in the same line of tokens. One
+ * that is not is kept as the text it is, rather than underlining everything
+ * after it.
+ */
+function closesUnderline(tokens: Token[], open: number): boolean {
+    let depth = 0;
+    for (let i = open + 1; i < tokens.length; i++) {
+        if (tokens[i].type !== 'html_inline') continue;
+        if (UNDERLINE_OPEN.test(tokens[i].content)) depth++;
+        else if (UNDERLINE_CLOSE.test(tokens[i].content) && depth-- === 0) return true;
+    }
+    return false;
 }
 
 /** Where a link's tokens end, so a link that became a chip can skip its words. */

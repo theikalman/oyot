@@ -97,7 +97,9 @@ chip after them. Every other link stays a link.
 
 **7. What a note cannot hold stays as the text it was written as.** HTML is
 kept as text, except `<br>`, which is a line break, or an empty line when it
-stands on a line of its own. An image is kept as an image when it is an
+stands on a line of its own, and `<u>`, which is underline when a `</u>`
+later in the same line closes it. Markdown has no underline, so the exporter
+writes it that way. An image is kept as an image when it is an
 inline raster data URI, which the editor shows, or when it names an
 attachment by its 64-character content hash, as `oyot-attachment://` and the
 exporter's `attachments/<hash>.<ext>` files do; it then shows as soon as this
