@@ -1,12 +1,15 @@
 //! The tools an MCP client can call, and what each one reads (ADR 0037,
 //! decision 5).
 //!
-//! Every tool here is answered from the tables the index keeps, so none of
-//! them waits on the page. Each returns its answer twice: as text, which is
-//! what an assistant reads, and as `structuredContent`, for a client that
-//! wants the fields.
+//! The tools defined here are answered from the tables the index keeps, so
+//! none of them waits on the page; the ones that read a note or an image are
+//! in `notes`. Each returns its answer twice: as text, which is what an
+//! assistant reads, and as `structuredContent`, for a client that wants the
+//! fields.
 
 use super::access::{Access, Current};
+use super::notes;
+use super::page::Page;
 use crate::commands::documents::{
     query_all_documents, query_all_tags, query_all_todos, query_backlinks,
     query_documents_with_tag, run_search, DocumentSummary,
@@ -15,11 +18,31 @@ use parking_lot::Mutex;
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Tool, ToolAnnotations};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct Context {
     pub db: Arc<Mutex<Connection>>,
     pub access: Arc<Current>,
+    /// Where attachments are stored, which their rows name paths under.
+    pub data_dir: PathBuf,
+    pub page: Arc<dyn Page>,
+    /// Ask connected devices for an image this one does not hold yet.
+    pub fetch_attachment: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+impl Context {
+    /// Run `f` on the database, off the async runtime's threads.
+    pub async fn sql<T, F>(self: &Arc<Self>, f: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> Result<T, String> + Send + 'static,
+    {
+        let ctx = self.clone();
+        tauri::async_runtime::spawn_blocking(move || f(&ctx.db.lock()))
+            .await
+            .map_err(|e| format!("Oyot could not answer: {e}"))?
+    }
 }
 
 const SEARCH_DEFAULT: u64 = 10;
@@ -38,6 +61,16 @@ pub fn list(access: Access) -> Vec<Tool> {
 }
 
 fn read_tools() -> Vec<Tool> {
+    let mut tools = index_tools();
+    // Reading a note goes after finding one, and images last.
+    let mut page = notes::tools();
+    let read_attachment = page.pop();
+    tools.splice(2..2, page);
+    tools.extend(read_attachment);
+    tools
+}
+
+fn index_tools() -> Vec<Tool> {
     let kind = json!({
         "type": "string",
         "enum": ["note", "journal"],
@@ -112,7 +145,7 @@ fn read_tools() -> Vec<Tool> {
     ]
 }
 
-fn tool(name: &'static str, description: &'static str, schema: Value) -> Tool {
+pub(super) fn tool(name: &'static str, description: &'static str, schema: Value) -> Tool {
     let Value::Object(schema) = schema else {
         unreachable!("every schema here is an object")
     };
@@ -130,20 +163,25 @@ pub async fn call(ctx: Arc<Context>, name: &str, args: JsonObject) -> CallToolRe
         return failed(&format!("There is no tool called {name:?}."));
     }
 
-    let name = name.to_string();
-    let answer = tauri::async_runtime::spawn_blocking(move || {
-        let db = ctx.db.lock();
-        answer(&db, &name, &Args(args))
-    })
-    .await;
+    let args = Args(args);
+    let answer = if notes::handles(name) {
+        notes::answer(&ctx, name, &args).await
+    } else {
+        let name = name.to_string();
+        ctx.sql(move |db| answer(db, &name, &args)).await
+    };
     match answer {
-        Ok(Ok(Answer { text, data })) => {
-            let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
+        Ok(Answer { text, data, images }) => {
+            let mut content = vec![ContentBlock::text(text)];
+            for image in images {
+                content.push(ContentBlock::text(image.label));
+                content.push(ContentBlock::image(image.base64, image.mime));
+            }
+            let mut result = CallToolResult::success(content);
             result.structured_content = Some(data);
             result
         }
-        Ok(Err(message)) => failed(&message),
-        Err(e) => failed(&format!("Oyot could not answer: {e}")),
+        Err(message) => failed(&message),
     }
 }
 
@@ -151,10 +189,28 @@ fn failed(message: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.to_string())])
 }
 
-/// A tool's answer: what the assistant reads, and the same as fields.
-struct Answer {
-    text: String,
-    data: Value,
+/// A tool's answer: what the assistant reads, the same as fields, and any
+/// images, each after a line saying which it is.
+pub(super) struct Answer {
+    pub text: String,
+    pub data: Value,
+    pub images: Vec<ImageBlock>,
+}
+
+impl Answer {
+    pub fn new(text: String, data: Value) -> Self {
+        Self {
+            text,
+            data,
+            images: Vec::new(),
+        }
+    }
+}
+
+pub(super) struct ImageBlock {
+    pub label: String,
+    pub mime: String,
+    pub base64: String,
 }
 
 fn answer(db: &Connection, name: &str, args: &Args) -> Result<Answer, String> {
@@ -176,6 +232,7 @@ fn search_notes(db: &Connection, args: &Args) -> Result<Answer, String> {
     let hits = run_search(db, query, kind, limit as usize)?;
     if hits.is_empty() {
         return Ok(Answer {
+            images: Vec::new(),
             text: format!("Nothing matches {query:?}."),
             data: json!({ "results": [] }),
         });
@@ -199,6 +256,7 @@ fn search_notes(db: &Connection, args: &Args) -> Result<Answer, String> {
         }));
     }
     Ok(Answer {
+        images: Vec::new(),
         text,
         data: json!({ "results": results }),
     })
@@ -232,6 +290,7 @@ fn list_notes(db: &Connection, args: &Args) -> Result<Answer, String> {
         ));
     }
     Ok(Answer {
+        images: Vec::new(),
         text,
         data: json!({
             "notes": page.iter().map(|d| summary_json(d)).collect::<Vec<_>>(),
@@ -295,6 +354,7 @@ fn list_todos(db: &Connection, args: &Args) -> Result<Answer, String> {
         })
         .collect();
     Ok(Answer {
+        images: Vec::new(),
         text,
         data: json!({ "todos": todos, "total": total }),
     })
@@ -317,6 +377,7 @@ fn list_tags(db: &Connection) -> Result<Answer, String> {
             .collect()
     };
     Ok(Answer {
+        images: Vec::new(),
         text,
         data: json!({
             "tags": tags.iter().map(|t| json!({ "name": t.name, "notes": t.document_count })).collect::<Vec<_>>()
@@ -357,6 +418,7 @@ fn summaries(notes: Vec<DocumentSummary>, none: &str) -> Answer {
         notes.iter().map(summary_line).collect()
     };
     Answer {
+        images: Vec::new(),
         text,
         data: json!({ "notes": notes.iter().map(summary_json).collect::<Vec<_>>() }),
     }
@@ -414,7 +476,7 @@ fn normalize_tag(raw: &str) -> String {
         .to_string()
 }
 
-fn day(ms: i64) -> String {
+pub(super) fn day(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .map(|t| {
             t.with_timezone(&chrono::Local)
@@ -424,7 +486,7 @@ fn day(ms: i64) -> String {
         .unwrap_or_default()
 }
 
-fn iso(ms: i64) -> Option<String> {
+pub(super) fn iso(ms: i64) -> Option<String> {
     chrono::DateTime::from_timestamp_millis(ms).map(|t| t.to_rfc3339())
 }
 
@@ -437,15 +499,15 @@ fn plural(n: i64, word: &str) -> String {
 }
 
 /// A call's arguments, read with the errors an assistant can act on.
-struct Args(JsonObject);
+pub(super) struct Args(pub JsonObject);
 
 impl Args {
-    fn required_str(&self, key: &str) -> Result<&str, String> {
+    pub(super) fn required_str(&self, key: &str) -> Result<&str, String> {
         self.optional_str(key)?
             .ok_or_else(|| format!("{key} is required."))
     }
 
-    fn optional_str(&self, key: &str) -> Result<Option<&str>, String> {
+    pub(super) fn optional_str(&self, key: &str) -> Result<Option<&str>, String> {
         match self.0.get(key) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::String(s)) => Ok(Some(s)),
@@ -453,7 +515,7 @@ impl Args {
         }
     }
 
-    fn optional_bool(&self, key: &str) -> Result<Option<bool>, String> {
+    pub(super) fn optional_bool(&self, key: &str) -> Result<Option<bool>, String> {
         match self.0.get(key) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::Bool(b)) => Ok(Some(*b)),
@@ -500,7 +562,7 @@ mod tests {
     fn off_lists_nothing_and_read_only_lists_only_tools_that_read() {
         assert!(list(Access::Off).is_empty());
         let tools = list(Access::ReadOnly);
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 9);
         for tool in tools {
             let hint = tool.annotations.as_ref().and_then(|a| a.read_only_hint);
             assert_eq!(hint, Some(true), "{}", tool.name);

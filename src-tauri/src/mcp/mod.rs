@@ -13,7 +13,9 @@
 pub mod access;
 pub mod bridge;
 pub mod endpoint;
+mod imagesize;
 mod listener;
+mod notes;
 pub mod page;
 mod server;
 #[cfg(test)]
@@ -21,6 +23,7 @@ mod tests;
 mod tools;
 
 use crate::db::AppState;
+use crate::sync::manager::SyncManager;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -66,9 +69,17 @@ impl McpState {
 pub fn start(app: &AppHandle) {
     let state = app.state::<AppState>();
     let mcp = app.state::<McpState>();
+    let sync_app = app.clone();
     let ctx = Arc::new(tools::Context {
         db: state.db.clone(),
         access: mcp.access.clone(),
+        data_dir: state.data_dir.clone(),
+        page: mcp.page.clone(),
+        fetch_attachment: Arc::new(move |hash| {
+            if let Some(sync) = sync_app.try_state::<SyncManager>() {
+                sync.request_attachment(hash);
+            }
+        }),
     });
     let endpoint = endpoint::Endpoint::in_dir(&state.data_dir);
     if let Some(expected) = endpoint::Endpoint::for_this_user() {
