@@ -25,6 +25,7 @@
     import { locateTaskItem } from './taskItems';
     import { JumpTarget, markJumpTarget } from './jumpTarget';
     import { TickWhileReading } from './tickWhileReading';
+    import { MermaidDiagrams } from './mermaid/MermaidDiagrams';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -148,6 +149,7 @@
                 ReadOnlyState,
                 JumpTarget,
                 TickWhileReading,
+                MermaidDiagrams,
                 // The keys the user gave shortcuts, ahead of the editor's own.
                 CustomShortcuts.configure({
                     bindings: () => customShortcuts.bindings,
@@ -496,6 +498,32 @@
         padding: 16px;
         border-radius: 6px;
         overflow-x: auto;
+    }
+    /* A Mermaid diagram while reading: its code is hidden, and the diagram
+       drawn just before it stands in its place (ADR 0038). */
+    .editor-content :global(pre.mermaid-source) {
+        display: none;
+    }
+    .editor-content :global(.mermaid-diagram) {
+        margin: 1em 0;
+        overflow-x: auto;
+        text-align: center;
+    }
+    .editor-content :global(.mermaid-diagram svg) {
+        max-width: 100%;
+        height: auto;
+    }
+    .editor-content :global(.mermaid-diagram.pending) {
+        background: var(--code-bg);
+        border-radius: 6px;
+    }
+    .editor-content :global(.mermaid-diagram.failed) {
+        text-align: left;
+    }
+    .editor-content :global(.mermaid-error) {
+        margin: 0 0 0.5em;
+        color: var(--text-secondary);
+        font-size: 0.9em;
     }
     .editor-content :global(blockquote) {
         border-left: 4px solid var(--border-light);
