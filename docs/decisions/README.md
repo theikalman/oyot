@@ -48,6 +48,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0035](0035-keyboard-shortcuts-the-user-can-change.md)                      | Keyboard shortcuts the user can change, kept per device                              | Proposed                                                                         |
 | [0036](0036-colour-schemes-the-user-can-choose.md)                          | Colour schemes the user can choose, Catppuccin Macchiato by default                  | Proposed                                                                         |
 | [0037](0037-let-mcp-clients-read-and-edit-notes-through-the-running-app.md) | Let MCP clients read and edit notes through the running app                          | Proposed                                                                         |
+| [0038](0038-draw-mermaid-diagrams-while-reading.md)                         | Draw Mermaid diagrams while reading                                                  | Proposed                                                                         |
 
 ## Format
 

@@ -25,6 +25,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
   and with nothing a stray tap can change, though tasks can still be ticked
   off. Press Edit, or Cmd/Ctrl+Shift+E, to write, and Done to go back. A note
   you have just created opens ready to write in.
+- **Diagrams.** A code block in ` ```mermaid ` shows as its
+  [Mermaid](https://mermaid.js.org) diagram while you read, in the colors of
+  your scheme, and as its code while you edit.
 - **Document links and backlinks.** Link one note to another with `/document`.
   Each note shows what links back to it.
 - **Search.** The Search page, first under Index in the sidebar, finds your

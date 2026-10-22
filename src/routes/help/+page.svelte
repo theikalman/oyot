@@ -125,6 +125,11 @@
                             Done{/if} goes back to reading. Tasks can still be ticked off while you read.
                     </li>
                     <li>
+                        <strong>Diagrams draw themselves.</strong> A code block whose language is
+                        <code>mermaid</code> (type <code>```mermaid</code> and a space to start one) shows
+                        as its diagram while you read. Press Edit to change its code.
+                    </li>
+                    <li>
                         <strong>There is nothing to save.</strong> What you write is saved as you type.
                     </li>
                     <li>
