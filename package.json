@@ -41,8 +41,6 @@
     "markdown-it": "^15.0.2",
     "mermaid": "12.1.0",
     "qrcode": "^1.5.4",
-    "vite-plugin-top-level-await": "^1.6.0",
-    "vite-plugin-wasm": "^3.6.0",
     "yjs": "^13.6.0"
   },
   "devDependencies": {

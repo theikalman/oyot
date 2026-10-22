@@ -110,9 +110,7 @@ export function themeVariablesFromCss(): Record<string, string | boolean> {
     const surface = css('--bg-secondary');
     const text = css('--text-primary');
     const border = css('--border-light');
-    return {
-        darkMode: root.dataset.theme === 'dark',
-        fontFamily: getComputedStyle(document.body).fontFamily,
+    const colours: Record<string, string> = {
         background,
         mainBkg: surface,
         primaryColor: surface,
@@ -133,6 +131,14 @@ export function themeVariablesFromCss(): Record<string, string | boolean> {
         pie1: css('--accent-color'),
         pieStrokeColor: border,
         pieOuterStrokeColor: border,
+    };
+    // A colour the page does not define is left to the base theme. Mermaid
+    // rejects an empty one, and would draw no diagram at all.
+    const defined = Object.entries(colours).filter(([, value]) => value !== '');
+    return {
+        ...Object.fromEntries(defined),
+        darkMode: root.dataset.theme === 'dark',
+        fontFamily: getComputedStyle(document.body).fontFamily,
     };
 }
 
