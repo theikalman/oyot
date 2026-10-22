@@ -13,11 +13,11 @@ language, so the code round-trips. The request was to see the diagram itself
 while reading.
 
 Reading is the same editor made read-only (ADR 0028), not a second renderer,
-so whatever draws the diagram has to live in the editor. That leaves seven
+so whatever draws the diagram has to live in the editor. That leaves eight
 things to decide: how the diagram replaces the code, which languages count,
 when Mermaid is loaded, how far a definition is trusted, what colours it is
-drawn in, when it is drawn again, and what a definition Mermaid cannot read
-shows.
+drawn in, when it is drawn again, what a definition Mermaid cannot read
+shows, and how a writer can tell a block will be drawn at all.
 
 ## Decision
 
@@ -50,6 +50,12 @@ read is drawn once they stop, after 150 ms.
 
 **7. A definition Mermaid cannot read shows as its code,** under a line
 saying why, so a typo never makes a block disappear.
+
+**8. Every code block shows its language,** in its top right corner, while
+reading and while editing. The language is set by what is typed after the
+backticks and was otherwise shown nowhere, so nothing said a block would be
+drawn. A second live-editor-only decoration puts it on the `<pre>` as
+`data-language`, and the stylesheet shows it, so the schema is untouched.
 
 ## Alternatives considered
 
