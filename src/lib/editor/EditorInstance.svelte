@@ -26,6 +26,7 @@
     import { JumpTarget, markJumpTarget } from './jumpTarget';
     import { TickWhileReading } from './tickWhileReading';
     import { MermaidDiagrams } from './mermaid/MermaidDiagrams';
+    import { CodeBlockLanguage } from './codeBlockLanguage';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -150,6 +151,7 @@
                 JumpTarget,
                 TickWhileReading,
                 MermaidDiagrams,
+                CodeBlockLanguage,
                 // The keys the user gave shortcuts, ahead of the editor's own.
                 CustomShortcuts.configure({
                     bindings: () => customShortcuts.bindings,
@@ -498,6 +500,22 @@
         padding: 16px;
         border-radius: 6px;
         overflow-x: auto;
+    }
+    /* A code block's language, in its corner, so what it holds is on screen. */
+    .editor-content :global(pre[data-language]) {
+        position: relative;
+    }
+    .editor-content :global(pre[data-language]::before) {
+        content: attr(data-language);
+        position: absolute;
+        top: 3px;
+        right: 10px;
+        font-family: inherit;
+        font-size: 11px;
+        line-height: 1;
+        color: var(--text-secondary);
+        pointer-events: none;
+        user-select: none;
     }
     /* A Mermaid diagram while reading: its code is hidden, and the diagram
        drawn just before it stands in its place (ADR 0038). */
