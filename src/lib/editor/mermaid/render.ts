@@ -125,6 +125,14 @@ export function themeVariablesFromCss(): Record<string, string | boolean> {
         nodeBorder: border,
         noteBkgColor: css('--bg-accent'),
         noteTextColor: text,
+        // Behind the words on a line, which the base theme otherwise draws
+        // in a shade of its own that clashes with most schemes.
+        edgeLabelBackground: background,
+        // The first slice in the accent, so a pie reads at a glance. The
+        // rest the base theme works out from the colours above.
+        pie1: css('--accent-color'),
+        pieStrokeColor: border,
+        pieOuterStrokeColor: border,
     };
 }
 
@@ -141,5 +149,6 @@ function remember(key: string, drawing: Drawing): void {
 // row of dashes. The first line says what is wrong, which is enough here.
 function firstLine(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
-    return message.split('\n')[0].trim() || 'Unknown error';
+    const first = message.split('\n')[0].trim().replace(/:$/, '');
+    return first || 'Unknown error';
 }
