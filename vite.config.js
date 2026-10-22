@@ -2,8 +2,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
-import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -15,7 +13,12 @@ const pkg = JSON.parse(
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-    plugins: [wasm(), topLevelAwait(), sveltekit()],
+    // No WebAssembly or top-level-await plugins. They came in for Loro, long
+    // gone, and the top-level-await one wraps every chunk in an async
+    // function, which turns function declarations into assignments: code
+    // that called one before its line, as Mermaid's d3 does, got undefined
+    // in the release build and worked in dev, which does not bundle.
+    plugins: [sveltekit()],
 
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
