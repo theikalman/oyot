@@ -36,6 +36,22 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.32-alpha',
+        date: '2026-10-22',
+        summary:
+            'Mermaid diagrams in your notes are drawn while you read, and every code block shows its language.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'A code block in Mermaid is drawn as its diagram while you read, in the colors of your scheme: flowcharts, sequence diagrams, pie charts and the rest. Type ```mermaid and press Enter to start one, and press Edit to change its code. A diagram that has a mistake in it shows its code, with what is wrong.',
+            },
+            {
+                kind: 'added',
+                text: 'A code block shows its language in its top right corner, so you can see which ones will be drawn as diagrams.',
+            },
+        ],
+    },
+    {
         version: '0.0.31-alpha',
         date: '2026-10-21',
         summary:

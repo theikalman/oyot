@@ -8,7 +8,7 @@ Every platform the app runs on: desktop and phones.
 
 ## Status (2026-10-22)
 
-Built on `feat/mermaid-diagrams`, recorded in ADR 0038. Differences from the
+Merged in #77 and released in 0.0.32-alpha, recorded in ADR 0038. Differences from the
 plan below:
 
 - `mermaid@12.1.0`, not 12.2.0, which was less than two weeks old.
@@ -22,10 +22,10 @@ violation. Mermaid is in its own chunk, loaded by a dynamic import.
 
 Still to do before ADR 0038 is accepted:
 
-- The same check in a Tauri build, on one desktop OS and on Android.
+- The same check on Android. On Linux, `make dev` draws a real note's
+  diagrams on opening and again after Edit then Done.
 - The APK size change.
 - Jumping to a todo below a diagram, tried by hand.
-- The changelog entry, which goes in with the version bump.
 
 ## What already works
 

@@ -2925,7 +2925,7 @@ dependencies = [
 
 [[package]]
 name = "oyot"
-version = "0.0.31-alpha"
+version = "0.0.32-alpha"
 dependencies = [
  "apple-native-keyring-store",
  "async-trait",
