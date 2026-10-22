@@ -141,6 +141,14 @@ const exact: Record<string, unknown[]> = {
         { type: 'codeBlock', attrs: { language: 'rust' }, content: [t('fn main() {}')] },
         { type: 'horizontalRule' },
     ],
+    // Drawn while reading, so its language is what makes it a diagram.
+    'a Mermaid diagram': [
+        {
+            type: 'codeBlock',
+            attrs: { language: 'mermaid' },
+            content: [t('flowchart LR\n  a --> b')],
+        },
+    ],
     'an image with no description': [image({})],
     'an image with a description': [image({ alt: 'A cat' })],
     'tags, one with a space in it': [p(t('pack '), tag('travel'), t(' and '), tag('house move'))],
