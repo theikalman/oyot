@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { swipeDirection } from './swipe';
+import { pinchDirection } from './pinch';
 
 describe('swipeDirection', () => {
     it('reads a quick sideways stroke as a swipe', () => {
@@ -17,5 +18,17 @@ describe('swipeDirection', () => {
 
     it('leaves a slow drag alone', () => {
         expect(swipeDirection(300, 400, 100, 400, 1200)).toBeNull();
+    });
+});
+
+describe('pinchDirection', () => {
+    it('reads fingers spreading as out and closing as in', () => {
+        expect(pinchDirection(100, 140)).toBe('out');
+        expect(pinchDirection(100, 70)).toBe('in');
+    });
+
+    it('waits until the fingers have moved enough', () => {
+        expect(pinchDirection(100, 110)).toBeNull();
+        expect(pinchDirection(0, 50)).toBeNull();
     });
 });
