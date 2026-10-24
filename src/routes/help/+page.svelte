@@ -120,9 +120,13 @@
                     </li>
                     <li>
                         <strong>Everything opens for reading.</strong> A stray tap cannot change a
-                        note you are only reading. To write, press Edit, the pencil at the top right{#if editKeys.length > 0},
-                            or <Keys keys={editKeys} {command} />. Done, or the same keys,{:else}.
-                            Done{/if} goes back to reading. Tasks can still be ticked off while you read.
+                        note you are only reading. To write, press Edit on the Read and Edit switch
+                        at the top right{#if editKeys.length > 0}, or <Keys
+                                keys={editKeys}
+                                {command}
+                            />. Read, or the same keys,{:else}. Read{/if} goes back to reading. Tasks
+                        can still be ticked off while you read. On a phone, swipe a journal sideways for
+                        the day before or after.
                     </li>
                     <li>
                         <strong>Diagrams draw themselves.</strong> A code block whose language is
@@ -345,12 +349,17 @@
                 <h2 id="finding-title">Finding things</h2>
                 <ul class="points">
                     <li>
-                        <strong>Search.</strong> The Search page, first under Index in the sidebar, finds
-                        the notes and journals with every word you type, in the title or anywhere in the
-                        text, best matches first. Choose Notes or Journals to look in one kind alone,
-                        Todos to find a task by its words, done or not, or Tags to find what carries a
-                        tag. Click what it finds to open it, or use the arrow keys and Enter. Back from
-                        there, the search is as you left it.
+                        <strong>Quick switcher.</strong> The box at the top of the sidebar, or its keys
+                        from anywhere, jumps to a note, a journal, a tag or a page as you type its name,
+                        and can make a note of the words or search everything for them.
+                    </li>
+                    <li>
+                        <strong>Search.</strong> The Search page, the last tab on a phone, finds the notes
+                        and journals with every word you type, in the title or anywhere in the text, best
+                        matches first. Choose Notes or Journals to look in one kind alone, Todos to find
+                        a task by its words, done or not, or Tags to find what carries a tag. Click what
+                        it finds to open it, or use the arrow keys and Enter. Back from there, the search
+                        is as you left it.
                     </li>
                     <li>
                         <strong>Pinned notes.</strong> The sidebar lists only the notes you pin. Pin one
@@ -358,9 +367,11 @@
                         + beside Pinned notes is pinned from the start.
                     </li>
                     <li>
-                        <strong>The Index.</strong> Below Search, each page under Index in the sidebar
-                        lists one kind of thing, with how many beside it. Beside Todos, that is the tasks
-                        still to do.
+                        <strong>The places.</strong> At the top of the sidebar, Today opens today's journal,
+                        and Journals, Notes, Todos and Tags each list one kind of thing, with how many
+                        beside it. Beside Todos, that is the tasks still to do. On a phone, Today, Notes,
+                        Todos and Search are tabs at the foot of the screen, and the rest of the sidebar
+                        opens with the menu button or a swipe in from the left edge.
                     </li>
                     <li>
                         <strong>Notes</strong> lists every note, newest first. Its filter finds a note
@@ -378,7 +389,7 @@
                         every tag.
                     </li>
                     <li>
-                        <strong>From the keyboard.</strong> Each page under Index, and Settings, has
+                        <strong>From the keyboard.</strong> Each of those pages, and Settings, has
                         keys that open it from anywhere, listed under
                         <a href="#shortcuts">Keyboard shortcuts</a>. On the Search page, its keys
                         put the cursor back in the box.
