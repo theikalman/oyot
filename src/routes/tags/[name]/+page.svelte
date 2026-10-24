@@ -139,7 +139,7 @@
             </p>
             <div class="actions">
                 <button class="link-btn" onclick={() => openTags()}>All tags</button>
-                <button class="action-btn" onclick={startRename}>Rename</button>
+                <button class="btn" onclick={startRename}>Rename</button>
             </div>
         </div>
 
@@ -224,7 +224,7 @@
     .tag-page {
         flex: 1;
         overflow-y: auto;
-        padding: 16px 24px 32px;
+        padding: 24px 40px 48px;
     }
 
     .tag-bar {
@@ -248,16 +248,11 @@
         gap: 8px;
     }
 
-    .link-btn,
-    .action-btn {
-        font-family: inherit;
+    .link-btn {
         font-size: 13px;
         cursor: pointer;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         padding: 5px 10px;
-    }
-
-    .link-btn {
         background: transparent;
         border: none;
         color: var(--text-secondary);
@@ -265,16 +260,6 @@
 
     .link-btn:hover {
         color: var(--text-primary);
-        background: var(--bg-hover);
-    }
-
-    .action-btn {
-        background: transparent;
-        border: 1px solid var(--border-color);
-        color: var(--text-primary);
-    }
-
-    .action-btn:hover {
         background: var(--bg-hover);
     }
 
@@ -293,7 +278,7 @@
         background: var(--code-bg);
         color: var(--text-primary);
         padding: 1px 5px;
-        border-radius: 3px;
+        border-radius: var(--radius-sm);
     }
 
     .footnote {
@@ -334,7 +319,7 @@
         text-align: left;
         background: transparent;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         cursor: pointer;
         color: var(--text-primary);
         font-size: 14px;
@@ -361,7 +346,7 @@
         width: 100%;
         padding: 8px 12px;
         border: 1px solid var(--border-light);
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         font-size: 14px;
         box-sizing: border-box;
         background: var(--bg-secondary);
@@ -394,7 +379,7 @@
         background: var(--btn-primary-bg);
         color: var(--on-accent);
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         cursor: pointer;
         font-size: 14px;
     }

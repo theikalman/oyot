@@ -7,6 +7,7 @@
     import { groupByMonth, journalEntries, type JournalEntry } from '$lib/journals/journalIndex';
     import { NO_TAGS, type TagsByDocument } from '$lib/tags/documentTags';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
+    import TagPill from '$lib/components/TagPill.svelte';
 
     // What each day is tagged with. The only thing on this page that SQL has
     // to answer: a tag lives in the document's content, so the store knows
@@ -91,9 +92,9 @@
 </script>
 
 <WorkspaceShell title="Journals">
-    <div class="journals">
-        <div class="journals-bar">
-            <p class="summary">
+    <div class="journals page-body">
+        <div class="page-bar">
+            <p class="page-summary">
                 {entries.length}
                 {entries.length === 1
                     ? 'day with a journal'
@@ -118,9 +119,10 @@
         {:else}
             {#each shown as month (month.key)}
                 <section class="month">
-                    <h2 class="month-title">{month.label}</h2>
+                    <h2 class="month-heading">{month.label}</h2>
                     <ul class="day-list">
                         {#each month.entries as entry (entry.id)}
+                            {@const said = status(entry)}
                             <li class="day-row" class:empty={!entry.hasContent}>
                                 <button
                                     class="day"
@@ -138,17 +140,21 @@
                                          of this page as well as a label on it. -->
                                     <span class="day-tags">
                                         {#each entry.tags as tag (tag)}
-                                            <button
-                                                class="tag"
-                                                onclick={() => openTag(tag)}
-                                                title="Everything tagged #{tag}"
-                                            >
-                                                #{tag}
-                                            </button>
+                                            <TagPill name={tag} onclick={() => openTag(tag)} />
                                         {/each}
                                     </span>
                                 {/if}
-                                <span class="day-status">{status(entry)}</span>
+                                <span class="day-status">
+                                    {#if /open|done/.test(said)}
+                                        <span
+                                            class="badge"
+                                            class:todo={said.includes('open')}
+                                            class:ok={said.includes('done')}>{said}</span
+                                        >
+                                    {:else}
+                                        {said}
+                                    {/if}
+                                </span>
                             </li>
                         {/each}
                     </ul>
@@ -159,34 +165,17 @@
 </WorkspaceShell>
 
 <style>
-    .journals {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px 24px 32px;
-    }
-
-    .journals-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 8px;
-    }
-
-    .summary {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-secondary);
-    }
-
     .filter {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
         font-size: 13px;
         color: var(--text-secondary);
         cursor: pointer;
+    }
+
+    .filter input {
+        accent-color: var(--btn-primary-bg);
     }
 
     .note {
@@ -196,21 +185,12 @@
         line-height: 1.6;
     }
 
-    .month {
-        margin-top: 20px;
-    }
-
-    .month-title {
-        margin: 0 0 6px 0;
-        font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--text-muted);
+    .month:first-of-type :global(.month-heading) {
+        margin-top: 8px;
     }
 
     .day-list {
-        margin: 0;
+        margin: 0 -12px;
         padding: 0;
         list-style: none;
     }
@@ -219,10 +199,11 @@
        their own, and one button cannot hold another. */
     .day-row {
         display: flex;
-        align-items: baseline;
-        gap: 10px;
-        padding: 2px 8px;
-        border-radius: 4px;
+        align-items: center;
+        gap: 12px;
+        min-height: 48px;
+        padding: 0 12px;
+        border-radius: 12px;
     }
 
     .day-row:hover {
@@ -232,27 +213,27 @@
     .day {
         display: flex;
         align-items: baseline;
-        gap: 12px;
+        gap: 10px;
         flex: 1;
         min-width: 0;
-        padding: 7px 0;
+        padding: 12px 0;
         text-align: left;
         background: transparent;
         border: none;
         cursor: pointer;
         color: var(--text-primary);
         font-size: 14px;
-        font-family: inherit;
     }
 
     .day-row.empty .day-name {
         color: var(--text-muted);
-        font-weight: 400;
+        font-weight: 450;
     }
 
     .day-name {
-        font-weight: 500;
+        font-weight: 600;
         min-width: 110px;
+        font-variant-numeric: tabular-nums;
     }
 
     /* After the empty rule, and as specific, so today stays lit even before
@@ -264,7 +245,7 @@
     .day-weekday {
         flex: 1;
         font-size: 13px;
-        color: var(--text-secondary);
+        color: var(--text-muted);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -278,28 +259,11 @@
         max-width: 50%;
     }
 
-    .tag {
-        padding: 1px 7px;
-        border: none;
-        border-radius: 10px;
-        background: var(--accent-bg);
-        color: var(--accent-color);
-        font-family: inherit;
-        font-size: 11px;
-        line-height: 1.6;
-        cursor: pointer;
-        white-space: nowrap;
-    }
-
-    .tag:hover {
-        text-decoration: underline;
-    }
-
     .day-status {
         flex-shrink: 0;
-        min-width: 110px;
+        min-width: 120px;
         text-align: right;
-        font-size: 12px;
+        font-size: 12.5px;
         color: var(--text-muted);
     }
 
@@ -310,7 +274,7 @@
     @media (max-width: 640px) {
         .day-row {
             flex-wrap: wrap;
-            padding-bottom: 6px;
+            padding-bottom: 8px;
         }
 
         .day-tags {

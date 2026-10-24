@@ -436,7 +436,17 @@
     .search-page {
         flex: 1;
         overflow-y: auto;
-        padding: 0 24px 32px;
+        padding: 0 40px 48px;
+    }
+
+    .search-page > :global(*) {
+        max-width: 760px;
+    }
+
+    @media (max-width: 640px) {
+        .search-page {
+            padding: 0 16px 120px;
+        }
     }
 
     /* Held at the top while the rows scroll under it, so what was typed is
@@ -449,7 +459,7 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
-        padding: 16px 0 4px;
+        padding: 20px 0 6px;
         background: var(--bg-primary);
     }
 
@@ -460,7 +470,7 @@
     .box-icon {
         position: absolute;
         top: 50%;
-        left: 11px;
+        left: 14px;
         transform: translateY(-50%);
         color: var(--text-muted);
         pointer-events: none;
@@ -469,13 +479,15 @@
     .search-box {
         width: 100%;
         box-sizing: border-box;
-        padding: 8px 12px 8px 34px;
-        font-size: 15px;
+        height: 46px;
+        padding: 0 14px 0 42px;
+        font-size: 16px;
         font-family: inherit;
         color: var(--text-primary);
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
+        background: var(--code-bg);
+        border: none;
+        border-radius: 12px;
+        box-shadow: inset 0 0 0 1px var(--border-color);
     }
 
     .search-box::placeholder {
@@ -484,24 +496,32 @@
 
     .search-box:focus {
         outline: none;
-        border-color: var(--accent-color);
+        background: var(--bg-raised);
+        box-shadow:
+            inset 0 0 0 1px var(--accent-color),
+            0 0 0 4px var(--accent-bg);
     }
 
+    /* One segmented switch, as Read and Edit are. */
     .scopes {
-        display: flex;
+        display: inline-flex;
+        align-self: flex-start;
         flex-wrap: wrap;
-        gap: 8px;
+        gap: 2px;
+        padding: 2px;
+        border-radius: 10px;
+        background: var(--code-bg);
+        box-shadow: inset 0 0 0 1px var(--border-color);
     }
 
-    /* The help page's contents pills, lit like the sidebar's open page. */
     .scope {
         position: relative;
-        padding: 4px 12px;
-        border: 1px solid var(--border-light);
-        border-radius: 14px;
+        padding: 0 12px;
+        border-radius: var(--radius-md);
         color: var(--text-secondary);
         font-size: 13px;
-        line-height: 1.4;
+        font-weight: 550;
+        line-height: 28px;
         cursor: pointer;
         user-select: none;
         -webkit-tap-highlight-color: transparent;
@@ -525,16 +545,17 @@
 
     @media (hover: hover) {
         .scope:hover {
-            background: var(--bg-hover);
             color: var(--text-primary);
         }
     }
 
     .scope.active,
     .scope.active:hover {
-        background: var(--accent-bg);
-        border-color: var(--accent-color);
-        color: var(--accent-color);
+        background: var(--bg-raised);
+        color: var(--text-primary);
+        box-shadow:
+            0 0 0 1px var(--border-color),
+            0 1px 2px rgba(0, 0, 0, 0.07);
     }
 
     .summary {
@@ -574,11 +595,11 @@
         flex-direction: column;
         gap: 2px;
         width: 100%;
-        padding: 8px 10px;
+        padding: 10px 12px;
         text-align: left;
         background: transparent;
         border: none;
-        border-radius: 6px;
+        border-radius: 10px;
         cursor: pointer;
         color: var(--text-primary);
         font-family: inherit;
@@ -589,9 +610,8 @@
     }
 
     .result.selected {
-        background: var(--bg-hover);
-        outline: 2px solid var(--accent-color);
-        outline-offset: -2px;
+        background: var(--accent-bg);
+        box-shadow: inset 0 0 0 1px var(--accent-color);
     }
 
     .result-head {
@@ -675,12 +695,12 @@
     /* The editor's tag chip (EditorInstance.svelte), as the Todos page draws
        one, so a tag reads here the way it does in the note it came from. */
     .tag-chip {
-        background-color: var(--bg-hover);
+        background-color: var(--code-bg);
         color: var(--text-secondary);
         padding: 1px 8px;
-        border-radius: 10px;
-        border: 1px solid var(--border-light);
-        font-size: 13px;
+        border-radius: 999px;
+        box-shadow: inset 0 0 0 1px var(--border-color);
+        font-size: 12.5px;
         font-weight: 500;
         white-space: nowrap;
     }
@@ -700,7 +720,7 @@
        colour of the words around it. No padding, which would nudge the
        letters sideways as marks come and go with each key pressed. */
     mark {
-        background: var(--accent-bg-hover);
+        background: var(--warn-bg);
         color: inherit;
         border-radius: 2px;
     }

@@ -476,7 +476,7 @@
     .help {
         flex: 1;
         overflow-y: auto;
-        padding: 16px 24px 48px;
+        padding: 28px 40px 64px;
     }
 
     .help-body {
@@ -609,7 +609,7 @@
     .chip {
         display: inline-block;
         padding: 0 8px;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         font-size: 13px;
         font-weight: 500;
         line-height: 1.6;
@@ -707,7 +707,7 @@
 
     code {
         padding: 1px 6px;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         background: var(--code-bg);
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 12px;
