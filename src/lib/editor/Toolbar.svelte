@@ -147,14 +147,22 @@
 </div>
 
 <style>
+    /* Floats over the bottom of the page as a pill while writing, rather
+       than a row that pushed the page down the moment Edit was pressed. */
     .toolbar {
-        flex: 0 0 auto;
+        position: absolute;
+        left: 50%;
+        bottom: 20px;
+        transform: translateX(-50%);
+        z-index: 20;
+        max-width: calc(100% - 32px);
         display: flex;
         align-items: center;
         gap: 2px;
-        padding: 4px 12px;
-        background: var(--bg-primary);
-        border-bottom: 1px solid var(--border-color);
+        padding: 5px;
+        background: var(--bg-raised);
+        border-radius: 14px;
+        box-shadow: var(--shadow-pop);
         /* A swipe that starts on a button pans the row rather than starting a
            text selection on the button's label. */
         -webkit-user-select: none;
@@ -220,8 +228,8 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 32px;
-        height: 32px;
+        width: 34px;
+        height: 34px;
         padding: 0;
         border: none;
         background: none;
@@ -240,7 +248,7 @@
         content: '';
         position: absolute;
         inset: 0;
-        border-radius: 6px;
+        border-radius: 9px;
         transition: background-color 0.15s;
     }
 
@@ -327,6 +335,20 @@
        guidelines allow, and they touch, so no tap on the row falls between
        two. The chip stays compact inside, which keeps the strip from
        looking any heavier than it does under a mouse. */
+    /* A phone docks it under the page, which is just above the keyboard
+       while typing, the way the platform's own apps do. */
+    @media (max-width: 768px) {
+        .toolbar {
+            position: static;
+            transform: none;
+            order: 10;
+            max-width: none;
+            border-radius: 0;
+            box-shadow: none;
+            border-top: 1px solid var(--border-color);
+        }
+    }
+
     @media (pointer: coarse) {
         .toolbar {
             gap: 0;

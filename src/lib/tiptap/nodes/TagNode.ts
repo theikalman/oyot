@@ -1,4 +1,5 @@
 import { Node, mergeAttributes } from '@tiptap/core';
+import { tagHueStyle } from '../../tags/tagHue';
 import { normalizeTagName, TAG_NODE_NAME } from '../tags';
 
 export interface TagOptions {
@@ -53,14 +54,19 @@ export const TagNode = Node.create<TagOptions>({
         return [{ tag: `span[data-type="${TAG_NODE_NAME}"]` }];
     },
 
+    // The # in the tag's own hue, picked from its name, so a tag is the same
+    // colour wherever it is shown (see tagHue.ts).
     renderHTML({ node, HTMLAttributes }) {
+        const name: string = node.attrs.name ?? '';
         return [
             'span',
             mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
                 'data-type': TAG_NODE_NAME,
                 class: 'tag-chip',
+                style: tagHueStyle(name),
             }),
-            `#${node.attrs.name ?? ''}`,
+            ['span', { class: 'tag-hash' }, '#'],
+            name,
         ];
     },
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import SettingsShell from '$lib/components/SettingsShell.svelte';
     import { tick } from 'svelte';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { SHORTCUT_GROUPS, type ChangeableShortcut } from '$lib/keyboard/shortcuts';
@@ -66,84 +67,84 @@
     }
 </script>
 
-<div class="settings-page">
-    <p class="intro">
-        Press Change beside a shortcut, then the keys you want for it. A shortcut uses {command
-            ? '⌘ or ⌃'
-            : 'Ctrl'}, so it never types into a note. These keys are for this device only.
-        {#if isMobile}On a phone or tablet, shortcuts need a keyboard attached.{/if}
-    </p>
+<SettingsShell title="Keyboard shortcuts">
+    <div class="settings-page">
+        <p class="intro">
+            Press Change beside a shortcut, then the keys you want for it. A shortcut uses {command
+                ? '⌘ or ⌃'
+                : 'Ctrl'}, so it never types into a note. These keys are for this device only.
+            {#if isMobile}On a phone or tablet, shortcuts need a keyboard attached.{/if}
+        </p>
 
-    {#each groups as group (group.id)}
-        <section class="settings-section" aria-labelledby="group-{group.id}">
-            <h2 class="section-title" id="group-{group.id}">{group.title}</h2>
-            <p class="section-where">{group.where}</p>
-            <div class="section-card">
-                {#each group.shortcuts as shortcut (shortcut.id)}
-                    <ShortcutRow
-                        {shortcut}
-                        active={activeId === shortcut.id}
-                        onStart={() => (activeId = shortcut.id)}
-                        onEnd={() => {
-                            if (activeId === shortcut.id) activeId = null;
-                        }}
-                        announce={(text) => (announcement = text)}
-                    />
-                {/each}
-            </div>
-        </section>
-    {/each}
-
-    <section class="settings-section">
-        <div class="section-card">
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Reset all shortcuts</span>
-                    <span class="setting-desc">
-                        {#if confirmingReset}
-                            Give every shortcut its own keys back?
-                        {:else if changedCount > 0}
-                            {changedCount} changed. Give every shortcut its own keys back.
-                        {:else}
-                            Every shortcut has its own keys.
-                        {/if}
-                    </span>
+        {#each groups as group (group.id)}
+            <section class="settings-section" aria-labelledby="group-{group.id}">
+                <h2 class="section-title" id="group-{group.id}">{group.title}</h2>
+                <p class="section-where">{group.where}</p>
+                <div class="section-card">
+                    {#each group.shortcuts as shortcut (shortcut.id)}
+                        <ShortcutRow
+                            {shortcut}
+                            active={activeId === shortcut.id}
+                            onStart={() => (activeId = shortcut.id)}
+                            onEnd={() => {
+                                if (activeId === shortcut.id) activeId = null;
+                            }}
+                            announce={(text) => (announcement = text)}
+                        />
+                    {/each}
                 </div>
-                {#if confirmingReset}
-                    <div class="reset-buttons">
-                        <button class="action-btn danger" onclick={resetAll}>Reset all</button>
+            </section>
+        {/each}
+
+        <section class="settings-section">
+            <div class="section-card">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Reset all shortcuts</span>
+                        <span class="setting-desc">
+                            {#if confirmingReset}
+                                Give every shortcut its own keys back?
+                            {:else if changedCount > 0}
+                                {changedCount} changed. Give every shortcut its own keys back.
+                            {:else}
+                                Every shortcut has its own keys.
+                            {/if}
+                        </span>
+                    </div>
+                    {#if confirmingReset}
+                        <div class="reset-buttons">
+                            <button class="action-btn danger" onclick={resetAll}>Reset all</button>
+                            <button
+                                class="action-btn"
+                                bind:this={cancelResetButton}
+                                onclick={stopAsking}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    {:else}
+                        <!-- aria-disabled rather than disabled, so it keeps focus
+                         once the reset it did leaves nothing to reset. -->
                         <button
                             class="action-btn"
-                            bind:this={cancelResetButton}
-                            onclick={stopAsking}
+                            bind:this={resetButton}
+                            onclick={askReset}
+                            aria-disabled={changedCount === 0}
                         >
-                            Cancel
+                            Reset all…
                         </button>
-                    </div>
-                {:else}
-                    <!-- aria-disabled rather than disabled, so it keeps focus
-                         once the reset it did leaves nothing to reset. -->
-                    <button
-                        class="action-btn"
-                        bind:this={resetButton}
-                        onclick={askReset}
-                        aria-disabled={changedCount === 0}
-                    >
-                        Reset all…
-                    </button>
-                {/if}
+                    {/if}
+                </div>
             </div>
-        </div>
-    </section>
+        </section>
 
-    <p class="visually-hidden" aria-live="polite">{announcement}</p>
-</div>
+        <p class="visually-hidden" aria-live="polite">{announcement}</p>
+    </div>
+</SettingsShell>
 
 <style>
     .settings-page {
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 24px;
+        display: block;
     }
 
     .intro {
@@ -162,8 +163,6 @@
         font-size: 14px;
         font-weight: 600;
         color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
     }
 
     .section-where {
@@ -173,7 +172,7 @@
     }
 
     .section-card {
-        background: var(--bg-secondary);
+        background: var(--bg-raised);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         overflow: hidden;

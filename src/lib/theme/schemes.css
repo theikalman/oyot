@@ -76,6 +76,27 @@
     --error-text: #b71c43;
     --info-bg: #d6e0f5;
     --info-text: #275ac5;
+
+    /* The redesign's layers: a raised surface for cards and menus over the
+       sheet, and the line a checkbox or switch is drawn with. */
+    --bg-raised: #ffffff;
+    --control-line: #8c8fa1;
+
+    /* Open todos as a badge, and tooltips, drawn inverted */
+    --todo-bg: #fbe6d8;
+    --todo-text: #a8430a;
+    --tip-bg: #4c4f69;
+    --tip-text: #eff1f5;
+
+    /* Tag hues, one picked from each tag's name */
+    --tag-1: #1e66f5;
+    --tag-2: #8839ef;
+    --tag-3: #179299;
+    --tag-4: #e8590c;
+    --tag-5: #40a02b;
+    --tag-6: #d64fb4;
+    --tag-7: #c9800f;
+    --tag-8: #d20f39;
 }
 
 /* Catppuccin Frappé */
@@ -129,6 +150,27 @@
     --error-text: #eda3a4;
     --info-bg: #414964;
     --info-text: #a3bbf1;
+
+    /* The redesign's layers: a raised surface for cards and menus over the
+       sheet, and the line a checkbox or switch is drawn with. */
+    --bg-raised: #373b51;
+    --control-line: #737994;
+
+    /* Open todos as a badge, and tooltips, drawn inverted */
+    --todo-bg: #4a4149;
+    --todo-text: #f2ad8a;
+    --tip-bg: #c6d0f5;
+    --tip-text: #232634;
+
+    /* Tag hues, one picked from each tag's name */
+    --tag-1: #8caaee;
+    --tag-2: #ca9ee6;
+    --tag-3: #81c8be;
+    --tag-4: #ef9f76;
+    --tag-5: #a6d189;
+    --tag-6: #f4b8e4;
+    --tag-7: #e5c890;
+    --tag-8: #e78284;
 }
 
 /* Catppuccin Macchiato */
@@ -183,6 +225,27 @@
     --error-text: #ee8e9c;
     --info-bg: #363f5b;
     --info-text: #8aadf4;
+
+    /* The redesign's layers: a raised surface for cards and menus over the
+       sheet, and the line a checkbox or switch is drawn with. */
+    --bg-raised: #2b2f45;
+    --control-line: #6e738d;
+
+    /* Open todos as a badge, and tooltips, drawn inverted */
+    --todo-bg: #423a43;
+    --todo-text: #f5b58f;
+    --tip-bg: #cad3f5;
+    --tip-text: #1e2030;
+
+    /* Tag hues, one picked from each tag's name */
+    --tag-1: #8aadf4;
+    --tag-2: #c6a0f6;
+    --tag-3: #8bd5ca;
+    --tag-4: #f5a97f;
+    --tag-5: #a6da95;
+    --tag-6: #f5bde6;
+    --tag-7: #eed49f;
+    --tag-8: #ed8796;
 }
 
 /* Catppuccin Mocha */
@@ -236,6 +299,27 @@
     --error-text: #f38ba8;
     --info-bg: #313953;
     --info-text: #89b4fa;
+
+    /* The redesign's layers: a raised surface for cards and menus over the
+       sheet, and the line a checkbox or switch is drawn with. */
+    --bg-raised: #262637;
+    --control-line: #6c7086;
+
+    /* Open todos as a badge, and tooltips, drawn inverted */
+    --todo-bg: #3c3238;
+    --todo-text: #fbbf9a;
+    --tip-bg: #cdd6f4;
+    --tip-text: #181825;
+
+    /* Tag hues, one picked from each tag's name */
+    --tag-1: #89b4fa;
+    --tag-2: #cba6f7;
+    --tag-3: #94e2d5;
+    --tag-4: #fab387;
+    --tag-5: #a6e3a1;
+    --tag-6: #f5c2e7;
+    --tag-7: #f9e2af;
+    --tag-8: #f38ba8;
 }
 
 /* Solarized Light */
@@ -289,6 +373,27 @@
     --error-text: #b23938;
     --info-bg: #e3e9e1;
     --info-text: #296a96;
+
+    /* The redesign's layers: a raised surface for cards and menus over the
+       sheet, and the line a checkbox or switch is drawn with. */
+    --bg-raised: #fffbef;
+    --control-line: #8c9a97;
+
+    /* Open todos as a badge, and tooltips, drawn inverted */
+    --todo-bg: #f6e0cc;
+    --todo-text: #a33c11;
+    --tip-bg: #073642;
+    --tip-text: #fdf6e3;
+
+    /* Tag hues, one picked from each tag's name */
+    --tag-1: #268bd2;
+    --tag-2: #6c71c4;
+    --tag-3: #2aa198;
+    --tag-4: #cb4b16;
+    --tag-5: #859900;
+    --tag-6: #d33682;
+    --tag-7: #b58900;
+    --tag-8: #dc322f;
 }
 
 /* Solarized Dark */
@@ -342,6 +447,27 @@
     --error-text: #d5807e;
     --info-bg: #083e55;
     --info-text: #73acd1;
+
+    /* The redesign's layers: a raised surface for cards and menus over the
+       sheet, and the line a checkbox or switch is drawn with. */
+    --bg-raised: #06333f;
+    --control-line: #657b83;
+
+    /* Open todos as a badge, and tooltips, drawn inverted */
+    --todo-bg: #2a3029;
+    --todo-text: #ec9466;
+    --tip-bg: #eee8d5;
+    --tip-text: #073642;
+
+    /* Tag hues, one picked from each tag's name */
+    --tag-1: #4ea3e0;
+    --tag-2: #8f93db;
+    --tag-3: #2aa198;
+    --tag-4: #e0773f;
+    --tag-5: #859900;
+    --tag-6: #e0609a;
+    --tag-7: #b58900;
+    --tag-8: #dc322f;
 }
 
 /* Names the sync badge uses for the same colours. */
@@ -349,4 +475,26 @@
 [data-scheme] {
     --status-synced: var(--status-ok);
     --status-offline: var(--status-idle);
+}
+
+/* Depth, which differs by light and dark alone: a shadow deep enough to
+   show on a dark scheme is a smudge on a light one. */
+[data-theme='light'] {
+    --shadow-sheet:
+        0 0 0 1px rgba(30, 34, 56, 0.06), 0 1px 2px rgba(30, 34, 56, 0.05),
+        0 6px 20px -8px rgba(30, 34, 56, 0.08);
+    --shadow-pop:
+        0 0 0 1px rgba(30, 34, 56, 0.08), 0 16px 40px -10px rgba(30, 34, 56, 0.24),
+        0 4px 10px -4px rgba(30, 34, 56, 0.08);
+    --scrim: rgba(30, 32, 48, 0.3);
+}
+
+[data-theme='dark'] {
+    --shadow-sheet:
+        0 0 0 1px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.3),
+        0 8px 24px -8px rgba(0, 0, 0, 0.4);
+    --shadow-pop:
+        0 0 0 1px rgba(255, 255, 255, 0.08), 0 18px 44px -10px rgba(0, 0, 0, 0.65),
+        0 4px 10px -4px rgba(0, 0, 0, 0.4);
+    --scrim: rgba(10, 11, 18, 0.55);
 }

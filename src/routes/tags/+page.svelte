@@ -4,6 +4,7 @@
     import { createTagIndex } from '$lib/tags/tagStore.svelte';
     import type { TagSummary } from '$lib/tiptap/tags';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
+    import { tagHueStyle } from '$lib/tags/tagHue';
 
     // Every tag any note or journal carries, on one page.
     //
@@ -32,12 +33,13 @@
     function usage(tag: TagSummary): string {
         return tag.documentCount === 1 ? '1 note' : `${tag.documentCount} notes`;
     }
+    let mostUsed = $derived(Math.max(1, ...tags.tags.map((t) => t.documentCount)));
 </script>
 
 <WorkspaceShell title="Tags">
-    <div class="tags">
-        <div class="tags-bar">
-            <p class="summary">
+    <div class="tags page-body">
+        <div class="page-bar">
+            <p class="page-summary">
                 {#if tags.loading && tags.isEmpty}
                     Collecting your tags...
                 {:else if tags.failed}
@@ -49,7 +51,7 @@
             </p>
             {#if !tags.isEmpty}
                 <input
-                    class="filter"
+                    class="field-input"
                     type="search"
                     placeholder="Filter tags"
                     bind:value={filter}
@@ -74,8 +76,17 @@
             <ul class="tag-list">
                 {#each shown as tag (tag.name)}
                     <li>
-                        <button class="tag-row" onclick={() => openTag(tag.name)}>
-                            <span class="tag-name">#{tag.name}</span>
+                        <button
+                            class="tag-row"
+                            style={tagHueStyle(tag.name)}
+                            onclick={() => openTag(tag.name)}
+                        >
+                            <span class="tag-name"><span class="hash">#</span>{tag.name}</span>
+                            <!-- How much it is used, beside the others, in its own hue. -->
+                            <span class="usage-bar" aria-hidden="true"
+                                ><span style="width: {(100 * tag.documentCount) / mostUsed}%"
+                                ></span></span
+                            >
                             <span class="tag-usage">{usage(tag)}</span>
                         </button>
                     </li>
@@ -86,43 +97,6 @@
 </WorkspaceShell>
 
 <style>
-    .tags {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px 24px 32px;
-    }
-
-    .tags-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 8px;
-    }
-
-    .summary {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-secondary);
-    }
-
-    .filter {
-        padding: 5px 10px;
-        font-size: 13px;
-        font-family: inherit;
-        color: var(--text-primary);
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 4px;
-        min-width: 160px;
-    }
-
-    .filter:focus {
-        outline: none;
-        border-color: var(--accent-color);
-    }
-
     .note {
         margin: 24px 0;
         font-size: 14px;
@@ -137,12 +111,14 @@
     .note code {
         background: var(--code-bg);
         color: var(--text-primary);
+        font-family: var(--font-mono);
         padding: 1px 5px;
-        border-radius: 3px;
+        border-radius: var(--radius-sm);
     }
 
     .tag-list {
-        margin: 12px 0 0 0;
+        max-width: 720px;
+        margin: 8px -12px 0;
         padding: 0;
         list-style: none;
     }
@@ -150,18 +126,17 @@
     .tag-row {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
+        gap: 14px;
         width: 100%;
-        padding: 9px 8px;
+        height: 42px;
+        padding: 0 12px;
         text-align: left;
         background: transparent;
         border: none;
-        border-radius: 4px;
+        border-radius: 10px;
         cursor: pointer;
         color: var(--text-primary);
         font-size: 14px;
-        font-family: inherit;
     }
 
     .tag-row:hover {
@@ -169,15 +144,48 @@
     }
 
     .tag-name {
-        font-weight: 500;
+        flex: 1;
+        min-width: 0;
+        font-weight: 550;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
+    .hash {
+        color: var(--tag-hue, var(--tag-1));
+        font-weight: 700;
+        margin-right: 2px;
+    }
+
+    .usage-bar {
+        flex-shrink: 0;
+        width: 96px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-color);
+        overflow: hidden;
+    }
+
+    .usage-bar > span {
+        display: block;
+        height: 100%;
+        border-radius: 2px;
+        background: var(--tag-hue, var(--tag-1));
+    }
+
     .tag-usage {
         flex-shrink: 0;
-        font-size: 12px;
+        min-width: 70px;
+        text-align: right;
+        font-size: 12.5px;
         color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+    }
+
+    @media (max-width: 480px) {
+        .usage-bar {
+            display: none;
+        }
     }
 </style>

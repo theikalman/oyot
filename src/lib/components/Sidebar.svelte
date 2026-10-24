@@ -34,18 +34,18 @@
         openHelp,
         openJournals,
         openNotes,
-        openSearch,
         openTags,
         openTodos,
     } from '../services/navigation';
     import { page } from '$app/state';
     import { toasts } from '../services/toast';
-    import AboutDialog from './AboutDialog.svelte';
     import NewNoteDialog from './NewNoteDialog.svelte';
     import RenameNoteDialog from './RenameNoteDialog.svelte';
     import DeleteNoteDialog from './DeleteNoteDialog.svelte';
     import DocumentList from './DocumentList.svelte';
-    import SidebarDeviceList from './SidebarDeviceList.svelte';
+    import SidebarSyncRow from './SidebarSyncRow.svelte';
+    import { switcher } from '../switcher/switcher.svelte';
+    import Icon from './Icon.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
     import { customShortcuts } from '../keyboard/customShortcuts.svelte';
@@ -53,6 +53,7 @@
     import { refreshTagCount, tagCount } from '../tags/tagCount';
     import { journalEntries } from '../journals/journalIndex';
     import { pinnedNotes } from '../notes/noteIndex';
+    import { journalTitleFor } from '../calendar/calendar';
 
     interface Props {
         /**
@@ -151,9 +152,24 @@
         void refreshTagCount();
     });
 
-    function goToSearch() {
-        void openSearch();
+    // The search box at the top opens the quick switcher, which jumps to a
+    // note, journal, tag or page by typing, and hands a longer search to the
+    // Search page.
+    function goToSwitcher() {
         dismissOnSmallScreen();
+        switcher.show();
+    }
+
+    let switcherKeys = $derived(customShortcuts.labelFor('switcher'));
+
+    // Today, first among the places: the journal Oyot opens on.
+    let todayTitle = $derived(journalTitleFor(today));
+    let todayShort = $derived(
+        `${today.toLocaleDateString(undefined, { weekday: 'short' })} ${today.getDate()}`,
+    );
+
+    function goToToday() {
+        void openJournalFor(todayTitle);
     }
 
     function goToNotes() {
@@ -200,6 +216,7 @@
     let currentJournalTitle = $derived(
         shownDocument?.doc_type === 'journal' ? shownDocument.title : null,
     );
+    let onTodaysJournal = $derived(currentJournalTitle === todayTitle);
     let journals = $derived($documents.filter((d: DocumentSummary) => d.doc_type === 'journal'));
     // What the journal index will list, which is not quite every journal row:
     // one whose title is not a date has no day to be listed under. Counted the
@@ -249,14 +266,13 @@
         }
     }
 
-    let showAbout = $state(false);
-
     function goToSettings() {
         goto(resolve('/settings'));
     }
 
-    function goToSync() {
-        goto(resolve('/settings/sync'));
+    function goToAbout() {
+        goto(resolve('/settings/about'));
+        dismissOnSmallScreen();
     }
 
     // A day picked in the calendar. Opening it, and starting its journal if
@@ -276,27 +292,134 @@
 <svelte:window onclick={handleWindowClick} />
 
 <!-- Shown and hidden by the button before the page's title, in the
-     workspace's header. -->
+     workspace's header. On a phone it is a drawer over the page. -->
 <aside id="sidebar" class="sidebar" class:collapsed class:overlay={small && !collapsed}>
     {#if !collapsed}
+        <div class="sidebar-top">
+            <span class="logo" aria-hidden="true"><span class="logo-o"></span></span>
+            <span class="wordmark">Oyot</span>
+            <span class="grow"></span>
+            <button
+                class="icon-btn"
+                onclick={() => (showModal = true)}
+                title="New note"
+                aria-label="New note"
+            >
+                <Icon name="compose" />
+            </button>
+            {#if !small}
+                <button
+                    class="icon-btn"
+                    onclick={() => (collapsed = true)}
+                    title={withKeys('Hide sidebar', 'sidebar')}
+                    aria-label="Hide sidebar"
+                >
+                    <Icon name="panel-left" />
+                </button>
+            {/if}
+        </div>
+
+        <!-- First, since it is the way into all the rest: it finds notes and
+             journals by their words, and todos and tags as well. -->
+        <button
+            class="search-btn"
+            class:active={onSearchPage}
+            onclick={goToSwitcher}
+            title={withKeys('Search or jump to', 'switcher')}
+        >
+            <Icon name="search" size={16} />
+            <span class="grow">Search or jump to</span>
+            {#if switcherKeys}
+                <span class="kbd">{switcherKeys}</span>
+            {/if}
+        </button>
+
         <div class="sidebar-content">
-            <!-- The calendar, always, and no heading over it. It is how a
-                 journal is found: a journal is named for its day, so a
-                 month grid marking the days with something written in
-                 them beats a column of dates, and it says what it is
-                 without being told. -->
+            <nav class="nav" aria-label="Places">
+                <button
+                    class="nav-item"
+                    class:active={onTodaysJournal}
+                    aria-current={onTodaysJournal ? 'page' : undefined}
+                    onclick={goToToday}
+                    title={withKeys("Today's journal", 'today')}
+                >
+                    <Icon name="today" />
+                    <span class="nav-label">Today</span>
+                    <span class="nav-count">{todayShort}</span>
+                </button>
+                <!-- The calendar below shows one month; this is the whole run
+                     of them, which is the only way to see how far back the
+                     journal goes. -->
+                <button
+                    class="nav-item"
+                    class:active={onJournalsPage}
+                    aria-current={onJournalsPage ? 'page' : undefined}
+                    onclick={goToJournals}
+                    title={withKeys('Journals', 'journals')}
+                >
+                    <Icon name="journals" />
+                    <span class="nav-label">Journals</span>
+                    {#if journalDayCount > 0}
+                        <span class="nav-count">{journalDayCount}</span>
+                    {/if}
+                </button>
+                <button
+                    class="nav-item"
+                    class:active={onNotesPage}
+                    aria-current={onNotesPage ? 'page' : undefined}
+                    onclick={goToNotes}
+                    title={withKeys('Notes', 'notes')}
+                >
+                    <Icon name="notes" />
+                    <span class="nav-label">Notes</span>
+                    {#if noteCount > 0}
+                        <span class="nav-count">{noteCount}</span>
+                    {/if}
+                </button>
+                <button
+                    class="nav-item"
+                    class:active={onTodosPage}
+                    aria-current={onTodosPage ? 'page' : undefined}
+                    onclick={goToTodos}
+                    title={withKeys('Todos', 'todos')}
+                >
+                    <Icon name="todos" />
+                    <span class="nav-label">Todos</span>
+                    {#if openTodoCount > 0}
+                        <span class="nav-count">{openTodoCount}</span>
+                    {/if}
+                </button>
+                <button
+                    class="nav-item"
+                    class:active={onTagsPage}
+                    aria-current={onTagsPage ? 'page' : undefined}
+                    onclick={goToTags}
+                    title={withKeys('Tags', 'tags')}
+                >
+                    <Icon name="tags" />
+                    <span class="nav-label">Tags</span>
+                    {#if $tagCount > 0}
+                        <span class="nav-count">{$tagCount}</span>
+                    {/if}
+                </button>
+            </nav>
+
+            <!-- The calendar, with no heading over it. It is how a journal is
+                 found: a journal is named for its day, so a month grid
+                 marking the days with something written in them beats a
+                 column of dates, and it says what it is without being told. -->
             <div class="sidebar-section">
                 <JournalCalendar {journals} {currentJournalTitle} {today} onPick={openJournalFor} />
             </div>
 
             <div class="sidebar-section">
                 <h3>
-                    Pinned notes
+                    Pinned
                     <button
-                        class="add-doc-btn"
+                        class="icon-btn small"
                         onclick={() => (showModal = true)}
                         title="New note"
-                        aria-label="New note">+</button
+                        aria-label="New pinned note"><Icon name="plus" size={16} /></button
                     >
                 </h3>
                 {#if pinned.length > 0}
@@ -320,199 +443,35 @@
                     </p>
                 {/if}
             </div>
-
-            <div class="sidebar-section">
-                <h3>Index</h3>
-                <!-- First, since it is the way into all the rest: it finds
-                     notes and journals by their words, and todos and tags
-                     as well. Nothing to count beside it. -->
-                <button
-                    class="nav-item"
-                    class:active={onSearchPage}
-                    onclick={goToSearch}
-                    title={withKeys('Search', 'search')}
-                >
-                    <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <circle cx="11" cy="11" r="7" />
-                        <path d="m20 20-3.5-3.5" />
-                    </svg>
-                    <span class="nav-label">Search</span>
-                </button>
-                <button
-                    class="nav-item"
-                    class:active={onNotesPage}
-                    onclick={goToNotes}
-                    title={withKeys('Notes', 'notes')}
-                >
-                    <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <path
-                            d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
-                        />
-                    </svg>
-                    <span class="nav-label">Notes</span>
-                    {#if noteCount > 0}
-                        <span class="nav-count">{noteCount}</span>
-                    {/if}
-                </button>
-                <!-- The calendar above shows one month; this is the whole
-                     run of them, which is the only way to see how far back
-                     the journal goes. -->
-                <button
-                    class="nav-item"
-                    class:active={onJournalsPage}
-                    onclick={goToJournals}
-                    title={withKeys('Journals', 'journals')}
-                >
-                    <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <path d="M8 2v4M16 2v4M3 10h18" />
-                        <rect x="3" y="4" width="18" height="18" rx="2" />
-                    </svg>
-                    <span class="nav-label">Journals</span>
-                    {#if journalDayCount > 0}
-                        <span class="nav-count">{journalDayCount}</span>
-                    {/if}
-                </button>
-                <button
-                    class="nav-item"
-                    class:active={onTodosPage}
-                    onclick={goToTodos}
-                    title={withKeys('Todos', 'todos')}
-                >
-                    <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <path d="m7.5 12 3 3 6-6" />
-                        <path
-                            d="M7.8 21h8.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C21 18.72 21 17.88 21 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C18.72 3 17.88 3 16.2 3H7.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C3 5.28 3 6.12 3 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C5.28 21 6.12 21 7.8 21"
-                        />
-                    </svg>
-                    <span class="nav-label">Todos</span>
-                    {#if openTodoCount > 0}
-                        <span class="nav-count">{openTodoCount}</span>
-                    {/if}
-                </button>
-                <button
-                    class="nav-item"
-                    class:active={onTagsPage}
-                    onclick={goToTags}
-                    title={withKeys('Tags', 'tags')}
-                >
-                    <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <path d="M9 9h.01" />
-                        <path
-                            d="M3.6 13.83l6.58 6.58a2 2 0 0 0 2.83 0l6.59-6.59a2 2 0 0 0 .58-1.41V4a2 2 0 0 0-2-2h-7.83a2 2 0 0 0-1.41.58L3.6 11a2 2 0 0 0 0 2.83"
-                        />
-                    </svg>
-                    <span class="nav-label">Tags</span>
-                    {#if $tagCount > 0}
-                        <span class="nav-count">{$tagCount}</span>
-                    {/if}
-                </button>
-            </div>
-
-            <SidebarDeviceList onManage={goToSync} />
         </div>
 
         <div class="sidebar-footer">
-            <button
-                class="version-btn"
-                onclick={() => (showAbout = true)}
-                title="About Oyot and what's new"
-            >
-                v{APP_VERSION}
-            </button>
-            <div class="footer-actions">
-                <!-- Lit while open, like the pages under Index: the help
-                     page keeps the sidebar, so this is on screen with it. -->
+            <SidebarSyncRow onNavigate={dismissOnSmallScreen} />
+            <div class="footer-tools">
+                <!-- Lit while open, like the places above: the help page
+                     keeps the sidebar, so this is on screen with it. -->
                 <button
-                    class="footer-btn"
+                    class="icon-btn"
                     class:active={onHelpPage}
                     onclick={goToHelp}
                     title={withKeys('Help and keyboard shortcuts', 'help')}
                     aria-label="Help"
                     aria-current={onHelpPage ? 'page' : undefined}
                 >
-                    <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                        <path d="M12 17h.01" />
-                    </svg>
+                    <Icon name="help" />
                 </button>
                 <!-- Named by aria-label, as Help is, so the keys in the
                      tooltip are not read out as part of its name. -->
                 <button
-                    class="footer-btn"
+                    class="icon-btn"
                     onclick={goToSettings}
                     title={withKeys('Settings', 'settings')}
                     aria-label="Settings"
                 >
-                    <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <circle cx="12" cy="12" r="3" />
-                        <path
-                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                        />
-                    </svg>
+                    <Icon name="settings" />
+                </button>
+                <button class="version-btn" onclick={goToAbout} title="About Oyot and what's new">
+                    v{APP_VERSION}
                 </button>
             </div>
         </div>
@@ -520,7 +479,7 @@
 </aside>
 
 {#if small && !collapsed}
-    <!-- Tapping away closes it, as the « before the page's title does. -->
+    <!-- Tapping away closes it. -->
     <div class="sidebar-scrim" role="presentation" onclick={() => (collapsed = true)}></div>
 {/if}
 
@@ -539,82 +498,172 @@
     <DeleteNoteDialog doc={deleteDoc} onClose={() => (deleteDoc = null)} />
 {/if}
 
-{#if showAbout}
-    <AboutDialog onClose={() => (showAbout = false)} />
-{/if}
-
 <style>
     .sidebar {
-        width: 250px;
-        min-width: 250px;
-        background: var(--bg-secondary);
-        border-right: 1px solid var(--border-color);
+        width: 264px;
+        min-width: 264px;
+        height: 100%;
         display: flex;
         flex-direction: column;
+        padding: 10px 10px 10px 12px;
         overflow: hidden;
-        transition:
-            width 0.2s ease,
-            min-width 0.2s ease;
+        background: var(--bg-secondary);
     }
 
     .sidebar.collapsed {
         display: none;
     }
 
-    /* Over the editor, not beside it. As a column on a 375px screen it left
-       about 125px to write in. Below the page's header, which holds the
-       button that closes it again. */
+    /* A drawer over the page on a phone, the same sidebar the desktop has,
+       sliding in from the left edge. */
     .sidebar.overlay {
         position: fixed;
-        top: calc(var(--safe-top) + var(--workspace-header-height, 57px));
-        bottom: var(--safe-bottom);
-        left: var(--safe-left);
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: min(320px, 86vw);
+        padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px)
+            calc(var(--safe-left) + 14px);
         z-index: 120;
-        box-shadow: 0 0 24px rgba(0, 0, 0, 0.25);
+        border-radius: 0 var(--radius-xl) var(--radius-xl) 0;
+        box-shadow: var(--shadow-pop);
+        animation: slide-in 0.2s ease-out;
     }
 
-    /* Under the header too, which stays as it is while the sidebar is open,
-       its button included. */
+    @keyframes slide-in {
+        from {
+            transform: translateX(-100%);
+        }
+        to {
+            transform: translateX(0);
+        }
+    }
+
     .sidebar-scrim {
         position: fixed;
-        inset: calc(var(--safe-top) + var(--workspace-header-height, 57px)) 0 0 0;
+        inset: 0;
         z-index: 110;
-        background: rgba(0, 0, 0, 0.35);
+        background: var(--scrim);
     }
 
-    /* scrollable middle area */
-    .sidebar-content {
-        flex: 1;
-        overflow-y: auto;
-    }
-
-    .sidebar-section {
-        padding: 12px;
-    }
-
-    .sidebar-section h3 {
-        font-size: 12px;
-        text-transform: uppercase;
-        color: var(--text-secondary);
-        margin: 0 0 8px 0;
+    .sidebar-top {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: 8px;
+        height: 40px;
+        padding: 0 2px 0 6px;
+        margin-bottom: 8px;
+        flex-shrink: 0;
     }
 
-    /* ── Index section ── */
-    .nav-item {
+    .logo {
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        background: var(--accent-color);
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+    }
+
+    .logo-o {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        border: 2.5px solid var(--bg-primary);
+    }
+
+    .wordmark {
+        font-weight: 650;
+        font-size: 15px;
+        letter-spacing: -0.015em;
+    }
+
+    .grow {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .icon-btn {
+        width: 32px;
+        height: 32px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-md);
+        background: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+
+    .icon-btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .icon-btn.active {
+        background: var(--accent-bg);
+        color: var(--accent-color);
+    }
+
+    .icon-btn.small {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+    }
+
+    .search-btn {
+        flex-shrink: 0;
         display: flex;
         align-items: center;
         gap: 8px;
         width: 100%;
-        padding: 7px 8px;
-        background: transparent;
+        height: 36px;
+        padding: 0 6px 0 10px;
         border: none;
-        border-radius: 4px;
+        border-radius: 9px;
+        background: var(--bg-primary);
+        box-shadow: 0 0 0 1px var(--border-color);
+        color: var(--text-muted);
+        font-size: 13.5px;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .search-btn:hover,
+    .search-btn.active {
         color: var(--text-primary);
-        font-size: 13px;
-        font-family: inherit;
+        box-shadow: var(--shadow-sheet);
+    }
+
+    .sidebar-content {
+        flex: 1;
+        overflow-y: auto;
+        margin: 0 -4px;
+        padding: 0 4px;
+    }
+
+    .nav {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        margin-top: 10px;
+    }
+
+    .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        height: 34px;
+        padding: 0 10px;
+        border: none;
+        border-radius: var(--radius-md);
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 14px;
         font-weight: 500;
         text-align: left;
         cursor: pointer;
@@ -622,10 +671,17 @@
 
     .nav-item:hover {
         background: var(--bg-hover);
+        color: var(--text-primary);
     }
 
+    /* The current place is a piece of the sheet, lifted out of the frame. */
     .nav-item.active {
-        background: var(--accent-bg);
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        box-shadow: var(--shadow-sheet);
+    }
+
+    .nav-item.active :global(.icon) {
         color: var(--accent-color);
     }
 
@@ -636,33 +692,32 @@
 
     .nav-count {
         flex-shrink: 0;
-        font-size: 11px;
+        font-size: 12px;
+        font-weight: 450;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-muted);
+    }
+
+    .sidebar-section {
+        padding: 14px 0 0;
+    }
+
+    .sidebar-section h3 {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 30px;
+        margin: 0;
+        padding: 0 4px 0 10px;
+        font-size: 12px;
         font-weight: 600;
         color: var(--text-muted);
     }
 
-    .nav-item.active .nav-count {
-        color: var(--accent-color);
-    }
-
-    .add-doc-btn {
-        background: none;
-        border: none;
-        color: var(--text-secondary);
-        font-size: 18px;
-        cursor: pointer;
-        padding: 0 4px;
-        line-height: 1;
-    }
-
-    .add-doc-btn:hover {
-        color: var(--text-primary);
-    }
-
     .pinned-empty {
         margin: 0;
-        padding: 4px 8px;
-        font-size: 12px;
+        padding: 4px 10px;
+        font-size: 12.5px;
         line-height: 1.5;
         color: var(--text-muted);
     }
@@ -680,35 +735,31 @@
         text-decoration: underline;
     }
 
-    /* ── Sidebar footer ── */
-    /* Pinned so the "Linked from" bar under the editor can match it. */
     .sidebar-footer {
         flex-shrink: 0;
-        height: 65px;
-        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding-top: 8px;
         border-top: 1px solid var(--border-color);
+    }
+
+    .footer-tools {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 8px;
+        gap: 2px;
+        padding-left: 2px;
     }
 
     .version-btn {
-        min-width: 0;
-        padding: 6px 8px;
-        background: transparent;
+        margin-left: auto;
+        padding: 4px 8px;
         border: none;
-        border-radius: 6px;
+        border-radius: var(--radius-sm);
+        background: transparent;
         color: var(--text-muted);
-        font-size: 12px;
-        font-family: inherit;
+        font-size: 11.5px;
         cursor: pointer;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        transition:
-            background-color 0.15s,
-            color 0.15s;
     }
 
     .version-btn:hover {
@@ -716,38 +767,20 @@
         color: var(--text-primary);
     }
 
-    .footer-actions {
-        flex-shrink: 0;
-        display: flex;
-        gap: 8px;
-    }
+    /* A finger needs more room than a pointer. */
+    @media (pointer: coarse) {
+        .nav-item {
+            height: 42px;
+            font-size: 15px;
+        }
 
-    .footer-btn {
-        flex-shrink: 0;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: transparent;
-        color: var(--text-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        cursor: pointer;
-        transition:
-            background-color 0.15s,
-            color 0.15s;
-    }
+        .search-btn {
+            height: 42px;
+        }
 
-    .footer-btn:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
+        .icon-btn {
+            width: 40px;
+            height: 40px;
+        }
     }
-
-    .footer-btn.active {
-        background: var(--accent-bg);
-        color: var(--accent-color);
-    }
-
-    /* ── Calendar ── */
 </style>

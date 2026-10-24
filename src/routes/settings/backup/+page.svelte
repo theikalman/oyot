@@ -1,4 +1,5 @@
 <script lang="ts">
+    import SettingsShell from '$lib/components/SettingsShell.svelte';
     import { onMount } from 'svelte';
     import { listen } from '@tauri-apps/api/event';
     import { formatLastSync } from '$lib/stores/sync';
@@ -308,119 +309,132 @@
     }
 </script>
 
-<div class="settings-page">
-    <section class="settings-section">
-        <h2 class="section-title">Last backup</h2>
-        <div class="section-card">
-            <div class="status">
-                {#if status === null}
-                    <span class="status-when">…</span>
-                {:else if status.lastSuccess}
-                    {@const last = status.lastSuccess}
-                    <span class="status-when" title={fullDate(last.finishedAt ?? last.startedAt)}>
-                        {formatLastSync(last.finishedAt ?? last.startedAt)}
-                    </span>
-                    <span class="status-detail">
-                        {describe(last)} • {last.destinationLabel}
-                    </span>
-                {:else}
-                    <span class="status-when">No backup yet</span>
-                    <span class="status-detail">
-                        Everything is only on your devices. A backup keeps a copy somewhere else.
-                    </span>
-                {/if}
-                {#if status?.running}
-                    <span class="status-running">Backing up now…</span>
-                {:else if lastFailure}
-                    <span class="status-failed">
-                        The last attempt, {ago(lastFailure.startedAt)}, failed: {lastFailure.error ??
-                            'unknown error'}
-                    </span>
-                {:else if lastCheck}
-                    <span class="status-detail">
-                        Checked {ago(lastCheck.startedAt)}: nothing has changed since.
-                    </span>
-                {/if}
-                {#if nextRun}
-                    <span class="status-next" class:trouble={scheduleTrouble}>{nextRun}</span>
-                {/if}
-            </div>
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h2 class="section-title">Back up</h2>
-        <div class="section-card">
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Back up to a file</span>
-                    <span class="setting-desc">
-                        Every note, journal and image in one file, saved wherever you choose
-                    </span>
-                </div>
-                <button class="action-btn" onclick={handleBackUp} disabled={busy}>
-                    {backingUp ? 'Backing up…' : 'Back up now'}
-                </button>
-            </div>
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h2 class="section-title">Restore</h2>
-        <div class="section-card">
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Import a backup</span>
-                    <span class="setting-desc">
-                        Merges a backup file into this device. Nothing here is removed.
-                    </span>
-                </div>
-                <button class="action-btn" onclick={handleOpen} disabled={busy}>
-                    {opening ? 'Checking…' : 'Import…'}
-                </button>
-            </div>
-        </div>
-    </section>
-
-    {#each providers as provider (provider.id)}
-        <BackupProviderCard
-            {provider}
-            {busy}
-            onChanged={handleProvidersChanged}
-            onOpened={handleOpened}
-            {historyRevision}
-        />
-    {/each}
-
-    {#if schedule}
-        <BackupScheduleCard {schedule} {providers} onChanged={(changed) => (schedule = changed)} />
-    {/if}
-
-    {#if history.length > 0}
+<SettingsShell
+    title="Backup"
+    description="A copy of every note, journal and image, kept somewhere other than your devices"
+>
+    <div class="settings-page">
         <section class="settings-section">
-            <h2 class="section-title">Recent backups</h2>
+            <h2 class="section-title">Last backup</h2>
             <div class="section-card">
-                {#each history as entry (entry.record.id)}
-                    {@const record = entry.record}
-                    <div class="history-row">
+                <div class="status">
+                    {#if status === null}
+                        <span class="status-when">…</span>
+                    {:else if status.lastSuccess}
+                        {@const last = status.lastSuccess}
                         <span
-                            class="history-dot"
-                            class:ok={record.status === 'success'}
-                            class:failed={record.status === 'failed'}
-                            aria-hidden="true"
-                        ></span>
-                        <div class="history-info">
-                            <span class="history-label">{record.destinationLabel}</span>
-                            <span class="history-desc">
-                                {fullDate(record.startedAt)} • {outcome(entry)}
-                            </span>
-                        </div>
-                    </div>
-                {/each}
+                            class="status-when"
+                            title={fullDate(last.finishedAt ?? last.startedAt)}
+                        >
+                            {formatLastSync(last.finishedAt ?? last.startedAt)}
+                        </span>
+                        <span class="status-detail">
+                            {describe(last)} • {last.destinationLabel}
+                        </span>
+                    {:else}
+                        <span class="status-when">No backup yet</span>
+                        <span class="status-detail">
+                            Everything is only on your devices. A backup keeps a copy somewhere
+                            else.
+                        </span>
+                    {/if}
+                    {#if status?.running}
+                        <span class="status-running">Backing up now…</span>
+                    {:else if lastFailure}
+                        <span class="status-failed">
+                            The last attempt, {ago(lastFailure.startedAt)}, failed: {lastFailure.error ??
+                                'unknown error'}
+                        </span>
+                    {:else if lastCheck}
+                        <span class="status-detail">
+                            Checked {ago(lastCheck.startedAt)}: nothing has changed since.
+                        </span>
+                    {/if}
+                    {#if nextRun}
+                        <span class="status-next" class:trouble={scheduleTrouble}>{nextRun}</span>
+                    {/if}
+                </div>
             </div>
         </section>
-    {/if}
-</div>
+
+        <section class="settings-section">
+            <h2 class="section-title">Back up</h2>
+            <div class="section-card">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Back up to a file</span>
+                        <span class="setting-desc">
+                            Every note, journal and image in one file, saved wherever you choose
+                        </span>
+                    </div>
+                    <button class="action-btn" onclick={handleBackUp} disabled={busy}>
+                        {backingUp ? 'Backing up…' : 'Back up now'}
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section class="settings-section">
+            <h2 class="section-title">Restore</h2>
+            <div class="section-card">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Import a backup</span>
+                        <span class="setting-desc">
+                            Merges a backup file into this device. Nothing here is removed.
+                        </span>
+                    </div>
+                    <button class="action-btn" onclick={handleOpen} disabled={busy}>
+                        {opening ? 'Checking…' : 'Import…'}
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        {#each providers as provider (provider.id)}
+            <BackupProviderCard
+                {provider}
+                {busy}
+                onChanged={handleProvidersChanged}
+                onOpened={handleOpened}
+                {historyRevision}
+            />
+        {/each}
+
+        {#if schedule}
+            <BackupScheduleCard
+                {schedule}
+                {providers}
+                onChanged={(changed) => (schedule = changed)}
+            />
+        {/if}
+
+        {#if history.length > 0}
+            <section class="settings-section">
+                <h2 class="section-title">Recent backups</h2>
+                <div class="section-card">
+                    {#each history as entry (entry.record.id)}
+                        {@const record = entry.record}
+                        <div class="history-row">
+                            <span
+                                class="history-dot"
+                                class:ok={record.status === 'success'}
+                                class:failed={record.status === 'failed'}
+                                aria-hidden="true"
+                            ></span>
+                            <div class="history-info">
+                                <span class="history-label">{record.destinationLabel}</span>
+                                <span class="history-desc">
+                                    {fullDate(record.startedAt)} • {outcome(entry)}
+                                </span>
+                            </div>
+                        </div>
+                    {/each}
+                </div>
+            </section>
+        {/if}
+    </div>
+</SettingsShell>
 
 {#if preview && plan}
     <ImportBackupDialog
@@ -434,9 +448,7 @@
 
 <style>
     .settings-page {
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 24px;
+        display: block;
     }
 
     .settings-section {
@@ -448,12 +460,10 @@
         font-size: 14px;
         font-weight: 600;
         color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
     }
 
     .section-card {
-        background: var(--bg-secondary);
+        background: var(--bg-raised);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         overflow: hidden;

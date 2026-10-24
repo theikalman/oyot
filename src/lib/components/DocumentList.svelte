@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { DocumentSummary } from '$lib/types';
+    import Icon from './Icon.svelte';
 
     // One row definition, used for both notes and journals. Journals had no
     // list at all until recently, and giving them one by copying seventy
@@ -40,30 +41,15 @@
                 class:current={currentDocId === doc.id}
                 onclick={() => onOpen(doc)}
             >
-                <span class="doc-type"
-                    ><svg
-                        width="16"
-                        height="16"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        ><path
-                            stroke="currentColor"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="1.5"
-                            d="M14 2.27V6.4c0 .56 0 .84.109 1.054a1 1 0 0 0 .437.437c.214.11.494.11 1.054.11h4.13M16 13H8m8 4H8m2-8H8m6-7H8.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C4 4.28 4 5.12 4 6.8v10.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C6.28 22 7.12 22 8.8 22h6.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C20 19.72 20 18.88 20 17.2V8z"
-                        /></svg
-                    ></span
-                >
-                {doc.title}
-                {#if doc.todo_count > 0}
+                <span class="doc-type"><Icon name="note" size={16} /></span>
+                <span class="doc-title">{doc.title}</span>
+                {#if doc.todo_count > doc.completed_todo_count}
                     <span
-                        class="todo-badge"
-                        class:done={doc.completed_todo_count === doc.todo_count}
-                        title="{doc.completed_todo_count} of {doc.todo_count} done"
+                        class="todo-count"
+                        title="{doc.todo_count -
+                            doc.completed_todo_count} of {doc.todo_count} still open"
                     >
-                        {doc.completed_todo_count}/{doc.todo_count}
+                        {doc.todo_count - doc.completed_todo_count}
                     </span>
                 {/if}
             </button>
@@ -107,20 +93,15 @@
 </ul>
 
 <style>
-    .todo-badge {
-        margin-left: 6px;
-        padding: 1px 6px;
-        font-size: 10px;
+    /* How many are still open, in the colour open todos always have. A
+       note with every todo done shows nothing: there is nothing to do. */
+    .todo-count {
+        margin-left: auto;
+        padding-left: 8px;
+        font-size: 12px;
+        font-weight: 550;
         font-variant-numeric: tabular-nums;
-        color: var(--text-secondary);
-        background: var(--bg-hover);
-        border-radius: 8px;
-        white-space: nowrap;
-    }
-
-    .todo-badge.done {
-        color: var(--accent-color);
-        background: var(--accent-bg);
+        color: var(--todo-text);
     }
 
     .doc-list {
@@ -130,7 +111,7 @@
     }
 
     .doc-list li {
-        margin-bottom: 4px;
+        margin-bottom: 1px;
     }
 
     .doc-item {
@@ -143,14 +124,22 @@
     .doc-btn {
         flex: 1;
         min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 32px;
         text-align: left;
-        padding: 6px 8px;
+        padding: 0 10px;
         border: none;
         background: transparent;
         cursor: pointer;
-        border-radius: 4px;
-        font-size: 14px;
-        color: var(--text-primary);
+        border-radius: var(--radius-md);
+        font-size: 13.5px;
+        color: var(--text-secondary);
+    }
+
+    .doc-title {
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -158,11 +147,14 @@
 
     .doc-btn:hover {
         background: var(--bg-hover);
+        color: var(--text-primary);
     }
 
+    /* The open note, lifted out of the frame like the current place. */
     .doc-btn.current {
-        background: var(--accent-bg);
-        color: var(--accent-color);
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        box-shadow: var(--shadow-sheet);
     }
 
     /* Always shown. It used to appear only while the pointer was over the
@@ -174,13 +166,13 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 24px;
-        height: 24px;
+        width: 26px;
+        height: 26px;
         padding: 0;
         border: none;
         background: transparent;
         color: var(--text-secondary);
-        border-radius: 4px;
+        border-radius: 7px;
         cursor: pointer;
     }
 
@@ -196,6 +188,19 @@
        so closing a menu with its own button left the button lit as if the
        menu were still open. */
     @media (hover: hover) {
+        /* With a pointer the menu's dots wait for it, so the list reads as
+           names only. A touch screen keeps them, having nothing to hover
+           with. */
+        .doc-menu-btn {
+            opacity: 0;
+        }
+
+        .doc-item:hover .doc-menu-btn,
+        .doc-menu-btn:focus-visible,
+        .doc-menu-btn[aria-expanded='true'] {
+            opacity: 1;
+        }
+
         .doc-menu-btn:hover {
             background: var(--bg-hover);
             color: var(--text-primary);
@@ -226,24 +231,24 @@
         top: calc(100% + 2px);
         right: 0;
         z-index: 50;
-        min-width: 120px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
-        padding: 4px;
+        min-width: 180px;
+        background: var(--bg-raised);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-pop);
+        padding: 6px;
         display: flex;
         flex-direction: column;
     }
 
     .doc-menu-item {
         text-align: left;
-        padding: 6px 8px;
+        height: 34px;
+        padding: 0 10px;
         border: none;
         background: transparent;
         cursor: pointer;
-        border-radius: 4px;
-        font-size: 13px;
+        border-radius: var(--radius-md);
+        font-size: 13.5px;
         color: var(--text-primary);
     }
 
@@ -256,11 +261,7 @@
     }
 
     .doc-type {
-        margin-right: 6px;
         color: var(--text-muted);
         display: inline-flex;
-        align-items: center;
-        vertical-align: middle;
-        margin-top: -4px;
     }
 </style>

@@ -12,6 +12,7 @@
     import { dayLabel, dayMarks, type DayMark } from '$lib/calendar/dayMarks';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import CalendarDay from './CalendarDay.svelte';
+    import Icon from './Icon.svelte';
 
     interface Props {
         /** Every journal, so a day can show whether it has an entry and a task still to do. */
@@ -81,41 +82,23 @@
 
 <div class="calendar">
     <div class="calendar-header">
+        <span class="calendar-title">{monthLabel(monthOf)}</span>
+        <button class="today-btn" onclick={goToToday} title={todayHint}>Today</button>
         <button
             class="cal-nav-btn"
             onclick={() => (monthOf = addMonths(monthOf, -1))}
             title="Previous month"
+            aria-label="Previous month"
         >
-            <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg
-            >
+            <Icon name="chevron-left" size={16} />
         </button>
-        <div class="cal-center">
-            <span class="calendar-title">{monthLabel(monthOf)}</span>
-            <button class="today-btn" onclick={goToToday} title={todayHint}>Today</button>
-        </div>
         <button
             class="cal-nav-btn"
             onclick={() => (monthOf = addMonths(monthOf, 1))}
             title="Next month"
+            aria-label="Next month"
         >
-            <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg
-            >
+            <Icon name="chevron-right" size={16} />
         </button>
     </div>
     <div class="calendar-grid">
@@ -142,44 +125,35 @@
 
 <style>
     .calendar {
-        border: 1px solid var(--border-light);
-        border-radius: 8px;
-        padding: 8px;
-        background: var(--bg-primary);
+        padding: 0 2px;
     }
 
     .calendar-header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        margin-bottom: 8px;
+        gap: 2px;
+        height: 30px;
+        padding-left: 8px;
+        margin-bottom: 2px;
     }
 
     .calendar-title {
+        flex: 1;
         font-size: 13px;
         font-weight: 600;
         color: var(--text-primary);
     }
 
-    .cal-center {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-    }
-
     .today-btn {
         background: none;
-        border: 1px solid var(--border-light);
+        border: none;
         cursor: pointer;
-        padding: 2px 8px;
+        height: 24px;
+        padding: 0 8px;
         color: var(--text-secondary);
-        border-radius: 4px;
-        font-size: 11px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
         font-weight: 500;
-        transition:
-            background 0.1s,
-            color 0.1s;
     }
 
     .today-btn:hover {
@@ -188,15 +162,16 @@
     }
 
     .cal-nav-btn {
+        width: 26px;
+        height: 26px;
         background: none;
         border: none;
         cursor: pointer;
-        padding: 2px;
+        padding: 0;
         color: var(--text-secondary);
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
     }
 
     .cal-nav-btn:hover {
@@ -206,15 +181,15 @@
 
     .calendar-grid {
         display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 2px;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        row-gap: 1px;
     }
 
     .cal-day-name {
         text-align: center;
-        font-size: 10px;
+        font-size: 11px;
+        line-height: 22px;
         color: var(--text-muted);
-        padding: 2px 0;
-        font-weight: 600;
+        font-weight: 500;
     }
 </style>

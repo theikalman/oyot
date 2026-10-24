@@ -7,6 +7,7 @@
     import { findTerms, searchSections, searchTerms } from '$lib/todos/todoSearch';
     import { markSegments, todoSegments, type MarkedRun } from '$lib/todos/todoText';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
+    import { tagHueStyle } from '$lib/tags/tagHue';
     import type { Snapshot } from './$types';
 
     // Every task item in every note and journal, on one page.
@@ -120,11 +121,11 @@
             >{:else}{run.text}{/if}{/each}{/snippet}
 
 <WorkspaceShell title="Todos">
-    <div class="todos">
-        <div class="todos-bar">
+    <div class="todos page-body">
+        <div class="page-bar">
             <!-- Read out as it changes, so a search says how much it found
                  to someone who cannot see the rows come and go. -->
-            <p class="summary" aria-live="polite">
+            <p class="page-summary" aria-live="polite">
                 {#if todos.loading && todos.isEmpty}
                     Collecting your todos...
                 {:else if todos.failed}
@@ -135,10 +136,10 @@
                     {todos.openCount} open of {todos.totalCount}
                 {/if}
             </p>
-            <div class="bar-actions">
+            <div class="page-actions">
                 {#if !todos.isEmpty}
                     <input
-                        class="search"
+                        class="field-input"
                         type="search"
                         placeholder="Search todos"
                         bind:value={query}
@@ -182,7 +183,7 @@
             {#each [{ label: 'Journals', groups: journals }, { label: 'Notes', groups: notes }] as section (section.label)}
                 {#if section.groups.length > 0}
                     <section class="section">
-                        <h2 class="section-title">{section.label}</h2>
+                        <h2 class="month-heading">{section.label}</h2>
                         {#each section.groups as group (group.docId)}
                             <div class="group">
                                 <h3 class="group-title" class:today={isToday(group)}>
@@ -201,14 +202,20 @@
                                                 <!-- A picture of the checkbox, not the
                                                      checkbox: this page opens the note,
                                                      it does not edit it. -->
-                                                <span class="box" aria-hidden="true">
-                                                    {todo.checked ? '☑' : '☐'}
-                                                </span>
+                                                <span
+                                                    class="box"
+                                                    class:checked={todo.checked}
+                                                    aria-hidden="true"
+                                                ></span>
                                                 <span class="text" class:empty={!todo.text}>
                                                     {#if todo.text}
                                                         {#each drawn(todo, group) as segment, i (i)}
                                                             {#if segment.kind === 'tag'}
-                                                                <span class="tag-chip"
+                                                                <span
+                                                                    class="tag-chip"
+                                                                    style={tagHueStyle(
+                                                                        segment.name,
+                                                                    )}
                                                                     >{@render marked(
                                                                         segment.runs,
                                                                     )}</span
@@ -235,55 +242,10 @@
 </WorkspaceShell>
 
 <style>
-    .todos {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px 24px 32px;
-    }
-
-    .todos-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 8px;
-    }
-
-    .summary {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-secondary);
-    }
-
-    .bar-actions {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
-    }
-
-    /* The Notes and Tags pages' filter box. */
-    .search {
-        padding: 5px 10px;
-        font-size: 13px;
-        font-family: inherit;
-        color: var(--text-primary);
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 4px;
-        min-width: 160px;
-    }
-
-    .search:focus {
-        outline: none;
-        border-color: var(--accent-color);
-    }
-
     .filter {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
         font-size: 13px;
         color: var(--text-secondary);
         cursor: pointer;
@@ -291,7 +253,7 @@
     }
 
     .filter input {
-        accent-color: var(--accent-color);
+        accent-color: var(--btn-primary-bg);
         cursor: pointer;
     }
 
@@ -309,32 +271,31 @@
     .note code {
         background: var(--code-bg);
         color: var(--text-primary);
+        font-family: var(--font-mono);
         padding: 1px 5px;
-        border-radius: 3px;
+        border-radius: var(--radius-sm);
     }
 
     .section {
-        margin-top: 20px;
+        max-width: 860px;
     }
 
-    .section-title {
-        margin: 0 0 4px 0;
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--text-muted);
-    }
-
+    /* Each day or note is a card of its own, so where one ends is plain. */
     .group {
         margin-top: 12px;
+        border-radius: var(--radius-lg);
+        background: var(--bg-raised);
+        box-shadow: 0 0 0 1px var(--border-color);
+        overflow: hidden;
     }
 
     .group-title {
-        margin: 0 0 2px 0;
+        margin: 0;
+        padding: 12px 16px;
         font-size: 14px;
         font-weight: 600;
         color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
     }
 
     .group-title.today {
@@ -347,20 +308,22 @@
         list-style: none;
     }
 
+    .todo-list li + li {
+        border-top: 1px solid var(--border-color);
+    }
+
     .todo {
         display: flex;
         align-items: flex-start;
-        gap: 8px;
+        gap: 12px;
         width: 100%;
-        padding: 5px 8px;
+        padding: 10px 16px;
         text-align: left;
         background: transparent;
         border: none;
-        border-radius: 4px;
         cursor: pointer;
         color: var(--text-primary);
         font-size: 14px;
-        font-family: inherit;
         line-height: 1.5;
     }
 
@@ -368,14 +331,39 @@
         background: var(--bg-hover);
     }
 
+    /* A picture of the editor's tick box. */
     .todo .box {
         flex-shrink: 0;
-        color: var(--text-secondary);
+        width: 18px;
+        height: 18px;
+        margin-top: 1px;
+        border-radius: 5px;
+        background: var(--bg-raised);
+        box-shadow: inset 0 0 0 1.5px var(--control-line);
+        position: relative;
+    }
+
+    .todo .box.checked {
+        background: var(--btn-primary-bg);
+        box-shadow: none;
+    }
+
+    .todo .box.checked::after {
+        content: '';
+        position: absolute;
+        left: 6px;
+        top: 3px;
+        width: 5px;
+        height: 9px;
+        border: solid var(--on-accent);
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg);
     }
 
     .todo.done .text {
         color: var(--text-muted);
         text-decoration: line-through;
+        text-decoration-color: var(--control-line);
     }
 
     .todo .text.empty {
@@ -384,22 +372,23 @@
     }
 
     /* The editor's tag chip (EditorInstance.svelte), so a tag reads here the
-       way it does in the note it came from. */
+       way it does in the note it came from, its # in the tag's own hue. */
     .tag-chip {
-        background-color: var(--bg-hover);
+        display: inline-block;
+        line-height: 20px;
+        background-color: var(--code-bg);
         color: var(--text-secondary);
-        padding: 1px 8px;
-        border-radius: 10px;
-        border: 1px solid var(--border-light);
-        font-size: 13px;
+        padding: 1px 8px 1px 7px;
+        border-radius: 999px;
+        box-shadow: inset 0 0 0 1px var(--border-color);
+        font-size: 12.5px;
         font-weight: 500;
         white-space: nowrap;
     }
 
-    /* A hovered row is the chip's own grey, which would leave only its
-       outline. */
-    .todo:hover .tag-chip {
-        background-color: var(--bg-primary);
+    .tag-chip::first-letter {
+        color: var(--tag-hue, var(--tag-1));
+        font-weight: 650;
     }
 
     /* Finished with the rest of the line. */
@@ -412,7 +401,7 @@
        padding, which would nudge the letters sideways as marks come and go
        with each key pressed. */
     mark {
-        background: var(--accent-bg-hover);
+        background: var(--warn-bg);
         color: inherit;
         border-radius: 2px;
     }

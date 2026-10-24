@@ -10,6 +10,16 @@
     import EditToggle from '$lib/editor/EditToggle.svelte';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
     import PinToggle from '$lib/components/PinToggle.svelte';
+    import Icon from '$lib/components/Icon.svelte';
+    import { swipe } from '$lib/gestures/swipe';
+    import { openJournal } from '$lib/services/journals';
+    import { toasts } from '$lib/services/toast';
+    import {
+        addDays,
+        journalDateOf,
+        journalTitleFor,
+        longJournalTitle,
+    } from '$lib/calendar/calendar';
 
     let activeDocument = $derived($currentDocument);
 
@@ -86,6 +96,33 @@
 
     let view = $derived(documentView({ routeId, openId: activeDocument?.id, shownId, loadFailed }));
 
+    // A journal is headed by its day written out, "Saturday, 24 October
+    // 2026", rather than the YYYY-MM-DD it is stored under.
+    let journalDate = $derived(
+        activeDocument?.doc_type === 'journal' ? journalDateOf(activeDocument.title) : null,
+    );
+    let heading = $derived(
+        activeDocument
+            ? ((journalDate && longJournalTitle(activeDocument.title)) ?? activeDocument.title)
+            : null,
+    );
+    let isToday = $derived(
+        journalDate !== null && activeDocument?.title === journalTitleFor(new Date()),
+    );
+
+    // The arrows beside a journal's day, which do what the day before and
+    // day after keys do.
+    async function stepDay(delta: number) {
+        if (!journalDate) return;
+        const title = journalTitleFor(addDays(journalDate, delta));
+        try {
+            await openJournal(title);
+        } catch (error) {
+            console.error('[journal] could not open', title, error);
+            toasts.error('Could not open that day');
+        }
+    }
+
     function toggleEditing() {
         editingId = editing ? null : (activeDocument?.id ?? null);
     }
@@ -93,6 +130,11 @@
     // The Edit button's shortcut, taken wherever focus is on the page, so it
     // works from the document while editing and from nowhere in particular
     // while reading, when the document cannot take focus.
+    function withKeys(label: string, id: string): string {
+        const keys = customShortcuts.labelFor(id);
+        return keys ? `${label} (${keys})` : label;
+    }
+
     function handleKeydown(event: KeyboardEvent) {
         if (view !== 'editor' || !customShortcuts.matches('edit', event)) return;
         event.preventDefault();
@@ -102,7 +144,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<WorkspaceShell title={activeDocument?.title ?? null}>
+<WorkspaceShell title={heading}>
     <!-- Reading a note is when deciding to keep it at hand usually happens.
          Only a note: a journal is reached by its day, and nothing lists a
          pinned journal. The pin is kept current on the open document by
@@ -110,6 +152,22 @@
     {#snippet actions()}
         {#if activeDocument?.doc_type === 'note'}
             <PinToggle docId={activeDocument.id} pinned={activeDocument.pinned} />
+        {:else if journalDate}
+            {#if isToday}
+                <span class="badge accent">Today</span>
+            {/if}
+            <button
+                class="day-step"
+                onclick={() => stepDay(-1)}
+                title={withKeys('The day before', 'previousDay')}
+                aria-label="The day before"><Icon name="chevron-left" /></button
+            >
+            <button
+                class="day-step"
+                onclick={() => stepDay(1)}
+                title={withKeys('The day after', 'nextDay')}
+                aria-label="The day after"><Icon name="chevron-right" /></button
+            >
         {/if}
     {/snippet}
     {#snippet tools()}
@@ -118,7 +176,17 @@
         {/if}
     {/snippet}
     {#if view === 'editor'}
-        <Editor {focusTodo} editable={editing} />
+        <!-- On a touch screen, swiping a journal sideways while reading
+             turns to the day before or after, as the arrows do. -->
+        <div
+            class="swipe-area"
+            use:swipe={{
+                accept: () => journalDate !== null && !editing,
+                onSwipe: (direction) => stepDay(direction === 'left' ? 1 : -1),
+            }}
+        >
+            <Editor {focusTodo} editable={editing} />
+        </div>
     {:else if view === 'gone'}
         <div class="empty-state">
             <p>That note no longer exists.</p>
@@ -131,6 +199,38 @@
 </WorkspaceShell>
 
 <style>
+    .swipe-area {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .day-step {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-md);
+        background: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+
+    .day-step:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    /* A phone swipes between days instead, and needs the room for the day. */
+    @media (max-width: 480px) {
+        .day-step {
+            display: none;
+        }
+    }
+
     .empty-state {
         flex: 1;
         display: flex;

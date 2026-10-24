@@ -13,6 +13,8 @@
     import NewNoteDialog from '$lib/components/NewNoteDialog.svelte';
     import RenameNoteDialog from '$lib/components/RenameNoteDialog.svelte';
     import DeleteNoteDialog from '$lib/components/DeleteNoteDialog.svelte';
+    import TagPill from '$lib/components/TagPill.svelte';
+    import Icon from '$lib/components/Icon.svelte';
 
     // Every note, on one page, with what can be done to one: open it, pin it
     // to the sidebar, rename it, delete it.
@@ -96,16 +98,16 @@
 <svelte:window onclick={handleWindowClick} />
 
 <WorkspaceShell title="Notes">
-    <div class="notes">
-        <div class="notes-bar">
-            <p class="summary">
+    <div class="notes page-body">
+        <div class="page-bar">
+            <p class="page-summary">
                 {notes.length}
                 {notes.length === 1 ? 'note' : 'notes'}{#if pinnedCount > 0}, {pinnedCount} pinned{/if}
             </p>
-            <div class="bar-actions">
+            <div class="page-actions">
                 {#if notes.length > 0}
                     <input
-                        class="filter"
+                        class="field-input"
                         type="search"
                         placeholder="Filter by title or #tag"
                         bind:value={filter}
@@ -113,14 +115,16 @@
                     />
                 {/if}
                 <button
-                    class="action-btn"
+                    class="btn"
                     onclick={handleImport}
                     disabled={markdownImport.running}
                     title="Make a note of each Markdown file you pick"
                 >
                     {markdownImport.label}
                 </button>
-                <button class="action-btn" onclick={() => (creating = true)}>New note</button>
+                <button class="btn primary" onclick={() => (creating = true)}>
+                    <Icon name="plus" size={16} />New note
+                </button>
             </div>
         </div>
 
@@ -134,6 +138,7 @@
             <ul class="note-list">
                 {#each shown as note (note.id)}
                     {@const noteTags = tagsOf(tags, note.id)}
+                    {@const status = noteStatus(note)}
                     <!-- The row is the container, not the button: the tags, the
                          pin and the menu are buttons of their own, and one
                          button cannot hold another. -->
@@ -151,17 +156,21 @@
                                  well as a label on it. -->
                             <span class="note-tags">
                                 {#each noteTags as tag (tag)}
-                                    <button
-                                        class="tag"
-                                        onclick={() => openTag(tag)}
-                                        title="Everything tagged #{tag}"
-                                    >
-                                        #{tag}
-                                    </button>
+                                    <TagPill name={tag} onclick={() => openTag(tag)} />
                                 {/each}
                             </span>
                         {/if}
-                        <span class="note-status">{noteStatus(note)}</span>
+                        <span class="note-status">
+                            {#if /open|done/.test(status)}
+                                <span
+                                    class="badge"
+                                    class:todo={status.includes('open')}
+                                    class:ok={status.includes('done')}>{status}</span
+                                >
+                            {:else}
+                                {status}
+                            {/if}
+                        </span>
                         <PinToggle docId={note.id} pinned={note.pinned} />
                         <div class="row-menu-anchor">
                             <button
@@ -189,12 +198,12 @@
                                 >
                             </button>
                             {#if openMenuId === note.id}
-                                <div class="row-menu">
-                                    <button class="row-menu-item" onclick={() => startRename(note)}>
+                                <div class="row-menu menu">
+                                    <button class="menu-item" onclick={() => startRename(note)}>
                                         Rename
                                     </button>
                                     <button
-                                        class="row-menu-item danger"
+                                        class="menu-item danger"
                                         onclick={() => startDelete(note)}
                                     >
                                         Delete
@@ -222,70 +231,6 @@
 {/if}
 
 <style>
-    .notes {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px 24px 32px;
-    }
-
-    .notes-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 8px;
-    }
-
-    .summary {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-secondary);
-    }
-
-    .bar-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-    }
-
-    .filter {
-        padding: 5px 10px;
-        font-size: 13px;
-        font-family: inherit;
-        color: var(--text-primary);
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 4px;
-        min-width: 160px;
-    }
-
-    .filter:focus {
-        outline: none;
-        border-color: var(--accent-color);
-    }
-
-    .action-btn {
-        padding: 5px 10px;
-        font-family: inherit;
-        font-size: 13px;
-        color: var(--text-primary);
-        background: transparent;
-        border: 1px solid var(--border-color);
-        border-radius: 4px;
-        cursor: pointer;
-    }
-
-    .action-btn:hover:not(:disabled) {
-        background: var(--bg-hover);
-    }
-
-    .action-btn:disabled {
-        cursor: default;
-        color: var(--text-muted);
-    }
-
     .note {
         margin: 24px 0;
         font-size: 14px;
@@ -294,7 +239,7 @@
     }
 
     .note-list {
-        margin: 12px 0 0 0;
+        margin: 8px -12px 0;
         padding: 0;
         list-style: none;
     }
@@ -303,9 +248,10 @@
         position: relative;
         display: flex;
         align-items: center;
-        gap: 4px;
-        padding: 0 4px 0 8px;
-        border-radius: 4px;
+        gap: 10px;
+        min-height: 46px;
+        padding: 0 6px 0 12px;
+        border-radius: 10px;
     }
 
     .note-row:hover {
@@ -314,23 +260,22 @@
 
     .note-open {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         flex: 1;
         min-width: 0;
-        padding: 9px 0;
+        padding: 12px 0;
         text-align: left;
         background: transparent;
         border: none;
         cursor: pointer;
         color: var(--text-primary);
         font-size: 14px;
-        font-family: inherit;
     }
 
     .note-title {
         flex: 1;
         min-width: 0;
-        font-weight: 500;
+        font-weight: 550;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -338,16 +283,7 @@
 
     .note-row.empty .note-title {
         color: var(--text-muted);
-        font-weight: 400;
-    }
-
-    /* The title, the tags and the status sit on one baseline, so a status
-       beside chips that wrap stays level with their first line rather than
-       floating between two. The pin and the menu stay centred. */
-    .note-open,
-    .note-tags,
-    .note-status {
-        align-self: baseline;
+        font-weight: 450;
     }
 
     .note-tags {
@@ -355,33 +291,16 @@
         flex-wrap: wrap;
         gap: 4px;
         justify-content: flex-end;
-        max-width: 50%;
-    }
-
-    .tag {
-        padding: 1px 7px;
-        border: none;
-        border-radius: 10px;
-        background: var(--accent-bg);
-        color: var(--accent-color);
-        font-family: inherit;
-        font-size: 11px;
-        line-height: 1.6;
-        cursor: pointer;
-        white-space: nowrap;
-    }
-
-    .tag:hover {
-        text-decoration: underline;
+        max-width: 45%;
     }
 
     /* A column of its own, however much it says, so the chips beside it line
        up from one row to the next. */
     .note-status {
         flex-shrink: 0;
-        min-width: 110px;
+        min-width: 120px;
         text-align: right;
-        font-size: 12px;
+        font-size: 12.5px;
         color: var(--text-muted);
     }
 
@@ -391,75 +310,50 @@
     }
 
     .row-menu-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
         padding: 0;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         background: transparent;
         color: var(--text-secondary);
         cursor: pointer;
     }
 
-    .row-menu-btn:hover {
+    .row-menu-btn:hover,
+    .row-menu-btn[aria-expanded='true'] {
         background: var(--bg-hover);
         color: var(--text-primary);
     }
 
-    .row-menu {
-        position: absolute;
-        top: calc(100% + 2px);
-        right: 0;
-        z-index: 50;
-        min-width: 120px;
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 6px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
-        padding: 4px;
-        display: flex;
-        flex-direction: column;
-    }
+    /* With a pointer, a row's pin (unless pinned) and menu wait for it, so
+       the list reads as titles. A touch screen keeps them. */
+    @media (hover: hover) {
+        .note-row .row-menu-btn:not([aria-expanded='true']),
+        .note-row :global(.pin-toggle:not(.pinned)) {
+            opacity: 0;
+        }
 
-    .row-menu-item {
-        text-align: left;
-        padding: 6px 8px;
-        border: none;
-        background: transparent;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 13px;
-        font-family: inherit;
-        color: var(--text-primary);
-    }
-
-    .row-menu-item:hover {
-        background: var(--bg-hover);
-    }
-
-    .row-menu-item.danger {
-        color: var(--error-text);
+        .note-row:hover .row-menu-btn,
+        .note-row:hover :global(.pin-toggle),
+        .note-row :global(:focus-visible) {
+            opacity: 1;
+        }
     }
 
     /* On a phone the title and what goes beside it do not fit on one line, so
        the title keeps the first line to itself, with the pin and the menu,
        and the status and the tags share a second one under it. */
     @media (max-width: 640px) {
-        .notes {
-            padding: 12px 16px 24px;
-        }
-
         .note-row {
             flex-wrap: wrap;
+            gap: 4px;
         }
 
-        /* Everything on the line but the pin and the menu, which are 28px
-           each with a 4px gap before both. */
         .note-open {
-            flex-basis: calc(100% - 64px);
+            flex-basis: calc(100% - 72px);
         }
 
         .note-status {
@@ -475,7 +369,7 @@
 
         .note-tags {
             order: 2;
-            flex: 1;
+            flex: 1 1 100%;
             min-width: 0;
             max-width: none;
             margin-bottom: 8px;

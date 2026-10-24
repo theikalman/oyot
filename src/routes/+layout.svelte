@@ -18,6 +18,9 @@
     import { watchMcpRequests } from '$lib/mcp/relay';
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import CloseNoticeDialog from '$lib/components/CloseNoticeDialog.svelte';
+    import { rememberWorkspacePath } from '$lib/components/SettingsShell.svelte';
+    import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
+    import { switcher } from '$lib/switcher/switcher.svelte';
     import '../app.css';
 
     let { children }: { children: Snippet } = $props();
@@ -83,14 +86,6 @@
 
     let currentPath = $derived(page.url.pathname);
 
-    function handleBack() {
-        window.history.back();
-    }
-
-    function handleClose() {
-        goto(resolve('/'));
-    }
-
     // The journal on screen, by the URL, which names it before it has
     // loaded. Its day is its title.
     let openJournalTitle = $derived.by(() => {
@@ -123,6 +118,14 @@
     // leaving the page would throw it away. On the page it opens, a
     // shortcut does nothing here, and the Search page answers its own.
     function handleKeydown(event: KeyboardEvent) {
+        // The quick switcher, from anywhere but over another dialog.
+        if (customShortcuts.matches('switcher', event)) {
+            event.preventDefault();
+            if (event.repeat || switcher.open) return;
+            if (document.querySelector('[aria-modal="true"]')) return;
+            switcher.show();
+            return;
+        }
         const id = GO_TO_SHORTCUTS.find((id) => customShortcuts.matches(id, event));
         if (id === undefined) return;
         event.preventDefault();
@@ -137,114 +140,20 @@
         else void openDay(to.title);
     }
 
-    let pageTitle = $derived.by(() => {
-        switch (currentPath) {
-            case '/settings':
-                return 'Settings';
-            case '/settings/sync':
-                return 'Sync';
-            case '/settings/backup':
-                return 'Backup';
-            case '/settings/shortcuts':
-                return 'Keyboard shortcuts';
-            default:
-                return '';
-        }
+    // Back and Esc in Settings return to where the user was before it.
+    $effect(() => {
+        rememberWorkspacePath(currentPath);
     });
-
-    // The header belongs to the settings routes. The workspace has its own.
-    let showHeader = $derived(currentPath.startsWith('/settings'));
-    let canGoBack = $derived(currentPath !== '/settings');
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-{#if showHeader}
-    <header class="app-header">
-        {#if canGoBack}
-            <button class="header-btn back-btn" onclick={handleBack} title="Back">
-                <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M19 12H5M12 19l-7-7 7-7" />
-                </svg>
-            </button>
-        {:else}
-            <div class="header-spacer"></div>
-        {/if}
-        <h1 class="header-title">{pageTitle}</h1>
-        <button class="header-btn close-btn" onclick={handleClose} title="Close">
-            <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-        </button>
-    </header>
-{/if}
-
 {@render children()}
+
+<QuickSwitcher />
 
 <ToastContainer />
 
 {#if answerCloseNotice}
     <CloseNoticeDialog onAnswer={answerCloseNotice} />
 {/if}
-
-<style>
-    .app-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        height: 56px;
-        padding: 0 16px;
-        background: var(--bg-primary);
-        border-bottom: 1px solid var(--border-color);
-        position: sticky;
-        top: var(--safe-top);
-        z-index: 100;
-    }
-
-    .header-spacer {
-        width: 40px;
-    }
-
-    .header-btn {
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: transparent;
-        border: none;
-        border-radius: 8px;
-        color: var(--text-primary);
-        cursor: pointer;
-        transition: background-color 0.15s;
-    }
-
-    .header-btn:hover {
-        background: var(--bg-hover);
-    }
-
-    .header-title {
-        margin: 0;
-        font-size: 18px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-</style>

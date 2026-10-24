@@ -94,8 +94,10 @@
     .page-title {
         min-width: 0;
         margin: 0;
-        font-size: 24px;
+        font-size: 20px;
         line-height: 32px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
         color: var(--text-primary);
     }
 

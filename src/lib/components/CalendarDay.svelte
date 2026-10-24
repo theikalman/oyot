@@ -64,17 +64,18 @@
        other buttons have it, so a day drawn as a picture is the same as one
        drawn as a button. */
     .cal-day {
-        aspect-ratio: 1;
+        height: 30px;
         position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
         font-family: inherit;
-        font-size: 11px;
-        color: var(--text-primary);
+        font-size: 12.5px;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-secondary);
         background: transparent;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         transition: background 0.1s;
     }
 
@@ -82,17 +83,18 @@
         cursor: pointer;
     }
 
-    /* The theme's secondary grey, which the sidebar's icons use too. A fixed
-       #666 stayed the same in dark mode, where it was too dark to find:
-       2.2:1 against today's cell, under the 3:1 a mark needs. */
+    /* Under the number, where it reads as part of the day rather than a
+       speck in its corner. The line controls are drawn with, which meets
+       the 3:1 a mark needs on every scheme. */
     .journal-dot {
         position: absolute;
-        top: 3px;
-        left: 3px;
+        bottom: 3px;
+        left: 50%;
         width: 4px;
         height: 4px;
+        margin-left: -2px;
         border-radius: 50%;
-        background: var(--text-secondary);
+        background: var(--control-line);
         pointer-events: none;
     }
 
@@ -102,20 +104,33 @@
 
     button.cal-day:hover:not(:disabled):not(.empty) {
         background: var(--bg-hover);
+        color: var(--text-primary);
     }
 
     .cal-day.today {
-        background: var(--accent-bg);
-        color: var(--accent-color);
-        font-weight: 700;
+        background: var(--btn-primary-bg);
+        color: var(--on-accent);
+        font-weight: 600;
+    }
+
+    .cal-day.today .journal-dot {
+        background: var(--on-accent);
+    }
+
+    button.cal-day.today:hover:not(:disabled) {
+        background: var(--btn-primary-hover);
+        color: var(--on-accent);
     }
 
     .cal-day.selected:not(.today) {
         box-shadow: inset 0 0 0 1.5px var(--accent-color);
+        color: var(--text-primary);
     }
 
     .cal-day.today.selected {
-        box-shadow: inset 0 0 0 2px var(--accent-color);
+        box-shadow:
+            0 0 0 2px var(--bg-secondary),
+            0 0 0 3.5px var(--accent-color);
     }
 
     .cal-day.empty {
@@ -124,5 +139,12 @@
 
     .cal-day:disabled {
         cursor: default;
+    }
+
+    @media (pointer: coarse) {
+        .cal-day {
+            height: 36px;
+            font-size: 14px;
+        }
     }
 </style>

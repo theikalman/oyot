@@ -1,6 +1,6 @@
 {
   "name": "oyot",
-  "version": "0.0.32-alpha",
+  "version": "0.0.33-alpha",
   "description": "A local-first note-taking app that syncs directly between your own devices.",
   "type": "module",
   "scripts": {
@@ -18,6 +18,8 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@fontsource-variable/geist": "^5.2.8",
+    "@fontsource-variable/geist-mono": "^5.2.7",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-barcode-scanner": "^2.4.5",
     "@tauri-apps/plugin-dialog": "^2.7.1",

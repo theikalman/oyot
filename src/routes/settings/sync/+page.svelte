@@ -1,4 +1,5 @@
 <script lang="ts">
+    import SettingsShell from '$lib/components/SettingsShell.svelte';
     import { onMount } from 'svelte';
     import { invoke } from '@tauri-apps/api/core';
     import {
@@ -222,93 +223,102 @@
     }
 </script>
 
-<div class="sync-page">
-    {#if showRepairNotice && paired.length === 0}
-        <div class="notice">
-            <div class="notice-body">
-                <strong>Devices need pairing again</strong>
-                <p>
-                    This version gives every device a cryptographic identity, so signaling messages
-                    can be verified rather than taken on trust. Device IDs changed as a result, and
-                    previous pairings no longer apply. Your notes are untouched.
-                </p>
-            </div>
-            <button class="notice-dismiss" onclick={dismissRepairNotice} aria-label="Dismiss">
-                Got it
-            </button>
-        </div>
-    {/if}
-
-    <IdentityCard
-        identity={localIdentity}
-        onCopy={copyNodeId}
-        {copySuccess}
-        onRename={handleRename}
-    />
-
-    <LocalNetworkStatus
-        lanStatus={lanState}
-        {nearby}
-        {portTaken}
-        remoteCount={onStoredAddress.size}
-        anyStoredAddress={endpoints.length > 0}
-        onCheckAddresses={handleCheckAddresses}
-    />
-
-    <BackgroundSyncCard />
-
-    <PairDeviceForm
-        pairingState={pairState}
-        discovering={lanState === 'active'}
-        onPair={handlePair}
-    />
-
-    <ConnectedPeerList
-        pairedDevices={paired}
-        connectedPeers={connected}
-        {endpoints}
-        {onStoredAddress}
-        onDisconnect={handleDisconnect}
-        onReconnect={handleReconnect}
-        onRemove={handleRemovePeer}
-        onAddAddress={handleAddEndpoint}
-        onForgetAddress={handleForgetEndpoint}
-    />
-
-    <UnpairedAddressList
-        {endpoints}
-        pairedDevices={paired}
-        reachable={onStoredAddress}
-        onForget={handleForgetEndpoint}
-    />
-
-    {#if pending}
-        <PairingDialog
-            from={pending.from}
-            displayName={pending.display_name}
-            onAccept={handleAcceptPairRequest}
-            onDecline={handleDeclinePairRequest}
-        />
-    {/if}
-
-    {#if removeTarget}
-        <Modal
-            title={`Remove "${removeTarget.peer_display_name}"?`}
-            onClose={() => (removeTarget = null)}
-        >
-            <p class="modal-note">
-                The two devices stop syncing. Pairing them again means reading one device's ID off
-                the other. Documents already synced are kept.
-            </p>
-            {#snippet actions()}
-                <button class="btn-secondary" data-secondary onclick={() => (removeTarget = null)}>
-                    Cancel
+<SettingsShell
+    title="Devices & sync"
+    description="Oyot syncs straight between your devices. Nothing is sent to a server."
+>
+    <div class="sync-page">
+        {#if showRepairNotice && paired.length === 0}
+            <div class="notice">
+                <div class="notice-body">
+                    <strong>Devices need pairing again</strong>
+                    <p>
+                        This version gives every device a cryptographic identity, so signaling
+                        messages can be verified rather than taken on trust. Device IDs changed as a
+                        result, and previous pairings no longer apply. Your notes are untouched.
+                    </p>
+                </div>
+                <button class="notice-dismiss" onclick={dismissRepairNotice} aria-label="Dismiss">
+                    Got it
                 </button>
-                <button class="btn-danger" onclick={confirmRemovePeer}>Remove</button>
-            {/snippet}
-        </Modal>
-    {/if}
-</div>
+            </div>
+        {/if}
+
+        <IdentityCard
+            identity={localIdentity}
+            onCopy={copyNodeId}
+            {copySuccess}
+            onRename={handleRename}
+        />
+
+        <LocalNetworkStatus
+            lanStatus={lanState}
+            {nearby}
+            {portTaken}
+            remoteCount={onStoredAddress.size}
+            anyStoredAddress={endpoints.length > 0}
+            onCheckAddresses={handleCheckAddresses}
+        />
+
+        <BackgroundSyncCard />
+
+        <PairDeviceForm
+            pairingState={pairState}
+            discovering={lanState === 'active'}
+            onPair={handlePair}
+        />
+
+        <ConnectedPeerList
+            pairedDevices={paired}
+            connectedPeers={connected}
+            {endpoints}
+            {onStoredAddress}
+            onDisconnect={handleDisconnect}
+            onReconnect={handleReconnect}
+            onRemove={handleRemovePeer}
+            onAddAddress={handleAddEndpoint}
+            onForgetAddress={handleForgetEndpoint}
+        />
+
+        <UnpairedAddressList
+            {endpoints}
+            pairedDevices={paired}
+            reachable={onStoredAddress}
+            onForget={handleForgetEndpoint}
+        />
+
+        {#if pending}
+            <PairingDialog
+                from={pending.from}
+                displayName={pending.display_name}
+                onAccept={handleAcceptPairRequest}
+                onDecline={handleDeclinePairRequest}
+            />
+        {/if}
+
+        {#if removeTarget}
+            <Modal
+                title={`Remove "${removeTarget.peer_display_name}"?`}
+                onClose={() => (removeTarget = null)}
+            >
+                <p class="modal-note">
+                    The two devices stop syncing. Pairing them again means reading one device's ID
+                    off the other. Documents already synced are kept.
+                </p>
+                {#snippet actions()}
+                    <button
+                        class="btn-secondary"
+                        data-secondary
+                        onclick={() => (removeTarget = null)}
+                    >
+                        Cancel
+                    </button>
+                    <button class="btn-danger" onclick={confirmRemovePeer}>Remove</button>
+                {/snippet}
+            </Modal>
+        {/if}
+    </div>
+</SettingsShell>
 
 <style>
     .modal-note {
@@ -375,8 +385,6 @@
         background: var(--accent-bg-hover);
     }
     .sync-page {
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 24px;
+        display: block;
     }
 </style>

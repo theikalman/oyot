@@ -36,6 +36,42 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.33-alpha',
+        date: '2026-10-25',
+        summary:
+            'A new look: every page sits on one raised sheet, the sidebar leads with where you go, Settings is part of the app, and a quick switcher takes you anywhere from Ctrl K.',
+        changes: [
+            {
+                kind: 'improved',
+                text: 'Every page sits on a raised sheet over a quieter background, in the Geist typeface. Notes and journals are set at a width made for reading, tick boxes are drawn the same on every system, a done todo is struck through, and each tag keeps one colour, picked from its name, wherever it is shown.',
+            },
+            {
+                kind: 'improved',
+                text: 'The sidebar starts with a search box and the places you go: Today, Journals, Notes, Todos and Tags, each with its count, then the calendar and your pinned notes. Its foot says how sync stands and opens Devices & sync, in place of the list of devices and the sync pill in every page’s header.',
+            },
+            {
+                kind: 'added',
+                text: 'A quick switcher, from Ctrl K (⌘K on a Mac) or the search box at the top of the sidebar, finds a note by its title, a journal by its day, a tag or a page as you type, and can make a note of the words or search everything for them. Its keys can be changed in Settings.',
+            },
+            {
+                kind: 'improved',
+                text: 'Read and Edit are one switch at the top right. While writing, the formatting toolbar floats at the bottom of the page instead of pushing it down. A journal is headed by its day written out, with arrows to the day before and after.',
+            },
+            {
+                kind: 'improved',
+                text: 'Settings opens inside the app instead of over it, with its sections in the sidebar, and Back or Esc returns to where you were. About Oyot, with what is new in each release, is a page of Settings, opened from the version at the foot of the sidebar.',
+            },
+            {
+                kind: 'added',
+                text: 'Journals shows the days as a list, a month or the whole year. The list opens with the year at a glance, where a week can be clicked, and folds runs of days with nothing written into one line. Pinch on a touch screen, or Ctrl and scroll, to move between the three.',
+            },
+            {
+                kind: 'added',
+                text: 'On a phone, Today, Notes, Todos and Search are tabs at the foot of the screen. The rest of the sidebar slides in from the left edge, and swiping a journal sideways while reading turns to the day before or after.',
+            },
+        ],
+    },
+    {
         version: '0.0.32-alpha',
         date: '2026-10-22',
         summary:
