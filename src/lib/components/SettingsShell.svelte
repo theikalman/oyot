@@ -12,6 +12,7 @@
 <script lang="ts">
     import type { Snippet } from 'svelte';
     import { goto } from '$app/navigation';
+    import { resolve } from '$app/paths';
     import { page } from '$app/state';
     import { APP_VERSION } from '$lib/version';
     import { pairedDevices, connectedPeers } from '$lib/stores/sync';
@@ -32,13 +33,13 @@
 
     let { title, description, children }: Props = $props();
 
-    const SECTIONS: { path: string; label: string; icon: IconName }[] = [
+    const SECTIONS = [
         { path: '/settings', label: 'General', icon: 'sliders' },
         { path: '/settings/shortcuts', label: 'Keyboard shortcuts', icon: 'keyboard' },
         { path: '/settings/sync', label: 'Devices & sync', icon: 'sync' },
         { path: '/settings/backup', label: 'Backup', icon: 'backup' },
         { path: '/settings/about', label: 'About Oyot', icon: 'info' },
-    ];
+    ] as const satisfies readonly { path: string; label: string; icon: IconName }[];
 
     let here = $derived(page.url.pathname);
     let small = $state(isSmallScreen());
@@ -54,13 +55,14 @@
     );
 
     function leave() {
+        // eslint-disable-next-line svelte/no-navigation-without-resolve -- a path the app was on, already resolved
         void goto(returnPath);
     }
 
     // On a phone a section is a page of its own, and back goes up to the
     // list of sections; from the list, back leaves Settings.
     function back() {
-        if (small && here !== '/settings') void goto('/settings');
+        if (small && here !== '/settings') void goto(resolve('/settings'));
         else leave();
     }
 
@@ -90,12 +92,11 @@
             </div>
             <nav class="nav">
                 {#each SECTIONS as section (section.path)}
-                    <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- fixed paths -->
                     <a
                         class="nav-item"
                         class:active={here === section.path}
                         aria-current={here === section.path ? 'page' : undefined}
-                        href={section.path}
+                        href={resolve(section.path)}
                     >
                         <Icon name={section.icon} />
                         <span class="nav-label">{section.label}</span>
