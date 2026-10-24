@@ -103,6 +103,9 @@ describe('colour schemes', () => {
         ['--warn-text', '--warn-bg', 4.5],
         ['--error-text', '--error-bg', 4.5],
         ['--info-text', '--info-bg', 4.5],
+        ['--text-primary', '--bg-raised', 4.5],
+        ['--todo-text', '--todo-bg', 4.5],
+        ['--tip-text', '--tip-bg', 4.5],
     ];
 
     it.each(ids)('keeps text readable in %s', (id) => {
