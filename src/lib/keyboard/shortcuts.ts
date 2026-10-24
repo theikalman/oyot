@@ -63,6 +63,20 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         ],
     },
     {
+        id: 'switcher',
+        title: 'Quick switcher',
+        where: 'Anywhere, unless a dialog is open',
+        // Mod-k, where many apps keep theirs. The editor leaves it free: a
+        // link is made by pasting one, or with the insert menu.
+        shortcuts: [
+            {
+                id: 'switcher',
+                action: 'Jump to a note, journal, tag or page',
+                keys: ['Mod-k'],
+            },
+        ],
+    },
+    {
         id: 'days',
         title: 'Days',
         where: 'Anywhere, unless a dialog is open, counting from the open journal or from today',

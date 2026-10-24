@@ -1,6 +1,7 @@
 <script lang="ts">
     import { tick } from 'svelte';
     import { afterNavigate } from '$app/navigation';
+    import { page } from '$app/state';
     import { documents } from '$lib/stores/app';
     import { indexRevision } from '$lib/stores/derivedIndex';
     import { openDocument, openDocumentAtTodo } from '$lib/services/navigation';
@@ -34,7 +35,8 @@
     // $lib/search/results), and listed the same way, a row that opens what it
     // names.
 
-    let query = $state('');
+    // A search handed over by the quick switcher arrives as ?q=.
+    let query = $state(page.url.searchParams.get('q') ?? '');
     let scope = $state<SearchScope>('all');
     let info = $derived(scopeInfo(scope));
 

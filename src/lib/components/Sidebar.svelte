@@ -34,7 +34,6 @@
         openHelp,
         openJournals,
         openNotes,
-        openSearch,
         openTags,
         openTodos,
     } from '../services/navigation';
@@ -45,6 +44,7 @@
     import DeleteNoteDialog from './DeleteNoteDialog.svelte';
     import DocumentList from './DocumentList.svelte';
     import SidebarSyncRow from './SidebarSyncRow.svelte';
+    import { switcher } from '../switcher/switcher.svelte';
     import Icon from './Icon.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
     import { APP_VERSION } from '../version';
@@ -152,14 +152,15 @@
         void refreshTagCount();
     });
 
-    // The search box at the top. It opens the Search page, which finds
-    // notes, journals, todos and tags by their words.
+    // The search box at the top opens the quick switcher, which jumps to a
+    // note, journal, tag or page by typing, and hands a longer search to the
+    // Search page.
     function goToSwitcher() {
-        void openSearch();
         dismissOnSmallScreen();
+        switcher.show();
     }
 
-    let switcherKeys = $derived(customShortcuts.labelFor('search'));
+    let switcherKeys = $derived(customShortcuts.labelFor('switcher'));
 
     // Today, first among the places: the journal Oyot opens on.
     let todayTitle = $derived(journalTitleFor(today));
@@ -324,7 +325,7 @@
             class="search-btn"
             class:active={onSearchPage}
             onclick={goToSwitcher}
-            title={withKeys('Search', 'search')}
+            title={withKeys('Search or jump to', 'switcher')}
         >
             <Icon name="search" size={16} />
             <span class="grow">Search or jump to</span>

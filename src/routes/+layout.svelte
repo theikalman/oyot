@@ -19,6 +19,8 @@
     import ToastContainer from '$lib/components/ToastContainer.svelte';
     import CloseNoticeDialog from '$lib/components/CloseNoticeDialog.svelte';
     import { rememberWorkspacePath } from '$lib/components/SettingsShell.svelte';
+    import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
+    import { switcher } from '$lib/switcher/switcher.svelte';
     import '../app.css';
 
     let { children }: { children: Snippet } = $props();
@@ -116,6 +118,14 @@
     // leaving the page would throw it away. On the page it opens, a
     // shortcut does nothing here, and the Search page answers its own.
     function handleKeydown(event: KeyboardEvent) {
+        // The quick switcher, from anywhere but over another dialog.
+        if (customShortcuts.matches('switcher', event)) {
+            event.preventDefault();
+            if (event.repeat || switcher.open) return;
+            if (document.querySelector('[aria-modal="true"]')) return;
+            switcher.show();
+            return;
+        }
         const id = GO_TO_SHORTCUTS.find((id) => customShortcuts.matches(id, event));
         if (id === undefined) return;
         event.preventDefault();
@@ -139,6 +149,8 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {@render children()}
+
+<QuickSwitcher />
 
 <ToastContainer />
 

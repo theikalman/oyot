@@ -55,7 +55,7 @@ describe('effectiveBindings', () => {
 
     it('writes the keys the one way', () => {
         expect(keysOf({ bold: ['Shift-Mod-X'] }, 'bold')).toEqual(['Mod-Shift-x']);
-        expect(keysOf({ bold: ['Ctrl-k'] }, 'bold', PC)).toEqual(['Mod-k']);
+        expect(keysOf({ bold: ['Ctrl-j'] }, 'bold', PC)).toEqual(['Mod-j']);
     });
 
     // Only a file edited by hand, or a shortcut added since, can have two
@@ -68,20 +68,20 @@ describe('effectiveBindings', () => {
     });
 
     it('gives a key two changed shortcuts claim to the first in the list', () => {
-        const bindings = effectiveBindings({ italic: ['Mod-k'], bold: ['Mod-k'] }, MAC);
+        const bindings = effectiveBindings({ italic: ['Mod-j'], bold: ['Mod-j'] }, MAC);
 
-        expect(bindings.get('bold')).toEqual(['Mod-k']);
+        expect(bindings.get('bold')).toEqual(['Mod-j']);
         expect(bindings.get('italic')).toEqual([]);
     });
 
     it('drops keys a shortcut cannot have', () => {
         expect(
-            keysOf({ bold: ['Mod-c', 'b', 'Mod-Enter', 'nonsense-x', 'Mod-k'] }, 'bold'),
-        ).toEqual(['Mod-k']);
+            keysOf({ bold: ['Mod-c', 'b', 'Mod-Enter', 'nonsense-x', 'Mod-j'] }, 'bold'),
+        ).toEqual(['Mod-j']);
     });
 
     it('ignores a shortcut it does not know', () => {
-        const bindings = effectiveBindings({ someday: ['Mod-k'] }, MAC);
+        const bindings = effectiveBindings({ someday: ['Mod-j'] }, MAC);
 
         expect(bindings.has('someday')).toBe(false);
     });
@@ -93,7 +93,7 @@ describe('isChanged', () => {
     });
 
     it('is true for one with other keys, or none', () => {
-        expect(isChanged('bold', effectiveBindings({ bold: ['Mod-k'] }, MAC), MAC)).toBe(true);
+        expect(isChanged('bold', effectiveBindings({ bold: ['Mod-j'] }, MAC), MAC)).toBe(true);
         expect(isChanged('bold', effectiveBindings({ bold: [] }, MAC), MAC)).toBe(true);
     });
 
@@ -104,7 +104,7 @@ describe('isChanged', () => {
 
 describe('conflictsWith', () => {
     it('is nothing for keys no other shortcut has', () => {
-        expect(conflictsWith('bold', ['Mod-k'], effectiveBindings({}, MAC), MAC)).toEqual([]);
+        expect(conflictsWith('bold', ['Mod-j'], effectiveBindings({}, MAC), MAC)).toEqual([]);
     });
 
     it('names the shortcut that has the keys, and what it would keep', () => {
@@ -131,7 +131,7 @@ describe('conflictsWith', () => {
 
 describe('assign', () => {
     it('gives a shortcut new keys', () => {
-        expect(assign({}, 'bold', ['Mod-k'], MAC)).toEqual({ bold: ['Mod-k'] });
+        expect(assign({}, 'bold', ['Mod-j'], MAC)).toEqual({ bold: ['Mod-j'] });
     });
 
     it('gives a shortcut none', () => {
@@ -153,7 +153,7 @@ describe('assign', () => {
     });
 
     it('stores nothing for a shortcut given its own keys back', () => {
-        expect(assign({ bold: ['Mod-k'] }, 'bold', ['Mod-b'], MAC)).toEqual({});
+        expect(assign({ bold: ['Mod-j'] }, 'bold', ['Mod-b'], MAC)).toEqual({});
     });
 
     it('takes its own keys back from the shortcut that has them now', () => {
@@ -166,8 +166,8 @@ describe('assign', () => {
     });
 
     it('keeps what it does not know, for a later version that does', () => {
-        expect(assign({ someday: ['Mod-k'] }, 'bold', ['Mod-j'], MAC)).toEqual({
-            someday: ['Mod-k'],
+        expect(assign({ someday: ['Mod-j'] }, 'bold', ['Mod-j'], MAC)).toEqual({
+            someday: ['Mod-j'],
             bold: ['Mod-j'],
         });
     });
@@ -179,7 +179,7 @@ describe('assign', () => {
 
 describe('problemWith', () => {
     it('takes Mod, with or without other modifiers, and a letter, digit or symbol', () => {
-        expect(problemWith('Mod-k', MAC)).toBeNull();
+        expect(problemWith('Mod-j', MAC)).toBeNull();
         expect(problemWith('Mod-Alt-Shift-7', MAC)).toBeNull();
         expect(problemWith('Mod-/', PC)).toBeNull();
         expect(problemWith('Mod-ö', MAC)).toBeNull();
@@ -187,7 +187,7 @@ describe('problemWith', () => {
 
     // Control is a key of its own on a Mac, and never types anything.
     it('takes Control without Command on an Apple device', () => {
-        expect(problemWith('Ctrl-k', MAC)).toBeNull();
+        expect(problemWith('Ctrl-j', MAC)).toBeNull();
     });
 
     // Anything else types, or does something of its own in some places.
