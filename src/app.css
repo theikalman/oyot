@@ -14,7 +14,8 @@
 @import '@fontsource-variable/geist-mono';
 
 :root {
-    --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;
+    --font-sans:
+        'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;
     --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
 
     /* One radius family: keys and tags, buttons and rows, cards and the

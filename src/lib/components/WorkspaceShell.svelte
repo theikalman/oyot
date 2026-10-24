@@ -2,9 +2,10 @@
     import type { Snippet } from 'svelte';
     import { isLoading } from '$lib/stores/app';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
-    import Sidebar, { startsCollapsed } from './Sidebar.svelte';
+    import Sidebar, { isSmallScreen, startsCollapsed } from './Sidebar.svelte';
     import PageTitle from './PageTitle.svelte';
     import SyncStatus from './SyncStatus.svelte';
+    import Icon from './Icon.svelte';
 
     // The chrome every workspace route shares: the sidebar beside a titled
     // column with the sync indicator in its header. Extracted when the todo
@@ -53,6 +54,15 @@
     // there to press. Measured rather than assumed: a title shown in full
     // makes the header taller.
     let headerHeight = $state(57);
+
+    // On a phone the toggle is a menu button that opens the drawer.
+    let small = $state(isSmallScreen());
+    $effect(() => {
+        const mq = window.matchMedia('(max-width: 768px)');
+        const onChange = (e: MediaQueryListEvent) => (small = e.matches);
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -60,41 +70,25 @@
 <main class="app" style:--workspace-header-height="{headerHeight}px">
     <div class="workspace">
         <Sidebar bind:collapsed={sidebarCollapsed} />
-        <div class="main-content">
+        <div class="main-content" class:flush={sidebarCollapsed || small}>
             <div class="sync-status-container" bind:offsetHeight={headerHeight}>
                 <div class="page-start">
-                    <!-- One button for the sidebar, always here, before the
-                         title: « while it is open, » while it is not. The «
-                         used to sit at the top of the sidebar, and once the
-                         search box beside it was gone it had a row to itself
-                         there, which looked like something missing. -->
-                    <button
-                        class="sidebar-toggle"
-                        bind:this={sidebarToggle}
-                        onclick={() => (sidebarCollapsed = !sidebarCollapsed)}
-                        title={toggleHint}
-                        aria-label="Sidebar"
-                        aria-expanded={!sidebarCollapsed}
-                        aria-controls="sidebar"
-                    >
-                        <svg
-                            width="20"
-                            height="20"
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            aria-hidden="true"
-                            ><path
-                                stroke="currentColor"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d={sidebarCollapsed
-                                    ? 'm13 17 5-5-5-5M6 17l5-5-5-5'
-                                    : 'm11 17-5-5 5-5M18 17l-5-5 5-5'}
-                            /></svg
+                    <!-- Brings the sidebar back, or opens it as a drawer on a
+                         phone. While the sidebar is out, its own button hides
+                         it again, so this one is not needed. -->
+                    {#if sidebarCollapsed}
+                        <button
+                            class="sidebar-toggle"
+                            bind:this={sidebarToggle}
+                            onclick={() => (sidebarCollapsed = false)}
+                            title={toggleHint}
+                            aria-label="Sidebar"
+                            aria-expanded={false}
+                            aria-controls="sidebar"
                         >
-                    </button>
+                            <Icon name={small ? 'menu' : 'panel-left'} size={20} />
+                        </button>
+                    {/if}
                     {#if title}
                         <div class="page-heading">
                             <PageTitle {title} />
@@ -106,7 +100,11 @@
                 </div>
                 <div class="page-tools">
                     {@render tools?.()}
-                    <SyncStatus />
+                    <!-- The sidebar's foot says how sync stands; with the
+                         sidebar away, the header does. -->
+                    {#if sidebarCollapsed}
+                        <SyncStatus />
+                    {/if}
                 </div>
             </div>
             {@render children()}
@@ -133,14 +131,36 @@
         flex: 1;
         display: flex;
         overflow: hidden;
+        background: var(--bg-secondary);
     }
 
+    /* The sheet: every page sits on it, raised over the frame, so where you
+       read and write is always the brightest, calmest surface. */
     .main-content {
         flex: 1;
+        min-width: 0;
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        margin: 8px 8px 8px 0;
         background: var(--bg-primary);
+        border-radius: var(--radius-sheet);
+        box-shadow: var(--shadow-sheet);
+    }
+
+    /* Without the sidebar beside it, the sheet keeps the same margin all
+       round. */
+    .main-content.flush {
+        margin-left: 8px;
+    }
+
+    /* A phone has no room for a frame: the sheet is the screen. */
+    @media (max-width: 768px) {
+        .main-content {
+            margin: 0 !important;
+            border-radius: 0;
+            box-shadow: none;
+        }
     }
 
     /* Everything in the header lines up with the first line of the title,
@@ -152,9 +172,9 @@
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        padding: 12px 16px;
+        padding: 10px 12px;
         border-bottom: 1px solid var(--border-color);
-        min-height: 57px;
+        min-height: 52px;
     }
 
     .page-start {
@@ -192,7 +212,7 @@
         padding: 0;
         background: none;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-md);
         color: var(--text-secondary);
         cursor: pointer;
         display: flex;
