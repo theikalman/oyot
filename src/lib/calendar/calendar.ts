@@ -147,3 +147,14 @@ export function formatJournalTitle(title: string, today: Date): string {
 
     return `${date.getDate()} ${MONTH_NAMES[date.getMonth()].slice(0, 3)} ${date.getFullYear()}`;
 }
+
+/**
+ * A journal's day written out in full, "Saturday, 24 October 2026", for the
+ * head of the journal itself, where there is room for it. Null for a title
+ * that does not name a day.
+ */
+export function longJournalTitle(title: string): string | null {
+    const date = journalDateOf(title);
+    if (!date) return null;
+    return `${weekdayName(date)}, ${date.getDate()} ${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+}

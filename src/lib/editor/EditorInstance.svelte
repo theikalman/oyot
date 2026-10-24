@@ -433,17 +433,32 @@
 
     .editor-content {
         flex: 1;
-        padding: 24px;
+        padding: 28px 40px 140px;
         overflow-y: auto;
         background: var(--bg-primary);
         color: var(--text-primary);
     }
 
+    /* A width made for reading: lines of about seventy characters, centred
+       on the sheet however wide the window is. */
     .editor-content :global(.tiptap) {
         outline: none;
         min-height: 100%;
+        max-width: 680px;
+        margin: 0 auto;
         color: var(--text-primary);
-        line-height: 1.7;
+        font-size: 15.5px;
+        line-height: 1.68;
+    }
+
+    @media (max-width: 768px) {
+        .editor-content {
+            padding: 18px 20px 120px;
+        }
+
+        .editor-content :global(.tiptap) {
+            font-size: 16px;
+        }
     }
 
     .editor-content :global(.tiptap p.is-editor-empty:first-child::before) {
@@ -455,22 +470,32 @@
     }
 
     .editor-content :global(h1) {
-        font-size: 2em;
-        margin: 0.67em 0;
+        font-size: 1.75em;
+        line-height: 1.25;
+        font-weight: 650;
+        letter-spacing: -0.024em;
+        margin: 1.1em 0 0.4em;
         color: var(--text-primary);
     }
     .editor-content :global(h2) {
-        font-size: 1.5em;
-        margin: 0.83em 0;
+        font-size: 1.25em;
+        line-height: 1.4;
+        font-weight: 620;
+        letter-spacing: -0.014em;
+        margin: 1.4em 0 0.25em;
         color: var(--text-primary);
     }
     .editor-content :global(h3) {
-        font-size: 1.17em;
-        margin: 1em 0;
+        font-size: 1.05em;
+        font-weight: 620;
+        margin: 1.2em 0 0.2em;
         color: var(--text-primary);
     }
+    .editor-content :global(.tiptap > :first-child) {
+        margin-top: 0;
+    }
     .editor-content :global(p) {
-        margin: 1em 0;
+        margin: 0.6em 0;
     }
     .editor-content :global(ul),
     .editor-content :global(ol) {
@@ -491,15 +516,22 @@
     .editor-content :global(code) {
         background: var(--code-bg);
         color: var(--text-primary);
-        padding: 2px 4px;
-        border-radius: 3px;
+        font-family: var(--font-mono);
+        font-size: 0.88em;
+        padding: 2px 5px;
+        border-radius: var(--radius-sm);
     }
     .editor-content :global(pre) {
         background: var(--code-bg);
         color: var(--text-primary);
         padding: 16px;
-        border-radius: 6px;
+        border-radius: var(--radius-lg);
+        box-shadow: inset 0 0 0 1px var(--border-color);
         overflow-x: auto;
+    }
+    .editor-content :global(pre code) {
+        padding: 0;
+        background: none;
     }
     /* A code block's language, in its corner, so what it holds is on screen. */
     .editor-content :global(pre[data-language]) {
@@ -544,7 +576,7 @@
         font-size: 0.9em;
     }
     .editor-content :global(blockquote) {
-        border-left: 4px solid var(--border-light);
+        border-left: 3px solid var(--border-light);
         margin: 1em 0;
         padding-left: 1em;
         color: var(--text-secondary);
@@ -552,6 +584,8 @@
     .editor-content :global(a) {
         color: var(--accent-color);
         text-decoration: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
     }
 
     .editor-content :global(.document-link) {
@@ -560,9 +594,10 @@
         gap: 4px;
         background-color: var(--accent-bg);
         color: var(--accent-color);
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 14px;
+        padding: 1px 8px 1px 6px;
+        border-radius: 7px;
+        font-size: 0.94em;
+        font-weight: 550;
         cursor: pointer;
         text-decoration: none;
         transition: background-color 0.2s;
@@ -598,14 +633,21 @@
        glance. */
     .editor-content :global(.tag-chip) {
         display: inline;
-        background-color: var(--bg-hover);
+        background-color: var(--code-bg);
         color: var(--text-secondary);
-        padding: 1px 8px;
-        border-radius: 10px;
-        border: 1px solid var(--border-light);
-        font-size: 13px;
+        padding: 1px 8px 1px 7px;
+        border-radius: 999px;
+        box-shadow: inset 0 0 0 1px var(--border-color);
+        font-size: 12.5px;
         font-weight: 500;
         white-space: nowrap;
+    }
+
+    /* The # in the tag's own hue, from its name (tagHue.ts). */
+    .editor-content :global(.tag-hash) {
+        color: var(--tag-hue, var(--tag-1));
+        font-weight: 650;
+        margin-right: 1px;
     }
 
     .editor-content :global(.tag-chip.ProseMirror-selectednode) {
@@ -622,8 +664,8 @@
     .editor-content :global(ul[data-type='taskList'] > li) {
         display: flex;
         align-items: flex-start;
-        gap: 4px;
-        padding: 1px 0;
+        gap: 10px;
+        padding: 2px 0;
     }
 
     .editor-content :global(ul[data-type='taskList'] > li > label) {
@@ -646,15 +688,68 @@
     .editor-content :global(ul[data-type='taskList'] > li > div > p) {
         margin: 0;
         display: inline;
-        line-height: 1.4;
+        line-height: 1.68;
     }
 
+    /* Drawn rather than left to the platform, so a tick box is the same on
+       every system and scheme: a rounded square in the line controls are
+       drawn with, filled with the accent once ticked. */
     .editor-content :global(ul[data-type='taskList'] input[type='checkbox']) {
-        margin-top: 4px;
+        appearance: none;
+        -webkit-appearance: none;
+        margin: 4px 0 0;
         width: 18px;
         height: 18px;
-        accent-color: var(--accent-color);
+        border-radius: 5px;
+        background: var(--bg-raised);
+        box-shadow: inset 0 0 0 1.5px var(--control-line);
+        display: grid;
+        place-items: center;
         cursor: pointer;
+        transition:
+            background-color 0.12s,
+            box-shadow 0.12s;
+    }
+
+    .editor-content :global(ul[data-type='taskList'] input[type='checkbox']::after) {
+        content: '';
+        width: 5px;
+        height: 9px;
+        margin-top: -2px;
+        border: solid var(--on-accent);
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg) scale(0);
+        transition: transform 0.12s;
+    }
+
+    .editor-content :global(ul[data-type='taskList'] input[type='checkbox']:checked) {
+        background: var(--btn-primary-bg);
+        box-shadow: none;
+    }
+
+    .editor-content :global(ul[data-type='taskList'] input[type='checkbox']:checked::after) {
+        transform: rotate(45deg) scale(1);
+    }
+
+    .editor-content :global(ul[data-type='taskList'] input[type='checkbox']:focus-visible) {
+        outline: 2px solid var(--accent-color);
+        outline-offset: 2px;
+    }
+
+    /* Done reads as done: struck through, in the muted colour. */
+    .editor-content :global(ul[data-type='taskList'] > li[data-checked='true'] > div) {
+        color: var(--text-muted);
+        text-decoration: line-through;
+        text-decoration-color: var(--control-line);
+    }
+
+    @media (pointer: coarse) {
+        .editor-content :global(ul[data-type='taskList'] input[type='checkbox']) {
+            width: 22px;
+            height: 22px;
+            border-radius: 7px;
+            margin-top: 2px;
+        }
     }
 
     /* A table wider than the note scrolls sideways by itself, and the rest

@@ -3,6 +3,7 @@ import {
     addDays,
     addMonths,
     formatJournalTitle,
+    longJournalTitle,
     journalDateOf,
     isSameDay,
     journalTitleFor,
@@ -177,5 +178,16 @@ describe('journalDateOf', () => {
         for (const title of ['2026-01-01', '2026-02-28', '2024-02-29', '2026-12-31']) {
             expect(journalTitleFor(journalDateOf(title)!)).toBe(title);
         }
+    });
+});
+
+describe('longJournalTitle', () => {
+    it('writes the day out in full', () => {
+        expect(longJournalTitle('2026-10-24')).toBe('Saturday, 24 October 2026');
+    });
+
+    it('leaves a title that names no day alone', () => {
+        expect(longJournalTitle('Ideas')).toBeNull();
+        expect(longJournalTitle('2026-02-31')).toBeNull();
     });
 });
