@@ -40,7 +40,6 @@
     } from '../services/navigation';
     import { page } from '$app/state';
     import { toasts } from '../services/toast';
-    import AboutDialog from './AboutDialog.svelte';
     import NewNoteDialog from './NewNoteDialog.svelte';
     import RenameNoteDialog from './RenameNoteDialog.svelte';
     import DeleteNoteDialog from './DeleteNoteDialog.svelte';
@@ -266,14 +265,13 @@
         }
     }
 
-    let showAbout = $state(false);
-
     function goToSettings() {
         goto(resolve('/settings'));
     }
 
     function goToAbout() {
-        showAbout = true;
+        goto(resolve('/settings/about'));
+        dismissOnSmallScreen();
     }
 
     // A day picked in the calendar. Opening it, and starting its journal if
@@ -497,10 +495,6 @@
 
 {#if deleteDoc}
     <DeleteNoteDialog doc={deleteDoc} onClose={() => (deleteDoc = null)} />
-{/if}
-
-{#if showAbout}
-    <AboutDialog onClose={() => (showAbout = false)} />
 {/if}
 
 <style>

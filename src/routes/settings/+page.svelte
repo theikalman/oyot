@@ -1,4 +1,5 @@
 <script lang="ts">
+    import SettingsShell from '$lib/components/SettingsShell.svelte';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
     import { canSignal, connectedPeers } from '$lib/stores/sync';
@@ -249,266 +250,280 @@
     }
 </script>
 
-<div class="settings-page">
-    <section class="settings-section">
-        <h2 class="section-title">Appearance</h2>
-        <div class="section-card">
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Color scheme</span>
-                    <span class="setting-desc">The colors of the whole app, light or dark</span>
-                </div>
-            </div>
-            <ColorSchemePicker />
-        </div>
-    </section>
-
-    <section class="settings-section">
-        <h2 class="section-title">Keyboard</h2>
-        <button class="section-card settings-link" onclick={goToShortcutSettings}>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Keyboard shortcuts</span>
-                    <span class="setting-desc">{shortcutSummary}</span>
-                </div>
-                <svg
-                    class="chevron"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M9 18l6-6-6-6" />
-                </svg>
-            </div>
-        </button>
-    </section>
-
-    {#if desktop?.supported}
+<SettingsShell title="General" description="How Oyot looks and behaves on this device">
+    <div class="settings-page">
         <section class="settings-section">
-            <h2 class="section-title">Desktop</h2>
+            <h2 class="section-title">Appearance</h2>
             <div class="section-card">
-                <label class="setting-row">
-                    <span class="setting-info">
-                        <span class="setting-label"
-                            >Keep Oyot running when the window is closed</span
-                        >
-                        <span class="setting-desc">
-                            Your notes keep syncing. Quit Oyot from its icon in {place}.
-                        </span>
-                    </span>
-                    <input
-                        type="checkbox"
-                        checked={desktop.keepRunning}
-                        onchange={handleKeepRunning}
-                        disabled={savingDesktop}
-                    />
-                </label>
-                <label class="setting-row">
-                    <span class="setting-info">
-                        <span class="setting-label">Start Oyot when you log in</span>
-                        <span class="setting-desc">
-                            It starts in {place}, without opening a window.
-                        </span>
-                    </span>
-                    <input
-                        type="checkbox"
-                        checked={desktop.startAtLogin}
-                        onchange={handleStartAtLogin}
-                        disabled={savingDesktop}
-                    />
-                </label>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Color scheme</span>
+                        <span class="setting-desc">The colors of the whole app, light or dark</span>
+                    </div>
+                </div>
+                <ColorSchemePicker />
             </div>
         </section>
-    {/if}
 
-    {#if desktop?.supported && mcp}
-        <section class="settings-section">
-            <h2 class="section-title">AI assistants</h2>
-            <div class="section-card">
-                <label class="setting-row">
-                    <span class="setting-info">
-                        <span class="setting-label">Let AI assistants use your notes</span>
-                        <span class="setting-desc">
-                            Assistants such as Claude Desktop, running on this computer, can search
-                            and read your notes and todos. With Read and write they can also add to
-                            and change them. They can never delete a note.
+        <section class="settings-section phone-only">
+            <h2 class="section-title">Keyboard</h2>
+            <button class="section-card settings-link" onclick={goToShortcutSettings}>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Keyboard shortcuts</span>
+                        <span class="setting-desc">{shortcutSummary}</span>
+                    </div>
+                    <svg
+                        class="chevron"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 18l6-6-6-6" />
+                    </svg>
+                </div>
+            </button>
+        </section>
+
+        {#if desktop?.supported}
+            <section class="settings-section">
+                <h2 class="section-title">Desktop</h2>
+                <div class="section-card">
+                    <label class="setting-row">
+                        <span class="setting-info">
+                            <span class="setting-label"
+                                >Keep Oyot running when the window is closed</span
+                            >
+                            <span class="setting-desc">
+                                Your notes keep syncing. Quit Oyot from its icon in {place}.
+                            </span>
                         </span>
-                    </span>
-                    <select value={mcp.access} onchange={handleMcpAccess} disabled={savingMcp}>
-                        <option value="off">Off</option>
-                        <option value="read_only">Read only</option>
-                        <option value="read_write">Read and write</option>
-                    </select>
-                </label>
-                {#if mcp.access !== 'off'}
+                        <input
+                            type="checkbox"
+                            checked={desktop.keepRunning}
+                            onchange={handleKeepRunning}
+                            disabled={savingDesktop}
+                        />
+                    </label>
+                    <label class="setting-row">
+                        <span class="setting-info">
+                            <span class="setting-label">Start Oyot when you log in</span>
+                            <span class="setting-desc">
+                                It starts in {place}, without opening a window.
+                            </span>
+                        </span>
+                        <input
+                            type="checkbox"
+                            checked={desktop.startAtLogin}
+                            onchange={handleStartAtLogin}
+                            disabled={savingDesktop}
+                        />
+                    </label>
+                </div>
+            </section>
+        {/if}
+
+        {#if desktop?.supported && mcp}
+            <section class="settings-section">
+                <h2 class="section-title">AI assistants</h2>
+                <div class="section-card">
+                    <label class="setting-row">
+                        <span class="setting-info">
+                            <span class="setting-label">Let AI assistants use your notes</span>
+                            <span class="setting-desc">
+                                Assistants such as Claude Desktop, running on this computer, can
+                                search and read your notes and todos. With Read and write they can
+                                also add to and change them. They can never delete a note.
+                            </span>
+                        </span>
+                        <select value={mcp.access} onchange={handleMcpAccess} disabled={savingMcp}>
+                            <option value="off">Off</option>
+                            <option value="read_only">Read only</option>
+                            <option value="read_write">Read and write</option>
+                        </select>
+                    </label>
+                    {#if mcp.access !== 'off'}
+                        <div class="setting-row">
+                            <span class="setting-info">
+                                <span class="setting-desc">{connectedLine(mcp.clients)}</span>
+                            </span>
+                        </div>
+                    {/if}
                     <div class="setting-row">
                         <span class="setting-info">
-                            <span class="setting-desc">{connectedLine(mcp.clients)}</span>
+                            <span class="setting-label">Claude Desktop</span>
+                            <span class="setting-desc">
+                                In Claude Desktop, open Settings, then Developer, then Edit Config.
+                                Add this to the file, and restart Claude Desktop.
+                            </span>
+                            <pre class="setting-desc mcp-command">{claudeDesktopConfig(mcp)}</pre>
+                        </span>
+                        <button class="action-btn" onclick={() => copy(claudeDesktopConfig(mcp!))}>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="setting-row">
+                        <span class="setting-info">
+                            <span class="setting-label">Claude Code</span>
+                            <span class="setting-desc">Run this once in a terminal.</span>
+                            <code class="setting-desc mcp-command">{claudeCodeCommand(mcp)}</code>
+                        </span>
+                        <button class="action-btn" onclick={() => copy(claudeCodeCommand(mcp!))}>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="setting-row">
+                        <span class="setting-info">
+                            <span class="setting-label">Another assistant</span>
+                            <span class="setting-desc">
+                                Give it this command to start, as a local MCP server.
+                            </span>
+                            <code class="setting-desc mcp-command">{launchLine(mcp)}</code>
+                        </span>
+                        <button class="action-btn" onclick={() => copy(launchLine(mcp!))}
+                            >Copy</button
+                        >
+                    </div>
+                </div>
+            </section>
+        {/if}
+
+        <section class="settings-section phone-only">
+            <h2 class="section-title">Sync</h2>
+            <button class="section-card settings-link" onclick={goToSyncSettings}>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Sync Settings</span>
+                        <span class="setting-desc">
+                            {syncSummary} • Manage paired devices and sync options
                         </span>
                     </div>
-                {/if}
+                    <svg
+                        class="chevron"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 18l6-6-6-6" />
+                    </svg>
+                </div>
+            </button>
+        </section>
+
+        <section class="settings-section phone-only">
+            <h2 class="section-title">Backup</h2>
+            <button class="section-card settings-link" onclick={goToBackupSettings}>
                 <div class="setting-row">
-                    <span class="setting-info">
-                        <span class="setting-label">Claude Desktop</span>
+                    <div class="setting-info">
+                        <span class="setting-label">Backup & restore</span>
+                        <span class="setting-desc">{backupSummary}</span>
+                    </div>
+                    <svg
+                        class="chevron"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 18l6-6-6-6" />
+                    </svg>
+                </div>
+            </button>
+        </section>
+
+        <section class="settings-section">
+            <h2 class="section-title">Data</h2>
+            <div class="section-card">
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Export notes</span>
                         <span class="setting-desc">
-                            In Claude Desktop, open Settings, then Developer, then Edit Config. Add
-                            this to the file, and restart Claude Desktop.
+                            Save every note as a Markdown file, with its images, in a zip
                         </span>
-                        <pre class="setting-desc mcp-command">{claudeDesktopConfig(mcp)}</pre>
-                    </span>
-                    <button class="action-btn" onclick={() => copy(claudeDesktopConfig(mcp!))}>
-                        Copy
+                    </div>
+                    <button class="action-btn" onclick={handleExport} disabled={exporting}>
+                        {exporting ? 'Exporting…' : 'Export'}
                     </button>
                 </div>
                 <div class="setting-row">
-                    <span class="setting-info">
-                        <span class="setting-label">Claude Code</span>
-                        <span class="setting-desc">Run this once in a terminal.</span>
-                        <code class="setting-desc mcp-command">{claudeCodeCommand(mcp)}</code>
-                    </span>
-                    <button class="action-btn" onclick={() => copy(claudeCodeCommand(mcp!))}>
-                        Copy
-                    </button>
-                </div>
-                <div class="setting-row">
-                    <span class="setting-info">
-                        <span class="setting-label">Another assistant</span>
+                    <div class="setting-info">
+                        <span class="setting-label">Import notes</span>
                         <span class="setting-desc">
-                            Give it this command to start, as a local MCP server.
+                            Make a note of each Markdown file you pick, exported from Oyot or
+                            written anywhere else
                         </span>
-                        <code class="setting-desc mcp-command">{launchLine(mcp)}</code>
-                    </span>
-                    <button class="action-btn" onclick={() => copy(launchLine(mcp!))}>Copy</button>
+                    </div>
+                    <button
+                        class="action-btn"
+                        onclick={handleImport}
+                        disabled={markdownImport.running}
+                    >
+                        {markdownImport.label}
+                    </button>
                 </div>
             </div>
         </section>
-    {/if}
 
-    <section class="settings-section">
-        <h2 class="section-title">Sync</h2>
-        <button class="section-card settings-link" onclick={goToSyncSettings}>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Sync Settings</span>
-                    <span class="setting-desc">
-                        {syncSummary} • Manage paired devices and sync options
-                    </span>
-                </div>
-                <svg
-                    class="chevron"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M9 18l6-6-6-6" />
-                </svg>
-            </div>
-        </button>
-    </section>
-
-    <section class="settings-section">
-        <h2 class="section-title">Backup</h2>
-        <button class="section-card settings-link" onclick={goToBackupSettings}>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Backup & restore</span>
-                    <span class="setting-desc">{backupSummary}</span>
-                </div>
-                <svg
-                    class="chevron"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M9 18l6-6-6-6" />
-                </svg>
-            </div>
-        </button>
-    </section>
-
-    <section class="settings-section">
-        <h2 class="section-title">Data</h2>
-        <div class="section-card">
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Export notes</span>
-                    <span class="setting-desc">
-                        Save every note as a Markdown file, with its images, in a zip
-                    </span>
-                </div>
-                <button class="action-btn" onclick={handleExport} disabled={exporting}>
-                    {exporting ? 'Exporting…' : 'Export'}
-                </button>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Import notes</span>
-                    <span class="setting-desc">
-                        Make a note of each Markdown file you pick, exported from Oyot or written
-                        anywhere else
-                    </span>
-                </div>
-                <button class="action-btn" onclick={handleImport} disabled={markdownImport.running}>
-                    {markdownImport.label}
-                </button>
-            </div>
-        </div>
-    </section>
-
-    <!-- Also at the bottom of the sidebar. Here as well because settings is
+        <!-- Also at the bottom of the sidebar. Here as well because settings is
          where people look for help, and on a phone the sidebar is hidden. -->
-    <section class="settings-section">
-        <h2 class="section-title">Help</h2>
-        <button class="section-card settings-link" onclick={goToHelp}>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <span class="setting-label">Help & shortcuts</span>
-                    <span class="setting-desc">
-                        What the colors mean, every keyboard shortcut, and tips
-                    </span>
+        <section class="settings-section">
+            <h2 class="section-title">Help</h2>
+            <button class="section-card settings-link" onclick={goToHelp}>
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <span class="setting-label">Help & shortcuts</span>
+                        <span class="setting-desc">
+                            What the colors mean, every keyboard shortcut, and tips
+                        </span>
+                    </div>
+                    <svg
+                        class="chevron"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 18l6-6-6-6" />
+                    </svg>
                 </div>
-                <svg
-                    class="chevron"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M9 18l6-6-6-6" />
-                </svg>
-            </div>
-        </button>
-    </section>
-</div>
+            </button>
+        </section>
+    </div>
+</SettingsShell>
 
 <style>
     .settings-page {
-        max-width: 600px;
-        margin: 0 auto;
-        padding: 24px;
+        display: block;
     }
 
     .settings-section {
         margin-bottom: 32px;
+    }
+
+    /* Links to the other sections. The sidebar lists them beside the page on
+       a wider screen; on a phone this page is the list. */
+    @media (min-width: 769px) {
+        .phone-only {
+            display: none;
+        }
     }
 
     .section-title {
@@ -516,12 +531,10 @@
         font-size: 14px;
         font-weight: 600;
         color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
     }
 
     .section-card {
-        background: var(--bg-secondary);
+        background: var(--bg-raised);
         border: 1px solid var(--border-color);
         border-radius: 12px;
         overflow: hidden;
