@@ -11,6 +11,7 @@
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
     import PinToggle from '$lib/components/PinToggle.svelte';
     import Icon from '$lib/components/Icon.svelte';
+    import { swipe } from '$lib/gestures/swipe';
     import { openJournal } from '$lib/services/journals';
     import { toasts } from '$lib/services/toast';
     import {
@@ -175,7 +176,17 @@
         {/if}
     {/snippet}
     {#if view === 'editor'}
-        <Editor {focusTodo} editable={editing} />
+        <!-- On a touch screen, swiping a journal sideways while reading
+             turns to the day before or after, as the arrows do. -->
+        <div
+            class="swipe-area"
+            use:swipe={{
+                accept: () => journalDate !== null && !editing,
+                onSwipe: (direction) => stepDay(direction === 'left' ? 1 : -1),
+            }}
+        >
+            <Editor {focusTodo} editable={editing} />
+        </div>
     {:else if view === 'gone'}
         <div class="empty-state">
             <p>That note no longer exists.</p>
@@ -188,6 +199,13 @@
 </WorkspaceShell>
 
 <style>
+    .swipe-area {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
     .day-step {
         width: 32px;
         height: 32px;
@@ -204,6 +222,13 @@
     .day-step:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
+    }
+
+    /* A phone swipes between days instead, and needs the room for the day. */
+    @media (max-width: 480px) {
+        .day-step {
+            display: none;
+        }
     }
 
     .empty-state {

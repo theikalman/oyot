@@ -6,6 +6,8 @@
     import PageTitle from './PageTitle.svelte';
     import SyncStatus from './SyncStatus.svelte';
     import Icon from './Icon.svelte';
+    import MobileTabBar from './MobileTabBar.svelte';
+    import { swipe } from '$lib/gestures/swipe';
 
     // The chrome every workspace route shares: the sidebar beside a titled
     // column with the sync indicator in its header. Extracted when the todo
@@ -68,7 +70,19 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <main class="app" style:--workspace-header-height="{headerHeight}px">
-    <div class="workspace">
+    <!-- On a phone, a swipe in from the left edge opens the drawer, and one
+         back across closes it. -->
+    <div
+        class="workspace"
+        use:swipe={{
+            accept: (e) => small && (!sidebarCollapsed || e.touches[0].clientX < 28),
+            onSwipe: (direction) => {
+                if (direction === 'right' && sidebarCollapsed) sidebarCollapsed = false;
+                else if (direction === 'left' && !sidebarCollapsed) sidebarCollapsed = true;
+            },
+            options: { distance: 50 },
+        }}
+    >
         <Sidebar bind:collapsed={sidebarCollapsed} />
         <div class="main-content" class:flush={sidebarCollapsed || small}>
             <div class="sync-status-container" bind:offsetHeight={headerHeight}>
@@ -110,6 +124,9 @@
             {@render children()}
         </div>
     </div>
+    {#if small}
+        <MobileTabBar />
+    {/if}
 
     {#if $isLoading}
         <div class="loading-overlay">

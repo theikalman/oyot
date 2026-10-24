@@ -369,7 +369,7 @@
 
         .note-tags {
             order: 2;
-            flex: 1;
+            flex: 1 1 100%;
             min-width: 0;
             max-width: none;
             margin-bottom: 8px;
