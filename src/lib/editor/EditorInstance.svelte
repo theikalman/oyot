@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { Snippet } from 'svelte';
     import { onDestroy } from 'svelte';
     import type * as Y from 'yjs';
     import type { Editor as EditorType } from '@tiptap/core';
@@ -69,6 +70,8 @@
         // lands, since that is the document changing rather than the reader
         // changing it.
         editable?: boolean;
+        /** Drawn above the document, scrolling with it: a journal's day on a phone. */
+        head?: Snippet;
     }
 
     let {
@@ -78,9 +81,12 @@
         onLocalUpdate,
         focusTodo = null,
         editable = true,
+        head,
     }: Props = $props();
 
     let element = $state<HTMLDivElement | null>(null);
+    // What scrolls: the document and the head above it.
+    let scroller = $state<HTMLDivElement | null>(null);
     let editor = $state.raw<EditorType | null>(null);
     let ydoc = $state.raw<any>(null);
     let isInitialized = $state.raw(false);
@@ -320,7 +326,7 @@
         } catch {
             return; // not laid out yet
         }
-        const box = element.getBoundingClientRect();
+        const box = (scroller ?? element).getBoundingClientRect();
         if (caret.top < box.top || caret.bottom > box.bottom) return;
         ed.commands.focus(null, { scrollIntoView: false });
     }
@@ -405,7 +411,10 @@
             <p>Loading editor...</p>
         </div>
     {/if}
-    <div class="editor-content" class:read-only={!editable} bind:this={element}></div>
+    <div class="editor-content" class:read-only={!editable} bind:this={scroller}>
+        {@render head?.()}
+        <div bind:this={element}></div>
+    </div>
 </div>
 
 <style>

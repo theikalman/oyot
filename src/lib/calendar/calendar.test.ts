@@ -4,6 +4,7 @@ import {
     addMonths,
     formatJournalTitle,
     longJournalTitle,
+    isoWeek,
     journalDateOf,
     isSameDay,
     journalTitleFor,
@@ -189,5 +190,13 @@ describe('longJournalTitle', () => {
     it('leaves a title that names no day alone', () => {
         expect(longJournalTitle('Ideas')).toBeNull();
         expect(longJournalTitle('2026-02-31')).toBeNull();
+    });
+});
+
+describe('isoWeek', () => {
+    it('counts weeks from the one with the first Thursday', () => {
+        expect(isoWeek(new Date(2026, 9, 24))).toBe(43);
+        expect(isoWeek(new Date(2026, 0, 1))).toBe(1);
+        expect(isoWeek(new Date(2027, 0, 1))).toBe(53);
     });
 });

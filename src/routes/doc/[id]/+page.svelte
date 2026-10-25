@@ -16,10 +16,19 @@
     import { toasts } from '$lib/services/toast';
     import {
         addDays,
+        isoWeek,
         journalDateOf,
         journalTitleFor,
         longJournalTitle,
+        monthLabel,
     } from '$lib/calendar/calendar';
+    import { documents } from '$lib/stores/app';
+    import { indexRevision } from '$lib/stores/derivedIndex';
+    import { loadTagsByDocument } from '$lib/services/tags';
+    import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
+    import { viewport } from '$lib/utils/viewport.svelte';
+    import PhoneSyncDot from '$lib/components/PhoneSyncDot.svelte';
+    import WeekStrip from '$lib/components/WeekStrip.svelte';
 
     let activeDocument = $derived($currentDocument);
 
@@ -123,6 +132,50 @@
         }
     }
 
+    // ── On a phone ──
+    // The header names the month, which opens the month in place of the
+    // week; the journal itself is headed in the page by its day.
+    let monthOpen = $state(false);
+    let phoneJournal = $derived(viewport.phone && journalDate !== null);
+
+    let journals = $derived($documents.filter((d) => d.doc_type === 'journal'));
+    let summary = $derived($documents.find((d) => d.id === activeDocument?.id));
+    let openTodos = $derived(
+        summary ? Math.max(summary.todo_count - summary.completed_todo_count, 0) : 0,
+    );
+
+    let tags = $state<TagsByDocument>(NO_TAGS);
+    $effect(() => {
+        if (!phoneJournal) return;
+        void $indexRevision;
+        let live = true;
+        void loadTagsByDocument().then((loaded) => {
+            if (live) tags = loaded;
+        });
+        return () => {
+            live = false;
+        };
+    });
+    let tagCount = $derived(activeDocument ? tagsOf(tags, activeDocument.id).length : 0);
+
+    // "Saturday, 24 October", with the year only when it is not this one.
+    let dayHeading = $derived.by(() => {
+        if (!journalDate || !activeDocument) return '';
+        const long = longJournalTitle(activeDocument.title) ?? '';
+        return journalDate.getFullYear() === new Date().getFullYear()
+            ? long.replace(/ \d{4}$/, '')
+            : long;
+    });
+
+    async function pickDay(title: string) {
+        try {
+            await openJournal(title);
+        } catch (error) {
+            console.error('[journal] could not open', title, error);
+            toasts.error('Could not open that day');
+        }
+    }
+
     function toggleEditing() {
         editingId = editing ? null : (activeDocument?.id ?? null);
     }
@@ -144,7 +197,51 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+{#snippet journalHead()}
+    <header class="phone-head">
+        <div class="eyebrow">
+            {#if isToday}<span class="badge accent">Today</span>{/if}
+            {#if journalDate}<span>Week {isoWeek(journalDate)}</span>{/if}
+        </div>
+        <h1>{dayHeading}</h1>
+        <div class="meta">
+            {#if openTodos > 0}<span class="badge todo">{openTodos} open</span>{/if}
+            {#if tagCount > 0}<span class="badge">{tagCount} {tagCount === 1 ? 'tag' : 'tags'}</span
+                >{/if}
+        </div>
+    </header>
+{/snippet}
+
 <WorkspaceShell title={heading}>
+    {#snippet phoneBar()}
+        {#if journalDate}
+            <button
+                class="month-btn"
+                onclick={() => (monthOpen = !monthOpen)}
+                aria-expanded={monthOpen}
+            >
+                {monthLabel(journalDate)}
+                <span class="chev" class:up={monthOpen}><Icon name="chevron-down" size={16} /></span
+                >
+            </button>
+        {:else}
+            <span class="phone-title">{activeDocument?.title ?? ''}</span>
+            {#if activeDocument?.doc_type === 'note'}
+                <PinToggle docId={activeDocument.id} pinned={activeDocument.pinned} />
+            {/if}
+        {/if}
+        <PhoneSyncDot />
+        {#if view === 'editor'}
+            {#if editing}
+                <span class="saved"><Icon name="check" size={14} />Saved</span>
+                <button class="m-pill" onclick={toggleEditing}>Done</button>
+            {:else}
+                <button class="m-btn" onclick={toggleEditing} aria-label="Edit">
+                    <Icon name="edit" size={22} />
+                </button>
+            {/if}
+        {/if}
+    {/snippet}
     <!-- Reading a note is when deciding to keep it at hand usually happens.
          Only a note: a journal is reached by its day, and nothing lists a
          pinned journal. The pin is kept current on the open document by
@@ -181,11 +278,24 @@
         <div
             class="swipe-area"
             use:swipe={{
-                accept: () => journalDate !== null && !editing,
+                // The week strip swipes its own weeks.
+                accept: (e) =>
+                    journalDate !== null &&
+                    !editing &&
+                    !(e.target instanceof Element && e.target.closest('.week-strip')),
                 onSwipe: (direction) => stepDay(direction === 'left' ? 1 : -1),
             }}
         >
-            <Editor {focusTodo} editable={editing} />
+            {#if phoneJournal && journalDate}
+                <WeekStrip
+                    date={journalDate}
+                    today={new Date()}
+                    {journals}
+                    bind:expanded={monthOpen}
+                    onPick={pickDay}
+                />
+            {/if}
+            <Editor {focusTodo} editable={editing} head={phoneJournal ? journalHead : undefined} />
         </div>
     {:else if view === 'gone'}
         <div class="empty-state">
@@ -199,6 +309,88 @@
 </WorkspaceShell>
 
 <style>
+    .month-btn {
+        flex: 1;
+        min-width: 0;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        border: none;
+        background: none;
+        color: var(--text-primary);
+        font-size: 16px;
+        font-weight: 600;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .chev {
+        display: grid;
+        color: var(--text-muted);
+        transition: transform 0.15s;
+    }
+
+    .chev.up {
+        transform: rotate(180deg);
+    }
+
+    .phone-title {
+        flex: 1;
+        min-width: 0;
+        padding: 0 6px;
+        font-size: 16px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .saved {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin: 0 8px;
+        font-size: 13px;
+        color: var(--text-muted);
+    }
+
+    .saved :global(.icon) {
+        color: var(--status-ok);
+    }
+
+    /* The journal's day, at the head of the page on a phone. */
+    .phone-head {
+        max-width: 680px;
+        margin: 0 auto 18px;
+    }
+
+    .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+    }
+
+    .phone-head h1 {
+        margin: 8px 0 10px;
+        font-size: 28px;
+        line-height: 34px;
+        font-weight: 680;
+        letter-spacing: -0.028em;
+    }
+
+    .meta {
+        display: flex;
+        gap: 6px;
+    }
+
+    .meta:empty {
+        display: none;
+    }
+
     .swipe-area {
         flex: 1;
         min-height: 0;
