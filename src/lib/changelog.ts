@@ -36,6 +36,34 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.34-alpha',
+        date: '2026-10-25',
+        summary:
+            'Phones get their own layout throughout: large titles, a week strip on Today, and swipes, long presses and pulls where a phone expects them.',
+        changes: [
+            {
+                kind: 'improved',
+                text: 'Today on a phone shows the week across the top, with a dot on each day that has an entry or open todos. Swipe it for the week before or after, or pull its handle down for the whole month. The day is headed by its name, its week number and how many todos are still open.',
+            },
+            {
+                kind: 'improved',
+                text: 'Notes on a phone lists your pinned notes as cards to flick through, then every note with its tags and when it was last edited. Swipe a note left to pin or delete it, or hold it for everything else you can do to it.',
+            },
+            {
+                kind: 'improved',
+                text: 'Todos on a phone can be ticked right there, by tapping the box or swiping the todo right. Swipe it left to open the journal or note it is in, and narrow the list by tag from the chips at the top.',
+            },
+            {
+                kind: 'improved',
+                text: 'Settings on a phone is one list of grouped cards, with the colour schemes as swatches and background sync as a switch. On Devices & sync, pull down from the top to check every device again.',
+            },
+            {
+                kind: 'improved',
+                text: 'The sidebar on a phone says how sync stands at the top and leaves out the keyboard shortcut and the version.',
+            },
+        ],
+    },
+    {
         version: '0.0.33-alpha',
         date: '2026-10-25',
         summary:
