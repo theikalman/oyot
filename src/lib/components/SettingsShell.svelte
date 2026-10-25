@@ -19,6 +19,7 @@
     import Icon, { type IconName } from './Icon.svelte';
     import SidebarSyncRow from './SidebarSyncRow.svelte';
     import { isSmallScreen } from './Sidebar.svelte';
+    import { pullToRefresh, PULL_THRESHOLD } from '$lib/gestures/pullToRefresh';
 
     // Settings in the same shell as the rest of the app: the sidebar swaps to
     // the settings sections, and the sheet holds the page. It used to be a
@@ -28,10 +29,57 @@
         title: string;
         /** A line under the title saying what the page is for. */
         description?: string;
+        /** On a phone, the large title and the line under it, when not the above. */
+        phoneTitle?: string;
+        phoneDescription?: string;
+        /**
+         * On a phone, what pulling the page down from its top does, and what
+         * to say while it runs. Without it, a pull is only a scroll.
+         */
+        onPull?: () => Promise<void>;
+        pullLabel?: string;
         children: Snippet;
     }
 
-    let { title, description, children }: Props = $props();
+    let {
+        title,
+        description,
+        phoneTitle,
+        phoneDescription,
+        onPull,
+        pullLabel = 'Checking',
+        children,
+    }: Props = $props();
+
+    let pulled = $state(0);
+    let refreshing = $state(false);
+
+    async function refresh() {
+        if (!onPull || refreshing) return;
+        refreshing = true;
+        try {
+            await onPull();
+        } finally {
+            // Long enough to read as having happened.
+            setTimeout(() => (refreshing = false), 900);
+        }
+    }
+
+    // On only on a phone, and only on a page with something to pull for.
+    function maybePull(node: HTMLElement, on: boolean) {
+        const options = { onPull: (d: number) => (pulled = d), onRefresh: refresh };
+        let action = on ? pullToRefresh(node, options) : null;
+        return {
+            update(next: boolean) {
+                if (next && !action) action = pullToRefresh(node, options);
+                if (!next && action) {
+                    action.destroy();
+                    action = null;
+                }
+            },
+            destroy: () => action?.destroy(),
+        };
+    }
 
     const SECTIONS = [
         { path: '/settings', label: 'General', icon: 'sliders' },
@@ -115,22 +163,56 @@
     {/if}
 
     <div class="sheet">
-        <header class="sheet-head">
-            {#if small}
-                <button class="icon-btn" onclick={back} aria-label="Back">
-                    <Icon name="chevron-left" size={22} />
+        {#if small}
+            <!-- A phone's way: back on a bar of its own, then the page's
+                 name large, over grouped cards on the frame. -->
+            <header class="phone-head">
+                <button class="m-btn" onclick={back} aria-label="Back">
+                    <Icon name="chevron-left" size={24} />
                 </button>
-            {:else}
+            </header>
+        {:else}
+            <header class="sheet-head">
                 <span class="crumb">Settings</span>
                 <span class="crumb-sep">/</span>
+                <span class="crumb current">{title}</span>
+            </header>
+        {/if}
+        <div class="sheet-body" use:maybePull={small && !!onPull}>
+            {#if small && onPull && (pulled > 0 || refreshing)}
+                <div
+                    class="pull"
+                    class:ready={pulled >= PULL_THRESHOLD}
+                    style:height="{refreshing ? 56 : pulled}px"
+                    role="status"
+                >
+                    <span
+                        class="spinner"
+                        class:spinning={refreshing}
+                        style:transform="rotate({pulled * 4}deg)"
+                    ></span>
+                    {#if refreshing}
+                        {pullLabel}
+                    {:else if pulled >= PULL_THRESHOLD}
+                        Let go to check
+                    {:else}
+                        Pull to check
+                    {/if}
+                </div>
             {/if}
-            <span class="crumb current">{title}</span>
-        </header>
-        <div class="sheet-body">
             <div class="content">
-                <h2 class="page-title">{title}</h2>
-                {#if description}
-                    <p class="page-desc">{description}</p>
+                {#if small}
+                    <div class="phone-title">
+                        <h1 class="m-title">{phoneTitle ?? title}</h1>
+                        {#if phoneDescription ?? description}
+                            <p class="m-sub">{phoneDescription ?? description}</p>
+                        {/if}
+                    </div>
+                {:else}
+                    <h2 class="page-title">{title}</h2>
+                    {#if description}
+                        <p class="page-desc">{description}</p>
+                    {/if}
                 {/if}
                 {@render children()}
             </div>
@@ -274,17 +356,49 @@
         font-weight: 550;
     }
 
-    .icon-btn {
-        width: 40px;
-        height: 40px;
-        margin-left: -12px;
-        display: grid;
-        place-items: center;
-        border: none;
-        border-radius: var(--radius-md);
-        background: none;
-        color: var(--text-primary);
-        cursor: pointer;
+    .phone-head {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        height: 52px;
+        padding: 0 8px;
+    }
+
+    .pull {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        overflow: hidden;
+        font-size: 13.5px;
+        font-weight: 550;
+        color: var(--text-muted);
+    }
+
+    .pull.ready {
+        color: var(--accent-color);
+    }
+
+    .spinner {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid var(--control-line);
+        border-top-color: var(--accent-color);
+    }
+
+    .spinner.spinning {
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .phone-title {
+        padding: 0 4px 6px;
     }
 
     .sheet-body {
@@ -321,10 +435,15 @@
             margin: 0;
             border-radius: 0;
             box-shadow: none;
+            background: var(--bg-secondary);
         }
 
         .sheet-body {
-            padding: 20px 16px 48px;
+            padding: 0 16px 48px;
+        }
+
+        .content > :global(*:nth-child(2)) {
+            margin-top: 8px;
         }
     }
 </style>
