@@ -9,6 +9,9 @@
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
     import { tagHueStyle } from '$lib/tags/tagHue';
     import type { Snapshot } from './$types';
+    import Icon from '$lib/components/Icon.svelte';
+    import { viewport } from '$lib/utils/viewport.svelte';
+    import PhoneTodos from './PhoneTodos.svelte';
 
     // Every task item in every note and journal, on one page.
     //
@@ -113,6 +116,9 @@
     let journals = $derived(shown(found.journals));
     let notes = $derived(shown(found.notes));
     let nothingToShow = $derived(journals.length === 0 && notes.length === 0);
+
+    // On a phone the search field waits behind a button in the header.
+    let phoneSearch = $state(false);
 </script>
 
 <!-- Some of a todo's words, with the ones the search found marked. All on
@@ -120,128 +126,228 @@
 {#snippet marked(runs: MarkedRun[])}{#each runs as run, r (r)}{#if run.match}<mark>{run.text}</mark
             >{:else}{run.text}{/if}{/each}{/snippet}
 
-<WorkspaceShell title="Todos">
-    <div class="todos page-body">
-        <div class="page-bar">
-            <!-- Read out as it changes, so a search says how much it found
-                 to someone who cannot see the rows come and go. -->
-            <p class="page-summary" aria-live="polite">
-                {#if todos.loading && todos.isEmpty}
-                    Collecting your todos...
-                {:else if todos.failed}
-                    &nbsp;
-                {:else if searching}
-                    {countOpen(found)} open of {foundCount} matching
-                {:else}
-                    {todos.openCount} open of {todos.totalCount}
-                {/if}
-            </p>
-            <div class="page-actions">
-                {#if !todos.isEmpty}
+{#snippet phoneBar()}
+    <span class="phone-spacer"></span>
+    <button
+        class="m-btn"
+        onclick={() => (hideCompleted = !hideCompleted)}
+        aria-label={hideCompleted ? 'Show done todos' : 'Hide done todos'}
+        aria-pressed={!hideCompleted}
+    >
+        <Icon name={hideCompleted ? 'eye' : 'eye-off'} size={22} />
+    </button>
+    <button
+        class="m-btn"
+        class:accent={phoneSearch}
+        onclick={() => {
+            phoneSearch = !phoneSearch;
+            if (!phoneSearch) query = '';
+        }}
+        aria-label="Find a todo"
+        aria-expanded={phoneSearch}
+    >
+        <Icon name="search" size={22} />
+    </button>
+{/snippet}
+
+<WorkspaceShell title="Todos" {phoneBar}>
+    {#if viewport.phone}
+        <div class="phone-todos">
+            {#if phoneSearch}
+                <label class="phone-search">
+                    <Icon name="search" size={16} />
+                    <!-- svelte-ignore a11y_autofocus -->
                     <input
-                        class="field-input"
                         type="search"
                         placeholder="Search todos"
                         bind:value={query}
                         onkeydown={handleSearchKeydown}
                         aria-label="Search todos"
+                        autofocus
                     />
-                {/if}
-                <label class="filter">
-                    <input type="checkbox" bind:checked={hideCompleted} />
-                    Hide completed
                 </label>
-            </div>
+            {/if}
+            {#if todos.failed}
+                <p class="note error">
+                    Could not read your todos right now. They are still in your notes.
+                </p>
+            {:else if todos.loading && todos.isEmpty}
+                <p class="note">Loading...</p>
+            {:else}
+                <PhoneTodos
+                    {found}
+                    {hideCompleted}
+                    {searching}
+                    openCount={todos.openCount}
+                    totalCount={todos.totalCount}
+                    {today}
+                />
+            {/if}
         </div>
+    {:else}
+        <div class="todos page-body">
+            <div class="page-bar">
+                <!-- Read out as it changes, so a search says how much it found
+                 to someone who cannot see the rows come and go. -->
+                <p class="page-summary" aria-live="polite">
+                    {#if todos.loading && todos.isEmpty}
+                        Collecting your todos...
+                    {:else if todos.failed}
+                        &nbsp;
+                    {:else if searching}
+                        {countOpen(found)} open of {foundCount} matching
+                    {:else}
+                        {todos.openCount} open of {todos.totalCount}
+                    {/if}
+                </p>
+                <div class="page-actions">
+                    {#if !todos.isEmpty}
+                        <input
+                            class="field-input"
+                            type="search"
+                            placeholder="Search todos"
+                            bind:value={query}
+                            onkeydown={handleSearchKeydown}
+                            aria-label="Search todos"
+                        />
+                    {/if}
+                    <label class="filter">
+                        <input type="checkbox" bind:checked={hideCompleted} />
+                        Hide completed
+                    </label>
+                </div>
+            </div>
 
-        {#if todos.failed}
-            <p class="note error">
-                Could not read your todos right now. They are still in your notes.
-            </p>
-        {:else if todos.loading && todos.isEmpty}
-            <p class="note">Loading...</p>
-        {:else if todos.isEmpty}
-            <p class="note">
-                Nothing yet. Type <code>/todo</code> in any note or journal and it will show up here.
-            </p>
-        {:else if searching && nothingToShow}
-            <!-- Everything the search found can be finished and hidden, and
+            {#if todos.failed}
+                <p class="note error">
+                    Could not read your todos right now. They are still in your notes.
+                </p>
+            {:else if todos.loading && todos.isEmpty}
+                <p class="note">Loading...</p>
+            {:else if todos.isEmpty}
+                <p class="note">
+                    Nothing yet. Type <code>/todo</code> in any note or journal and it will show up here.
+                </p>
+            {:else if searching && nothingToShow}
+                <!-- Everything the search found can be finished and hidden, and
                  "no match" would then send someone looking for a todo that
                  is right there behind the checkbox. -->
-            <p class="note">
-                {#if foundCount === 0}
-                    No todo matches "{query.trim()}".
-                {:else if foundCount === 1}
-                    Only a completed todo matches "{query.trim()}". Untick Hide completed to see it.
-                {:else}
-                    Only completed todos match "{query.trim()}". Untick Hide completed to see them.
-                {/if}
-            </p>
-        {:else if nothingToShow}
-            <p class="note">Everything here is done.</p>
-        {:else}
-            {#each [{ label: 'Journals', groups: journals }, { label: 'Notes', groups: notes }] as section (section.label)}
-                {#if section.groups.length > 0}
-                    <section class="section">
-                        <h2 class="month-heading">{section.label}</h2>
-                        {#each section.groups as group (group.docId)}
-                            <div class="group">
-                                <h3 class="group-title" class:today={isToday(group)}>
-                                    {heading(group)}
-                                </h3>
-                                <ul class="todo-list">
-                                    {#each visible(group) as todo (todo.ordinal)}
-                                        <li>
-                                            <button
-                                                class="todo"
-                                                class:done={todo.checked}
-                                                style="padding-left: {8 + todo.depth * 20}px"
-                                                onclick={() => open(todo)}
-                                                title="Open in {group.title}"
-                                            >
-                                                <!-- A picture of the checkbox, not the
+                <p class="note">
+                    {#if foundCount === 0}
+                        No todo matches "{query.trim()}".
+                    {:else if foundCount === 1}
+                        Only a completed todo matches "{query.trim()}". Untick Hide completed to see
+                        it.
+                    {:else}
+                        Only completed todos match "{query.trim()}". Untick Hide completed to see
+                        them.
+                    {/if}
+                </p>
+            {:else if nothingToShow}
+                <p class="note">Everything here is done.</p>
+            {:else}
+                {#each [{ label: 'Journals', groups: journals }, { label: 'Notes', groups: notes }] as section (section.label)}
+                    {#if section.groups.length > 0}
+                        <section class="section">
+                            <h2 class="month-heading">{section.label}</h2>
+                            {#each section.groups as group (group.docId)}
+                                <div class="group">
+                                    <h3 class="group-title" class:today={isToday(group)}>
+                                        {heading(group)}
+                                    </h3>
+                                    <ul class="todo-list">
+                                        {#each visible(group) as todo (todo.ordinal)}
+                                            <li>
+                                                <button
+                                                    class="todo"
+                                                    class:done={todo.checked}
+                                                    style="padding-left: {8 + todo.depth * 20}px"
+                                                    onclick={() => open(todo)}
+                                                    title="Open in {group.title}"
+                                                >
+                                                    <!-- A picture of the checkbox, not the
                                                      checkbox: this page opens the note,
                                                      it does not edit it. -->
-                                                <span
-                                                    class="box"
-                                                    class:checked={todo.checked}
-                                                    aria-hidden="true"
-                                                ></span>
-                                                <span class="text" class:empty={!todo.text}>
-                                                    {#if todo.text}
-                                                        {#each drawn(todo, group) as segment, i (i)}
-                                                            {#if segment.kind === 'tag'}
-                                                                <span
-                                                                    class="tag-chip"
-                                                                    style={tagHueStyle(
-                                                                        segment.name,
-                                                                    )}
-                                                                    >{@render marked(
-                                                                        segment.runs,
-                                                                    )}</span
-                                                                >
-                                                            {:else}
-                                                                {@render marked(segment.runs)}
-                                                            {/if}
-                                                        {/each}
-                                                    {:else}
-                                                        Empty item
-                                                    {/if}
-                                                </span>
-                                            </button>
-                                        </li>
-                                    {/each}
-                                </ul>
-                            </div>
-                        {/each}
-                    </section>
-                {/if}
-            {/each}
-        {/if}
-    </div>
+                                                    <span
+                                                        class="box"
+                                                        class:checked={todo.checked}
+                                                        aria-hidden="true"
+                                                    ></span>
+                                                    <span class="text" class:empty={!todo.text}>
+                                                        {#if todo.text}
+                                                            {#each drawn(todo, group) as segment, i (i)}
+                                                                {#if segment.kind === 'tag'}
+                                                                    <span
+                                                                        class="tag-chip"
+                                                                        style={tagHueStyle(
+                                                                            segment.name,
+                                                                        )}
+                                                                        >{@render marked(
+                                                                            segment.runs,
+                                                                        )}</span
+                                                                    >
+                                                                {:else}
+                                                                    {@render marked(segment.runs)}
+                                                                {/if}
+                                                            {/each}
+                                                        {:else}
+                                                            Empty item
+                                                        {/if}
+                                                    </span>
+                                                </button>
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                </div>
+                            {/each}
+                        </section>
+                    {/if}
+                {/each}
+            {/if}
+        </div>
+    {/if}
 </WorkspaceShell>
 
 <style>
+    .phone-spacer {
+        flex: 1;
+    }
+
+    .phone-todos {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        /* Clear of the tab bar floating over the foot of the screen. */
+        padding-bottom: 104px;
+    }
+
+    .phone-todos .note {
+        margin: 24px 20px;
+    }
+
+    .phone-search {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        margin: 0 16px 10px;
+        padding: 0 12px;
+        border-radius: 12px;
+        background: var(--bg-secondary);
+        box-shadow: inset 0 0 0 1px var(--border-color);
+        color: var(--text-muted);
+    }
+
+    .phone-search input {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        outline: none;
+        background: none;
+        color: var(--text-primary);
+        font-size: 15px;
+    }
+
     .filter {
         display: flex;
         align-items: center;
