@@ -44,6 +44,8 @@
     import DeleteNoteDialog from './DeleteNoteDialog.svelte';
     import DocumentList from './DocumentList.svelte';
     import SidebarSyncRow from './SidebarSyncRow.svelte';
+    import { canSignal, connectedPeers, aggregateSyncPhase, pairedDevices } from '../stores/sync';
+    import { SYNC_TONE_COLORS, syncBadge } from '../sync/syncBadge';
     import { switcher } from '../switcher/switcher.svelte';
     import Icon from './Icon.svelte';
     import JournalCalendar from './JournalCalendar.svelte';
@@ -270,6 +272,24 @@
         goto(resolve('/settings'));
     }
 
+    function goToDevices() {
+        goto(resolve('/settings/sync'));
+        dismissOnSmallScreen();
+    }
+
+    let syncState = $derived(
+        syncBadge({
+            peers: $connectedPeers.length,
+            phase: $aggregateSyncPhase,
+            reachable: $canSignal,
+        }),
+    );
+    let deviceCount = $derived(
+        $pairedDevices.length === 0
+            ? 'No devices paired'
+            : `${$connectedPeers.length} of ${$pairedDevices.length} device${$pairedDevices.length === 1 ? '' : 's'}`,
+    );
+
     function goToAbout() {
         goto(resolve('/settings/about'));
         dismissOnSmallScreen();
@@ -299,15 +319,23 @@
             <span class="logo" aria-hidden="true"><span class="logo-o"></span></span>
             <span class="wordmark">Oyot</span>
             <span class="grow"></span>
-            <button
-                class="icon-btn"
-                onclick={() => (showModal = true)}
-                title="New note"
-                aria-label="New note"
-            >
-                <Icon name="compose" />
-            </button>
-            {#if !small}
+            {#if small}
+                <!-- How sync stands, said once at the top of the drawer. -->
+                <span class="badge sync-badge">
+                    <span
+                        class="sync-dot"
+                        style="background-color: {SYNC_TONE_COLORS[syncState.tone]}"
+                    ></span>{syncState.label}
+                </span>
+            {:else}
+                <button
+                    class="icon-btn"
+                    onclick={() => (showModal = true)}
+                    title="New note"
+                    aria-label="New note"
+                >
+                    <Icon name="compose" />
+                </button>
                 <button
                     class="icon-btn"
                     onclick={() => (collapsed = true)}
@@ -328,8 +356,8 @@
             title={withKeys('Search or jump to', 'switcher')}
         >
             <Icon name="search" size={16} />
-            <span class="grow">Search or jump to</span>
-            {#if switcherKeys}
+            <span class="grow">{small ? 'Search' : 'Search or jump to'}</span>
+            {#if switcherKeys && !small}
                 <span class="kbd">{switcherKeys}</span>
             {/if}
         </button>
@@ -445,36 +473,63 @@
             </div>
         </div>
 
-        <div class="sidebar-footer">
-            <SidebarSyncRow onNavigate={dismissOnSmallScreen} />
-            <div class="footer-tools">
-                <!-- Lit while open, like the places above: the help page
-                     keeps the sidebar, so this is on screen with it. -->
+        {#if small}
+            <!-- A phone's foot: the devices, Help and Settings, in one row
+                 of finger-sized targets. -->
+            <div class="sidebar-footer phone">
+                <button class="devices-row" onclick={goToDevices}>
+                    <Icon name="sync" size={16} />
+                    <span class="grow">{deviceCount}</span>
+                </button>
                 <button
                     class="icon-btn"
                     class:active={onHelpPage}
                     onclick={goToHelp}
-                    title={withKeys('Help and keyboard shortcuts', 'help')}
                     aria-label="Help"
                     aria-current={onHelpPage ? 'page' : undefined}
                 >
-                    <Icon name="help" />
+                    <Icon name="help" size={20} />
                 </button>
-                <!-- Named by aria-label, as Help is, so the keys in the
-                     tooltip are not read out as part of its name. -->
-                <button
-                    class="icon-btn"
-                    onclick={goToSettings}
-                    title={withKeys('Settings', 'settings')}
-                    aria-label="Settings"
-                >
-                    <Icon name="settings" />
-                </button>
-                <button class="version-btn" onclick={goToAbout} title="About Oyot and what's new">
-                    v{APP_VERSION}
+                <button class="icon-btn" onclick={goToSettings} aria-label="Settings">
+                    <Icon name="settings" size={20} />
                 </button>
             </div>
-        </div>
+        {:else}
+            <div class="sidebar-footer">
+                <SidebarSyncRow onNavigate={dismissOnSmallScreen} />
+                <div class="footer-tools">
+                    <!-- Lit while open, like the places above: the help page
+                     keeps the sidebar, so this is on screen with it. -->
+                    <button
+                        class="icon-btn"
+                        class:active={onHelpPage}
+                        onclick={goToHelp}
+                        title={withKeys('Help and keyboard shortcuts', 'help')}
+                        aria-label="Help"
+                        aria-current={onHelpPage ? 'page' : undefined}
+                    >
+                        <Icon name="help" />
+                    </button>
+                    <!-- Named by aria-label, as Help is, so the keys in the
+                     tooltip are not read out as part of its name. -->
+                    <button
+                        class="icon-btn"
+                        onclick={goToSettings}
+                        title={withKeys('Settings', 'settings')}
+                        aria-label="Settings"
+                    >
+                        <Icon name="settings" />
+                    </button>
+                    <button
+                        class="version-btn"
+                        onclick={goToAbout}
+                        title="About Oyot and what's new"
+                    >
+                        v{APP_VERSION}
+                    </button>
+                </div>
+            </div>
+        {/if}
     {/if}
 </aside>
 
@@ -742,6 +797,38 @@
         gap: 4px;
         padding-top: 8px;
         border-top: 1px solid var(--border-color);
+    }
+
+    .sync-badge {
+        gap: 6px;
+    }
+
+    .sync-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+    }
+
+    .sidebar-footer.phone {
+        flex-direction: row;
+        align-items: center;
+        gap: 2px;
+    }
+
+    .devices-row {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 44px;
+        padding: 0 10px;
+        border: none;
+        border-radius: var(--radius-md);
+        background: none;
+        color: var(--text-secondary);
+        font-size: 14px;
+        text-align: left;
     }
 
     .footer-tools {
