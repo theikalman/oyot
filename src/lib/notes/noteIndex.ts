@@ -75,3 +75,48 @@ export function noteStatus(note: DocumentSummary): string {
     }
     return '';
 }
+
+/** The orders a phone's note list can be in. */
+export type NoteOrder = 'edited' | 'created';
+
+/** These notes, most recently edited first, or newest first as notesOf has them. */
+export function sortNotes(notes: DocumentSummary[], order: NoteOrder): DocumentSummary[] {
+    if (order === 'created') return notes;
+    return [...notes].sort((a, b) => b.updated_at - a.updated_at || a.id.localeCompare(b.id));
+}
+
+const SHORT_MONTHS = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+];
+
+/**
+ * When a note was last edited, the way a row on a phone says it: "Today",
+ * "Yesterday", "3 days ago" within the week, then "Oct 11", with the year
+ * once it is another year's.
+ */
+export function editedLabel(ms: number, now: Date): string {
+    const day = new Date(ms);
+    const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((startOf(now) - startOf(day)) / 86_400_000);
+    if (days <= 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return `${days} days ago`;
+    const label = `${SHORT_MONTHS[day.getMonth()]} ${day.getDate()}`;
+    return day.getFullYear() === now.getFullYear() ? label : `${label}, ${day.getFullYear()}`;
+}
+
+/** How many todos in a note are still open. */
+export function openTodos(note: DocumentSummary): number {
+    return Math.max(note.todo_count - note.completed_todo_count, 0);
+}
