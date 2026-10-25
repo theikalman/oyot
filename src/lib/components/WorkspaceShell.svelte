@@ -19,10 +19,16 @@
         actions?: Snippet;
         /** Controls for the page as a whole, beside the sync indicator. */
         tools?: Snippet;
+        /**
+         * On a phone, what the header holds after the menu button, in place
+         * of the title and tools: a page that heads itself with a large
+         * title in its body, as the phone design does, puts its buttons here.
+         */
+        phoneBar?: Snippet;
         children: Snippet;
     }
 
-    let { title = null, actions, tools, children }: Props = $props();
+    let { title = null, actions, tools, phoneBar, children }: Props = $props();
 
     // Held here rather than in the sidebar, so the button that shows and
     // hides the sidebar can sit in this header. It used to float over the
@@ -85,42 +91,58 @@
     >
         <Sidebar bind:collapsed={sidebarCollapsed} />
         <div class="main-content" class:flush={sidebarCollapsed || small}>
-            <div class="sync-status-container" bind:offsetHeight={headerHeight}>
-                <div class="page-start">
-                    <!-- Brings the sidebar back, or opens it as a drawer on a
+            {#if small && phoneBar}
+                <div class="phone-bar" bind:offsetHeight={headerHeight}>
+                    <button
+                        class="phone-menu"
+                        bind:this={sidebarToggle}
+                        onclick={() => (sidebarCollapsed = false)}
+                        aria-label="Open the sidebar"
+                        aria-expanded={!sidebarCollapsed}
+                        aria-controls="sidebar"
+                    >
+                        <Icon name="menu" size={22} />
+                    </button>
+                    {@render phoneBar()}
+                </div>
+            {:else}
+                <div class="sync-status-container" bind:offsetHeight={headerHeight}>
+                    <div class="page-start">
+                        <!-- Brings the sidebar back, or opens it as a drawer on a
                          phone. While the sidebar is out, its own button hides
                          it again, so this one is not needed. -->
-                    {#if sidebarCollapsed}
-                        <button
-                            class="sidebar-toggle"
-                            bind:this={sidebarToggle}
-                            onclick={() => (sidebarCollapsed = false)}
-                            title={toggleHint}
-                            aria-label="Sidebar"
-                            aria-expanded={false}
-                            aria-controls="sidebar"
-                        >
-                            <Icon name={small ? 'menu' : 'panel-left'} size={20} />
-                        </button>
-                    {/if}
-                    {#if title}
-                        <div class="page-heading">
-                            <PageTitle {title} />
-                            {#if actions}
-                                <div class="title-actions">{@render actions()}</div>
-                            {/if}
-                        </div>
-                    {/if}
-                </div>
-                <div class="page-tools">
-                    {@render tools?.()}
-                    <!-- The sidebar's foot says how sync stands; with the
+                        {#if sidebarCollapsed}
+                            <button
+                                class="sidebar-toggle"
+                                bind:this={sidebarToggle}
+                                onclick={() => (sidebarCollapsed = false)}
+                                title={toggleHint}
+                                aria-label="Sidebar"
+                                aria-expanded={false}
+                                aria-controls="sidebar"
+                            >
+                                <Icon name={small ? 'menu' : 'panel-left'} size={20} />
+                            </button>
+                        {/if}
+                        {#if title}
+                            <div class="page-heading">
+                                <PageTitle {title} />
+                                {#if actions}
+                                    <div class="title-actions">{@render actions()}</div>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                    <div class="page-tools">
+                        {@render tools?.()}
+                        <!-- The sidebar's foot says how sync stands; with the
                          sidebar away, the header does. -->
-                    {#if sidebarCollapsed}
-                        <SyncStatus />
-                    {/if}
+                        {#if sidebarCollapsed}
+                            <SyncStatus />
+                        {/if}
+                    </div>
                 </div>
-            </div>
+            {/if}
             {@render children()}
         </div>
     </div>
@@ -185,6 +207,31 @@
        the title takes. Shown in full, a long title runs on down past its
        buttons instead of taking them to its middle, so they stay where they
        are while it opens and closes. */
+    /* A phone's header: the menu, then whatever the page puts there, in
+       44px targets on a 52px row. */
+    .phone-bar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 52px;
+        padding: 0 8px;
+    }
+
+    .phone-menu {
+        width: 44px;
+        height: 44px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: none;
+        border-radius: 12px;
+        background: none;
+        color: var(--text-primary);
+        -webkit-tap-highlight-color: transparent;
+    }
+
     .sync-status-container {
         display: flex;
         align-items: flex-start;

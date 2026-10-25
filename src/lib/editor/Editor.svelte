@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, type Snippet } from 'svelte';
     import { currentDocument } from '$lib/stores/app';
     import { indexRevision as derivedRevision } from '$lib/stores/derivedIndex';
     import type { Editor as EditorType } from '@tiptap/core';
@@ -23,9 +23,16 @@
         focusTodo?: number | null;
         // False to show the document for reading, without the toolbar.
         editable?: boolean;
+        /** Drawn above the document, scrolling with it. */
+        head?: Snippet;
     }
 
-    let { debounceMs = DEFAULT_DEBOUNCE_MS, focusTodo = null, editable = true }: Props = $props();
+    let {
+        debounceMs = DEFAULT_DEBOUNCE_MS,
+        focusTodo = null,
+        editable = true,
+        head,
+    }: Props = $props();
 
     let current = $derived($currentDocument);
     let editorInstance = $state<EditorType | null>(null);
@@ -132,6 +139,7 @@
             onLocalUpdate={handleLocalUpdate}
             {focusTodo}
             {editable}
+            {head}
         />
 
         <Backlinks docId={current.id} revision={indexRevision + $derivedRevision} />

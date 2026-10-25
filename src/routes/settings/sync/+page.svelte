@@ -30,6 +30,7 @@
         saveEndpoint,
         forgetEndpoint,
         probeStoredAddresses,
+        refreshSyncStatus,
     } from '$lib/sync';
     import { toasts } from '$lib/services/toast';
     import { IdentityCard } from '$lib/settings';
@@ -187,6 +188,11 @@
         }
     }
 
+    // A pull down on a phone: ask every address again, and how sync stands.
+    async function checkEveryDevice() {
+        await Promise.all([handleCheckAddresses(), refreshSyncStatus().catch(() => {})]);
+    }
+
     async function handleForgetEndpoint(nodeId: string, host: string, port: number) {
         try {
             await forgetEndpoint(nodeId, host, port);
@@ -226,6 +232,8 @@
 <SettingsShell
     title="Devices & sync"
     description="Oyot syncs straight between your devices. Nothing is sent to a server."
+    onPull={checkEveryDevice}
+    pullLabel="Checking every device"
 >
     <div class="sync-page">
         {#if showRepairNotice && paired.length === 0}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterNotes, notesOf, noteStatus, pinnedNotes } from './noteIndex';
+import { editedLabel, filterNotes, notesOf, noteStatus, pinnedNotes, sortNotes } from './noteIndex';
 import { tagsByDocument } from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
 
@@ -168,5 +168,30 @@ describe('noteStatus', () => {
 
     it('says nothing about a note with writing and no todos', () => {
         expect(noteStatus(doc('n1', 'Prose', 'note'))).toBe('');
+    });
+});
+
+describe('sortNotes', () => {
+    it('puts the most recently edited first', () => {
+        const a = doc('a', 'A', 'note', { updated_at: 10 });
+        const b = doc('b', 'B', 'note', { updated_at: 30 });
+        expect(sortNotes([a, b], 'edited').map((n) => n.id)).toEqual(['b', 'a']);
+        expect(sortNotes([a, b], 'created').map((n) => n.id)).toEqual(['a', 'b']);
+    });
+});
+
+describe('editedLabel', () => {
+    const now = new Date(2026, 9, 25, 15, 0);
+    const at = (y: number, m: number, d: number) => new Date(y, m, d, 9, 0).getTime();
+
+    it('names the last few days by how long ago they were', () => {
+        expect(editedLabel(at(2026, 9, 25), now)).toBe('Today');
+        expect(editedLabel(at(2026, 9, 24), now)).toBe('Yesterday');
+        expect(editedLabel(at(2026, 9, 22), now)).toBe('3 days ago');
+    });
+
+    it('gives a date after a week, with the year once it is not this one', () => {
+        expect(editedLabel(at(2026, 9, 11), now)).toBe('Oct 11');
+        expect(editedLabel(at(2025, 11, 31), now)).toBe('Dec 31, 2025');
     });
 });

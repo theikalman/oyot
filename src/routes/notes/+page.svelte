@@ -15,6 +15,8 @@
     import DeleteNoteDialog from '$lib/components/DeleteNoteDialog.svelte';
     import TagPill from '$lib/components/TagPill.svelte';
     import Icon from '$lib/components/Icon.svelte';
+    import { viewport } from '$lib/utils/viewport.svelte';
+    import PhoneNotes from './PhoneNotes.svelte';
 
     // Every note, on one page, with what can be done to one: open it, pin it
     // to the sidebar, rename it, delete it.
@@ -60,6 +62,9 @@
     // Which row's menu is open, held here so only one is at a time.
     let openMenuId = $state<string | null>(null);
 
+    // The phone header's own menu, for what has no room on its bar.
+    let phoneMenu = $state(false);
+
     function toggleMenu(id: string) {
         openMenuId = openMenuId === id ? null : id;
     }
@@ -69,6 +74,7 @@
         if (!target.closest('.row-menu-btn') && !target.closest('.row-menu')) {
             openMenuId = null;
         }
+        if (!target.closest('.phone-more')) phoneMenu = false;
     }
 
     function startRename(note: DocumentSummary) {
@@ -97,125 +103,167 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<WorkspaceShell title="Notes">
-    <div class="notes page-body">
-        <div class="page-bar">
-            <p class="page-summary">
-                {notes.length}
-                {notes.length === 1 ? 'note' : 'notes'}{#if pinnedCount > 0}, {pinnedCount} pinned{/if}
-            </p>
-            <div class="page-actions">
-                {#if notes.length > 0}
-                    <input
-                        class="field-input"
-                        type="search"
-                        placeholder="Filter by title or #tag"
-                        bind:value={filter}
-                        aria-label="Filter notes by title or tag"
-                    />
-                {/if}
+{#snippet phoneBar()}
+    <span class="phone-spacer"></span>
+    <div class="phone-more">
+        <button
+            class="m-btn"
+            onclick={() => (phoneMenu = !phoneMenu)}
+            aria-label="More"
+            aria-expanded={phoneMenu}
+        >
+            <Icon name="more" size={22} />
+        </button>
+        {#if phoneMenu}
+            <div class="menu phone-menu-list">
                 <button
-                    class="btn"
-                    onclick={handleImport}
+                    class="menu-item"
                     disabled={markdownImport.running}
-                    title="Make a note of each Markdown file you pick"
+                    onclick={() => {
+                        phoneMenu = false;
+                        void handleImport();
+                    }}
                 >
                     {markdownImport.label}
                 </button>
-                <button class="btn primary" onclick={() => (creating = true)}>
-                    <Icon name="plus" size={16} />New note
-                </button>
             </div>
-        </div>
-
-        {#if notes.length === 0}
-            <p class="note">
-                No notes yet. Press New note to start one, or Import to bring in Markdown files.
-            </p>
-        {:else if shown.length === 0}
-            <p class="note">No note matches "{filter.trim()}".</p>
-        {:else}
-            <ul class="note-list">
-                {#each shown as note (note.id)}
-                    {@const noteTags = tagsOf(tags, note.id)}
-                    {@const status = noteStatus(note)}
-                    <!-- The row is the container, not the button: the tags, the
-                         pin and the menu are buttons of their own, and one
-                         button cannot hold another. -->
-                    <li class="note-row" class:empty={!note.has_content}>
-                        <button
-                            class="note-open"
-                            onclick={() => openDocument(note.id)}
-                            title="Open {note.title}"
-                        >
-                            <span class="note-title">{note.title}</span>
-                        </button>
-                        {#if noteTags.length > 0}
-                            <!-- Each chip is its own button, as on the journal
-                                 index, so a tag is a way out of this page as
-                                 well as a label on it. -->
-                            <span class="note-tags">
-                                {#each noteTags as tag (tag)}
-                                    <TagPill name={tag} onclick={() => openTag(tag)} />
-                                {/each}
-                            </span>
-                        {/if}
-                        <span class="note-status">
-                            {#if /open|done/.test(status)}
-                                <span
-                                    class="badge"
-                                    class:todo={status.includes('open')}
-                                    class:ok={status.includes('done')}>{status}</span
-                                >
-                            {:else}
-                                {status}
-                            {/if}
-                        </span>
-                        <PinToggle docId={note.id} pinned={note.pinned} />
-                        <div class="row-menu-anchor">
-                            <button
-                                class="row-menu-btn"
-                                onclick={() => toggleMenu(note.id)}
-                                title="Note options"
-                                aria-label="Note options"
-                                aria-expanded={openMenuId === note.id}
-                            >
-                                <svg
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    aria-hidden="true"
-                                    ><circle cx="5" cy="12" r="1" /><circle
-                                        cx="12"
-                                        cy="12"
-                                        r="1"
-                                    /><circle cx="19" cy="12" r="1" /></svg
-                                >
-                            </button>
-                            {#if openMenuId === note.id}
-                                <div class="row-menu menu">
-                                    <button class="menu-item" onclick={() => startRename(note)}>
-                                        Rename
-                                    </button>
-                                    <button
-                                        class="menu-item danger"
-                                        onclick={() => startDelete(note)}
-                                    >
-                                        Delete
-                                    </button>
-                                </div>
-                            {/if}
-                        </div>
-                    </li>
-                {/each}
-            </ul>
         {/if}
     </div>
+    <button class="m-btn accent" onclick={() => (creating = true)} aria-label="New note">
+        <Icon name="compose" size={22} />
+    </button>
+{/snippet}
+
+<WorkspaceShell title="Notes" {phoneBar}>
+    {#if viewport.phone}
+        <PhoneNotes
+            {notes}
+            {shown}
+            {tags}
+            bind:filter
+            onRename={(note) => (renaming = note)}
+            onDelete={(note) => (deleting = note)}
+        />
+    {:else}
+        <div class="notes page-body">
+            <div class="page-bar">
+                <p class="page-summary">
+                    {notes.length}
+                    {notes.length === 1 ? 'note' : 'notes'}{#if pinnedCount > 0}, {pinnedCount} pinned{/if}
+                </p>
+                <div class="page-actions">
+                    {#if notes.length > 0}
+                        <input
+                            class="field-input"
+                            type="search"
+                            placeholder="Filter by title or #tag"
+                            bind:value={filter}
+                            aria-label="Filter notes by title or tag"
+                        />
+                    {/if}
+                    <button
+                        class="btn"
+                        onclick={handleImport}
+                        disabled={markdownImport.running}
+                        title="Make a note of each Markdown file you pick"
+                    >
+                        {markdownImport.label}
+                    </button>
+                    <button class="btn primary" onclick={() => (creating = true)}>
+                        <Icon name="plus" size={16} />New note
+                    </button>
+                </div>
+            </div>
+
+            {#if notes.length === 0}
+                <p class="note">
+                    No notes yet. Press New note to start one, or Import to bring in Markdown files.
+                </p>
+            {:else if shown.length === 0}
+                <p class="note">No note matches "{filter.trim()}".</p>
+            {:else}
+                <ul class="note-list">
+                    {#each shown as note (note.id)}
+                        {@const noteTags = tagsOf(tags, note.id)}
+                        {@const status = noteStatus(note)}
+                        <!-- The row is the container, not the button: the tags, the
+                         pin and the menu are buttons of their own, and one
+                         button cannot hold another. -->
+                        <li class="note-row" class:empty={!note.has_content}>
+                            <button
+                                class="note-open"
+                                onclick={() => openDocument(note.id)}
+                                title="Open {note.title}"
+                            >
+                                <span class="note-title">{note.title}</span>
+                            </button>
+                            {#if noteTags.length > 0}
+                                <!-- Each chip is its own button, as on the journal
+                                 index, so a tag is a way out of this page as
+                                 well as a label on it. -->
+                                <span class="note-tags">
+                                    {#each noteTags as tag (tag)}
+                                        <TagPill name={tag} onclick={() => openTag(tag)} />
+                                    {/each}
+                                </span>
+                            {/if}
+                            <span class="note-status">
+                                {#if /open|done/.test(status)}
+                                    <span
+                                        class="badge"
+                                        class:todo={status.includes('open')}
+                                        class:ok={status.includes('done')}>{status}</span
+                                    >
+                                {:else}
+                                    {status}
+                                {/if}
+                            </span>
+                            <PinToggle docId={note.id} pinned={note.pinned} />
+                            <div class="row-menu-anchor">
+                                <button
+                                    class="row-menu-btn"
+                                    onclick={() => toggleMenu(note.id)}
+                                    title="Note options"
+                                    aria-label="Note options"
+                                    aria-expanded={openMenuId === note.id}
+                                >
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        aria-hidden="true"
+                                        ><circle cx="5" cy="12" r="1" /><circle
+                                            cx="12"
+                                            cy="12"
+                                            r="1"
+                                        /><circle cx="19" cy="12" r="1" /></svg
+                                    >
+                                </button>
+                                {#if openMenuId === note.id}
+                                    <div class="row-menu menu">
+                                        <button class="menu-item" onclick={() => startRename(note)}>
+                                            Rename
+                                        </button>
+                                        <button
+                                            class="menu-item danger"
+                                            onclick={() => startDelete(note)}
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                {/if}
+                            </div>
+                        </li>
+                    {/each}
+                </ul>
+            {/if}
+        </div>
+    {/if}
 </WorkspaceShell>
 
 {#if creating}
@@ -231,6 +279,22 @@
 {/if}
 
 <style>
+    .phone-spacer {
+        flex: 1;
+    }
+
+    .phone-more {
+        position: relative;
+    }
+
+    .phone-menu-list {
+        position: absolute;
+        right: 0;
+        top: 46px;
+        z-index: 20;
+        min-width: 200px;
+    }
+
     .note {
         margin: 24px 0;
         font-size: 14px;
