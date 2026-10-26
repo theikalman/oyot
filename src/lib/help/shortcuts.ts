@@ -75,4 +75,9 @@ export const INSERT_COMMANDS: readonly InsertCommand[] = [
         label: 'Insert Image',
         does: 'An image from a file. Pasting one in, or dragging one in, works too.',
     },
+    {
+        id: 'emoji',
+        label: 'Insert Emoji',
+        does: 'An emoji, found by name. A colon and a few letters, like :tada, works too.',
+    },
 ];

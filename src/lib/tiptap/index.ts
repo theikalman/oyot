@@ -6,6 +6,7 @@ export { registerDocumentLinkCommand, searchDocuments } from './commands/Documen
 export { registerDateCommand } from './commands/DateCommand';
 export { registerTodoCommand } from './commands/TodoCommand';
 export { registerTagCommand } from './commands/TagCommand';
+export { registerEmojiCommand } from './commands/EmojiCommand';
 export {
     normalizeTagName,
     tagPickerItems,

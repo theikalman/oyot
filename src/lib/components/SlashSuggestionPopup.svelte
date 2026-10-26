@@ -3,6 +3,8 @@
         id: string;
         title: string;
         icon?: string;
+        /** A character to show in place of the icon, drawn as text: an emoji. */
+        glyph?: string;
         /** A second, quieter line: what the row is, beyond its name. */
         subtitle?: string;
     }
@@ -54,14 +56,18 @@
                         if (e.key === 'Enter') onCommand(item.id);
                     }}
                 >
-                    <!--
+                    {#if item.glyph}
+                        <span class="item-icon item-glyph">{item.glyph}</span>
+                    {:else}
+                        <!--
                         Icons are inline SVG constants declared in
                         src/lib/tiptap/commands/; they never carry user or peer
                         content. Keep it that way: anything data-derived here
                         must be rendered as text, not html.
                       -->
-                    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-                    <span class="item-icon">{@html item.icon || '📄'}</span>
+                        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                        <span class="item-icon">{@html item.icon || '📄'}</span>
+                    {/if}
                     <span class="item-content">
                         <span class="item-title">{item.title}</span>
                         {#if item.subtitle}
@@ -88,7 +94,8 @@
         max-width: var(--popup-max-width, 400px);
         max-height: var(--popup-max-height, 320px);
         overflow-y: auto;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family:
+            -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif, var(--font-emoji);
     }
 
     .suggestion-list {
@@ -122,6 +129,11 @@
         width: 20px;
         height: 20px;
         flex-shrink: 0;
+    }
+
+    .item-glyph {
+        font-size: 20px;
+        line-height: 1;
     }
 
     .item-icon :global(svg) {
