@@ -3,6 +3,7 @@ import {
     commandRegistry,
     registerDateCommand,
     registerDocumentLinkCommand,
+    registerEmojiCommand,
     registerImageCommand,
     registerTagCommand,
     registerTodoCommand,
@@ -27,6 +28,7 @@ describe('the insert menu the help page describes', () => {
         registerTodoCommand();
         registerTagCommand();
         registerImageCommand();
+        registerEmojiCommand();
 
         const registered = commandRegistry
             .getAllCommands()

@@ -10,6 +10,7 @@
     import { Extension } from '@tiptap/core';
     import { exitSuggestion } from '@tiptap/suggestion';
     import { SlashCommand } from '$lib/tiptap/SlashCommand';
+    import { EmojiSuggestion } from '$lib/tiptap/EmojiSuggestion';
     import { closeAnyPicker } from '$lib/tiptap/pickerPopup';
     import { createContentExtensions } from './extensions';
     import {
@@ -18,6 +19,7 @@
         registerTodoCommand,
         registerTagCommand,
         registerImageCommand,
+        registerEmojiCommand,
     } from '$lib/tiptap';
     import { createCollaborationExtension } from './yjs';
     import { CONTENT_FIELD } from './contentField';
@@ -153,6 +155,7 @@
                             : 'Nothing here yet. Press Edit to start writing.',
                 }),
                 SlashCommand,
+                EmojiSuggestion,
                 ReadOnlyState,
                 JumpTarget,
                 TickWhileReading,
@@ -191,6 +194,7 @@
         registerTodoCommand();
         registerTagCommand();
         registerImageCommand();
+        registerEmojiCommand();
 
         // The only thing that schedules a save. Tiptap's `onUpdate` used to do
         // it as well, which meant a peer's edit landing in this document

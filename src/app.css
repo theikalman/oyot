@@ -14,9 +14,16 @@
 @import '@fontsource-variable/geist-mono';
 
 :root {
+    /* Named at the end of each stack, so an emoji is drawn in colour from
+       the system's emoji font. Geist has no emoji, and left to itself a
+       webview on Linux can settle on a monochrome symbol font instead, or
+       on nothing and a box. */
+    --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Twemoji Mozilla';
     --font-sans:
-        'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;
-    --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+        'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif,
+        var(--font-emoji);
+    --font-mono:
+        'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace, var(--font-emoji);
 
     /* One radius family: keys and tags, buttons and rows, cards and the
        sheet, and sheets that slide up on a phone. */
