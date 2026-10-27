@@ -109,7 +109,7 @@ describe('the shortcuts the help page lists', () => {
     it('list the shortcuts the app answers under the ids it answers them by', () => {
         const goingSomewhere = [...group('anywhere').shortcuts, ...group('days').shortcuts];
         expect(goingSomewhere.map((s) => s.id)).toEqual(GO_TO_SHORTCUTS);
-        expect(group('document').shortcuts.map((s) => s.id)).toEqual(['edit']);
+        expect(group('document').shortcuts.map((s) => s.id)).toEqual(['edit', 'find']);
         expect(group('sidebar').shortcuts.map((s) => s.id)).toEqual(['sidebar']);
     });
 

@@ -104,6 +104,8 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         where: 'On any open note or journal',
         shortcuts: [
             { id: 'edit', action: 'Switch between reading and editing', keys: ['Mod-Shift-e'] },
+            // Mod-f, as a browser has it. The editor leaves it free.
+            { id: 'find', action: 'Find in the note or journal', keys: ['Mod-f'] },
         ],
     },
     {
@@ -176,6 +178,16 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
             { action: 'Move through the choices', keys: ['ArrowUp', 'ArrowDown'] },
             { action: 'Insert the highlighted one', keys: ['Enter'] },
             { action: 'Close it', keys: ['Escape'] },
+        ],
+    },
+    {
+        id: 'find',
+        title: 'Find',
+        where: 'In the find box on a note or journal',
+        shortcuts: [
+            { action: 'Next match', keys: ['Enter'] },
+            { action: 'Previous match', keys: ['Shift-Enter'] },
+            { action: 'Close it, leaving the match selected', keys: ['Escape'] },
         ],
     },
     {

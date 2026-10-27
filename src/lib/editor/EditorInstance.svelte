@@ -31,6 +31,7 @@
     import { MermaidDiagrams } from './mermaid/MermaidDiagrams';
     import { CodeBlockLanguage } from './codeBlockLanguage';
     import { CodeHighlight } from './codeHighlight';
+    import { FindInDocument } from './findInDocument';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -163,6 +164,7 @@
                 MermaidDiagrams,
                 CodeBlockLanguage,
                 CodeHighlight,
+                FindInDocument,
                 // The keys the user gave shortcuts, ahead of the editor's own.
                 CustomShortcuts.configure({
                     bindings: () => customShortcuts.bindings,
@@ -928,6 +930,17 @@
 
     /* The item a jump from the todo index landed on, lit for a moment. The
        length is JUMP_TARGET_MS in jumpTarget.ts. */
+    /* What the find box found, and brighter, the one it is on. */
+    .editor-content :global(.find-match) {
+        border-radius: 2px;
+        background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+    }
+
+    .editor-content :global(.find-match.current) {
+        background: color-mix(in srgb, var(--accent-color) 50%, transparent);
+        box-shadow: 0 0 0 1px var(--accent-color);
+    }
+
     .editor-content :global(.jump-target) {
         border-radius: 4px;
         animation: jump-target 2s ease-out;
