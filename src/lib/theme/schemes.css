@@ -17,7 +17,9 @@
  * base3 for surfaces and words, blue for the accent. Where a published colour
  * is too faint to read at the size the app uses it - Latte's peach as a 4px
  * dot, Solarized's base00 on base2 - it is nudged towards the text colour
- * until it reads, so a few values are not in either palette.
+ * until it reads, so a few values are not in either palette. The syntax
+ * colours are each scheme's hues, nudged towards black or white wherever
+ * they would not read as words on the code background.
  *
  * Catppuccin Macchiato also stands in for the root element before a scheme is
  * applied. That selector is :where(:root), which counts for nothing: a bare
@@ -97,6 +99,16 @@
     --tag-6: #d64fb4;
     --tag-7: #c9800f;
     --tag-8: #d20f39;
+
+    /* Code in a code block, by what each word is */
+    --syntax-keyword: #8538ea;
+    --syntax-string: #2f7620;
+    --syntax-number: #b54509;
+    --syntax-function: #1c5ee1;
+    --syntax-type: #915c0b;
+    --syntax-property: #127277;
+    --syntax-builtin: #ce0f38;
+    --syntax-comment: #818494;
 }
 
 /* Catppuccin Frappé */
@@ -171,6 +183,16 @@
     --tag-6: #f4b8e4;
     --tag-7: #e5c890;
     --tag-8: #e78284;
+
+    /* Code in a code block, by what each word is */
+    --syntax-keyword: #ca9ee6;
+    --syntax-string: #a6d189;
+    --syntax-number: #ef9f76;
+    --syntax-function: #8caaee;
+    --syntax-type: #e5c890;
+    --syntax-property: #81c8be;
+    --syntax-builtin: #e78284;
+    --syntax-comment: #838ba7;
 }
 
 /* Catppuccin Macchiato */
@@ -246,6 +268,16 @@
     --tag-6: #f5bde6;
     --tag-7: #eed49f;
     --tag-8: #ed8796;
+
+    /* Code in a code block, by what each word is */
+    --syntax-keyword: #c6a0f6;
+    --syntax-string: #a6da95;
+    --syntax-number: #f5a97f;
+    --syntax-function: #8aadf4;
+    --syntax-type: #eed49f;
+    --syntax-property: #8bd5ca;
+    --syntax-builtin: #ed8796;
+    --syntax-comment: #8087a2;
 }
 
 /* Catppuccin Mocha */
@@ -320,6 +352,16 @@
     --tag-6: #f5c2e7;
     --tag-7: #f9e2af;
     --tag-8: #f38ba8;
+
+    /* Code in a code block, by what each word is */
+    --syntax-keyword: #cba6f7;
+    --syntax-string: #a6e3a1;
+    --syntax-number: #fab387;
+    --syntax-function: #89b4fa;
+    --syntax-type: #f9e2af;
+    --syntax-property: #94e2d5;
+    --syntax-builtin: #f38ba8;
+    --syntax-comment: #7f849c;
 }
 
 /* Solarized Light */
@@ -394,6 +436,16 @@
     --tag-6: #d33682;
     --tag-7: #b58900;
     --tag-8: #dc322f;
+
+    /* Code in a code block, by what each word is */
+    --syntax-keyword: #606e00;
+    --syntax-string: #1e746d;
+    --syntax-number: #ba3072;
+    --syntax-function: #1e6ca4;
+    --syntax-type: #826300;
+    --syntax-property: #5d61a9;
+    --syntax-builtin: #b34213;
+    --syntax-comment: #798787;
 }
 
 /* Solarized Dark */
@@ -468,6 +520,16 @@
     --tag-6: #e0609a;
     --tag-7: #b58900;
     --tag-8: #dc322f;
+
+    /* Code in a code block, by what each word is */
+    --syntax-keyword: #8fa114;
+    --syntax-string: #3ba9a0;
+    --syntax-number: #e473a6;
+    --syntax-function: #4ea3e0;
+    --syntax-type: #bc951a;
+    --syntax-property: #8f93db;
+    --syntax-builtin: #e27f4b;
+    --syntax-comment: #697d83;
 }
 
 /* Names the sync badge uses for the same colours. */
