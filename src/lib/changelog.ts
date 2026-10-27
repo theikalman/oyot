@@ -36,6 +36,30 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.35-alpha',
+        date: '2026-10-27',
+        summary:
+            'Writing gets emoji, coloured code and find in the page, and the keyboard shortcuts follow the new sidebar.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Emoji can be typed by name: a colon and two letters lists the emoji that match, a whole shortcode such as :tada: turns into its emoji as you type it, and /emoji opens the same list from the insert menu. The list stays out of code and out of times like 10:30.',
+            },
+            {
+                kind: 'added',
+                text: 'Code blocks in a language Oyot knows are coloured by their syntax, in colours that suit each scheme.',
+            },
+            {
+                kind: 'added',
+                text: 'Ctrl F (⌘F on a Mac) finds words in the open note or journal, while reading and while editing. Enter and Shift Enter step through the matches, Esc closes the bar and leaves the current match selected, and text you have selected is filled in.',
+            },
+            {
+                kind: 'improved',
+                text: 'Ctrl Shift F (⇧⌘F on a Mac) now opens Search, and Ctrl 1 to Ctrl 5 open Today, Journals, Notes, Todos and Tags, in the order the sidebar lists them. Shortcuts you changed yourself stay as you set them.',
+            },
+        ],
+    },
+    {
         version: '0.0.34-alpha',
         date: '2026-10-25',
         summary:
