@@ -6,6 +6,8 @@
     import { Toolbar } from '$lib/editor';
     import EditorInstance from './EditorInstance.svelte';
     import Backlinks from './Backlinks.svelte';
+    import FindBar from './FindBar.svelte';
+    import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import {
         createSaveService,
         persistSnapshot,
@@ -78,6 +80,34 @@
         }
     }
 
+    // The find box, while reading and while editing. Kept open across a
+    // switch to another document, which it then looks in, as a browser's
+    // does across pages.
+    let finding = $state(false);
+    let findRequest = $state({ text: '' });
+
+    // Taken wherever focus is on the page, as Edit is, and kept from the web
+    // view, which has a find bar of its own on some platforms that knows
+    // nothing of the editor. Not over a dialog. Pressed again with the box
+    // open, it goes back to the box with what is in it selected.
+    function handleKeydown(event: KeyboardEvent) {
+        if (!current || !customShortcuts.matches('find', event)) return;
+        event.preventDefault();
+        if (document.querySelector('[aria-modal="true"]')) return;
+        // What is selected in the document, as a browser starts with, when
+        // it is a few words on one line.
+        const selected = editorInstance
+            ? editorInstance.state.doc.textBetween(
+                  editorInstance.state.selection.from,
+                  editorInstance.state.selection.to,
+                  '\n',
+              )
+            : '';
+        const text = selected.length <= 200 && !selected.includes('\n') ? selected : '';
+        finding = true;
+        findRequest = { text };
+    }
+
     function handleLocalUpdate() {
         saveService?.recordUpdate();
     }
@@ -126,8 +156,18 @@
     });
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div class="editor-container">
     {#if current}
+        {#if finding}
+            <FindBar
+                request={findRequest}
+                editor={editorInstance}
+                onClose={() => (finding = false)}
+            />
+        {/if}
+
         {#if editable}
             <Toolbar editor={editorInstance} />
         {/if}
