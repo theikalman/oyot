@@ -48,15 +48,18 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         where: 'Wherever you are in Oyot, unless a dialog is open',
         // Mod-/ because the editor leaves it free, and it is where a number
         // of apps keep their list of shortcuts. Plain / is the editor's, for
-        // the insert menu. The pages under Index by their place in it, as
-        // apps number the places down their sidebar; the editor leaves Mod
-        // and a digit free, since its headings are Mod-Alt and one. Settings
-        // on Mod-, as in most apps on a Mac.
+        // the insert menu. The places open by where they sit down the
+        // sidebar, Today first (under Days) and Tags last, as apps number
+        // the places down theirs; the editor leaves Mod and a digit free,
+        // since its headings are Mod-Alt and one. Search on Mod-Shift-f,
+        // where editors keep the search across every file: the sidebar no
+        // longer lists it, so its keys are not a number down that list.
+        // Settings on Mod-, as in most apps on a Mac.
         shortcuts: [
             { id: 'help', action: 'Open the help page', keys: ['Mod-/'] },
-            { id: 'search', action: 'Open the Search page', keys: ['Mod-1'] },
-            { id: 'notes', action: 'Open the Notes page', keys: ['Mod-2'] },
-            { id: 'journals', action: 'Open the Journals page', keys: ['Mod-3'] },
+            { id: 'search', action: 'Search everything', keys: ['Mod-Shift-f'] },
+            { id: 'journals', action: 'Open the Journals page', keys: ['Mod-2'] },
+            { id: 'notes', action: 'Open the Notes page', keys: ['Mod-3'] },
             { id: 'todos', action: 'Open the Todos page', keys: ['Mod-4'] },
             { id: 'tags', action: 'Open the Tags page', keys: ['Mod-5'] },
             { id: 'settings', action: 'Open Settings', keys: ['Mod-,'] },
@@ -80,12 +83,13 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         id: 'days',
         title: 'Days',
         where: 'Anywhere, unless a dialog is open, counting from the open journal or from today',
-        // The calendar's Today, and the days either side of the one open,
+        // The calendar's Today, on Mod-1 as well as the first of the places
+        // down the sidebar, and the days either side of the one open,
         // which is what Mod-[ and Mod-] are, back and forward, on a Mac.
         // Opening a day with no journal starts one, as picking it in the
         // calendar does.
         shortcuts: [
-            { id: 'today', action: "Open today's journal", keys: ['Mod-t'] },
+            { id: 'today', action: "Open today's journal", keys: ['Mod-t', 'Mod-1'] },
             { id: 'previousDay', action: 'Open the journal for the day before', keys: ['Mod-['] },
             { id: 'nextDay', action: 'Open the journal for the day after', keys: ['Mod-]'] },
         ],

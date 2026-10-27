@@ -34,6 +34,7 @@
     let helpKeys = $derived(customShortcuts.keysFor('help'));
     let editKeys = $derived(customShortcuts.keysFor('edit'));
     let todayKeys = $derived(customShortcuts.keysFor('today'));
+    let searchKeys = $derived(customShortcuts.keysFor('search'));
     let previousDayKeys = $derived(customShortcuts.keysFor('previousDay'));
     let nextDayKeys = $derived(customShortcuts.keysFor('nextDay'));
     let sidebarKeys = $derived(customShortcuts.keysFor('sidebar'));
@@ -354,12 +355,13 @@
                         and can make a note of the words or search everything for them.
                     </li>
                     <li>
-                        <strong>Search.</strong> The Search page, the last tab on a phone, finds the notes
-                        and journals with every word you type, in the title or anywhere in the text, best
-                        matches first. Choose Notes or Journals to look in one kind alone, Todos to find
-                        a task by its words, done or not, or Tags to find what carries a tag. Click what
-                        it finds to open it, or use the arrow keys and Enter. Back from there, the search
-                        is as you left it.
+                        <strong>Search.</strong> The Search page, the last tab on a phone{#if searchKeys.length > 0}
+                            or <Keys keys={searchKeys} {command} /> from anywhere{/if}, finds the
+                        notes and journals with every word you type, in the title or anywhere in the
+                        text, best matches first. Choose Notes or Journals to look in one kind
+                        alone, Todos to find a task by its words, done or not, or Tags to find what
+                        carries a tag. Click what it finds to open it, or use the arrow keys and
+                        Enter. Back from there, the search is as you left it.
                     </li>
                     <li>
                         <strong>Pinned notes.</strong> The sidebar lists only the notes you pin. Pin one

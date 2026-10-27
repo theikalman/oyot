@@ -8,8 +8,8 @@ import { addDays, journalDateOf, journalTitleFor } from '$lib/calendar/calendar'
 const PAGES = {
     help: '/help',
     search: '/search',
-    notes: '/notes',
     journals: '/journals',
+    notes: '/notes',
     todos: '/todos',
     tags: '/tags',
     settings: '/settings',
