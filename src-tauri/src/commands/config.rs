@@ -56,6 +56,7 @@ pub(crate) fn write_flag(app: &tauri::AppHandle, key: &str, value: bool) -> Resu
 
 /// A preference stored as a string, or `None` when it was never set or is
 /// not a string.
+#[cfg(desktop)]
 pub(crate) fn read_string(app: &tauri::AppHandle, key: &str) -> Option<String> {
     read_config(app)
         .get(key)
@@ -63,6 +64,7 @@ pub(crate) fn read_string(app: &tauri::AppHandle, key: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+#[cfg(desktop)]
 pub(crate) fn write_string(app: &tauri::AppHandle, key: &str, value: &str) -> Result<(), String> {
     let mut json = read_config(app);
     // As in write_flag: a file holding something other than an object has
