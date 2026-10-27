@@ -106,6 +106,14 @@ describe('colour schemes', () => {
         ['--text-primary', '--bg-raised', 4.5],
         ['--todo-text', '--todo-bg', 4.5],
         ['--tip-text', '--tip-bg', 4.5],
+        ['--syntax-keyword', '--code-bg', 4.5],
+        ['--syntax-string', '--code-bg', 4.5],
+        ['--syntax-number', '--code-bg', 4.5],
+        ['--syntax-function', '--code-bg', 4.5],
+        ['--syntax-type', '--code-bg', 4.5],
+        ['--syntax-property', '--code-bg', 4.5],
+        ['--syntax-builtin', '--code-bg', 4.5],
+        ['--syntax-comment', '--code-bg', 3],
     ];
 
     it.each(ids)('keeps text readable in %s', (id) => {

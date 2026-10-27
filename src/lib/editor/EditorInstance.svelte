@@ -30,6 +30,7 @@
     import { TickWhileReading } from './tickWhileReading';
     import { MermaidDiagrams } from './mermaid/MermaidDiagrams';
     import { CodeBlockLanguage } from './codeBlockLanguage';
+    import { CodeHighlight } from './codeHighlight';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -161,6 +162,7 @@
                 TickWhileReading,
                 MermaidDiagrams,
                 CodeBlockLanguage,
+                CodeHighlight,
                 // The keys the user gave shortcuts, ahead of the editor's own.
                 CustomShortcuts.configure({
                     bindings: () => customShortcuts.bindings,
@@ -561,6 +563,59 @@
         color: var(--text-secondary);
         pointer-events: none;
         user-select: none;
+    }
+    /* Code coloured by what each word is, from highlight.js's classes. */
+    .editor-content :global(pre .hljs-keyword),
+    .editor-content :global(pre .hljs-selector-tag),
+    .editor-content :global(pre .hljs-doctag) {
+        color: var(--syntax-keyword);
+    }
+    .editor-content :global(pre .hljs-string),
+    .editor-content :global(pre .hljs-regexp),
+    .editor-content :global(pre .hljs-addition),
+    .editor-content :global(pre .hljs-template-tag) {
+        color: var(--syntax-string);
+    }
+    .editor-content :global(pre .hljs-number),
+    .editor-content :global(pre .hljs-literal),
+    .editor-content :global(pre .hljs-symbol),
+    .editor-content :global(pre .hljs-bullet) {
+        color: var(--syntax-number);
+    }
+    .editor-content :global(pre .hljs-title),
+    .editor-content :global(pre .hljs-section),
+    .editor-content :global(pre .hljs-selector-id) {
+        color: var(--syntax-function);
+    }
+    .editor-content :global(pre .hljs-type),
+    .editor-content :global(pre .hljs-title.class_),
+    .editor-content :global(pre .hljs-selector-class) {
+        color: var(--syntax-type);
+    }
+    .editor-content :global(pre .hljs-attr),
+    .editor-content :global(pre .hljs-attribute),
+    .editor-content :global(pre .hljs-property),
+    .editor-content :global(pre .hljs-name),
+    .editor-content :global(pre .hljs-selector-attr),
+    .editor-content :global(pre .hljs-selector-pseudo) {
+        color: var(--syntax-property);
+    }
+    .editor-content :global(pre .hljs-built_in),
+    .editor-content :global(pre .hljs-meta),
+    .editor-content :global(pre .hljs-variable.language_),
+    .editor-content :global(pre .hljs-deletion) {
+        color: var(--syntax-builtin);
+    }
+    .editor-content :global(pre .hljs-comment),
+    .editor-content :global(pre .hljs-quote) {
+        color: var(--syntax-comment);
+        font-style: italic;
+    }
+    .editor-content :global(pre .hljs-emphasis) {
+        font-style: italic;
+    }
+    .editor-content :global(pre .hljs-strong) {
+        font-weight: 600;
     }
     /* A Mermaid diagram while reading: its code is hidden, and the diagram
        drawn just before it stands in its place (ADR 0038). */
