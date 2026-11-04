@@ -541,14 +541,23 @@
     .editor-content :global(pre) {
         background: var(--code-bg);
         color: var(--text-primary);
-        padding: 16px;
         border-radius: var(--radius-lg);
         box-shadow: inset 0 0 0 1px var(--border-color);
-        overflow-x: auto;
     }
+    /* Code keeps the lines it was written in, and a line wider than the note
+       scrolls sideways by itself. TipTap's own stylesheet wraps a code block,
+       so a long line read as two. The code scrolls rather than the block
+       around it, as whatever is positioned in a box that scrolls moves with
+       its content, and the language in the corner would slide away. The
+       line height is the note's own, kept from the smaller type here. */
     .editor-content :global(pre code) {
-        padding: 0;
+        display: block;
+        padding: 16px;
         background: none;
+        border-radius: inherit;
+        line-height: 1.91;
+        overflow-x: auto;
+        white-space: pre;
     }
     /* A code block's language, in its corner, so what it holds is on screen. */
     .editor-content :global(pre[data-language]) {
