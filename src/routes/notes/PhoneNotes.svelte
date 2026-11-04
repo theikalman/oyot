@@ -2,7 +2,13 @@
     import { openDocument, openTag } from '$lib/services/navigation';
     import { setPinned } from '$lib/services/documentActions';
     import { toasts } from '$lib/services/toast';
-    import { editedLabel, openTodos, sortNotes, type NoteOrder } from '$lib/notes/noteIndex';
+    import {
+        editedLabel,
+        openTodos,
+        pinnedNotes,
+        sortNotes,
+        type NoteOrder,
+    } from '$lib/notes/noteIndex';
     import { tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
     import { longpress } from '$lib/gestures/longpress';
     import type { DocumentSummary } from '$lib/types';
@@ -27,7 +33,8 @@
 
     let order = $state<NoteOrder>('edited');
     let rows = $derived(sortNotes(shown, order));
-    let pinned = $derived(shown.filter((note) => note.pinned));
+    // In the order they have in the sidebar, which is where it is set.
+    let pinned = $derived(pinnedNotes(shown));
     let pinnedCount = $derived(notes.filter((note) => note.pinned).length);
     let now = $state(new Date());
 

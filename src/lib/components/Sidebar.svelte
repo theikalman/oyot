@@ -27,7 +27,7 @@
     import type { DocumentSummary } from '../types';
     import { goto } from '$app/navigation';
     import { resolve } from '$app/paths';
-    import { setPinned } from '../services/documentActions';
+    import { movePinnedNote, setPinned } from '../services/documentActions';
     import { openJournal } from '../services/journals';
     import {
         openDocument,
@@ -224,9 +224,9 @@
     // one whose title is not a date has no day to be listed under. Counted the
     // same way here so the badge and the page cannot disagree.
     let journalDayCount = $derived(journalEntries($documents).length);
-    // Only the notes the user pinned are listed here, in the order the Notes
-    // index uses; every note is one click away there, and its count is on
-    // the Index entry below.
+    // Only the notes the user pinned are listed here, in the order they put
+    // them; every note is one click away on the Notes index, and its count is
+    // on the Index entry below.
     let pinned = $derived(pinnedNotes($documents));
     let noteCount = $derived(
         $documents.filter((d: DocumentSummary) => d.doc_type === 'note').length,
@@ -265,6 +265,16 @@
         } catch (err) {
             console.error('[Sidebar] Failed to change the pin:', err);
             toasts.error(doc.pinned ? 'Could not unpin this note' : 'Could not pin this note');
+        }
+    }
+
+    async function reorderPinned(docId: string, to: number) {
+        openMenuId = null;
+        try {
+            await movePinnedNote(docId, to);
+        } catch (err) {
+            console.error('[Sidebar] Failed to move the note:', err);
+            toasts.error('Could not move this note');
         }
     }
 
@@ -460,6 +470,8 @@
                         onRename={startRename}
                         onDelete={startDelete}
                         onTogglePin={togglePin}
+                        onReorder={reorderPinned}
+                        onDragStart={() => (openMenuId = null)}
                     />
                 {:else}
                     <!-- Where everyone starts after updating, since no note

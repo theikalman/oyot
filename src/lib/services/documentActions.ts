@@ -4,6 +4,8 @@ import type { Document } from '../types';
 import type { DocumentIndex } from '../editor/documentIndex';
 import { appStore } from '../stores/app';
 import { bumpIndexRevision } from '../stores/derivedIndex';
+import { pinnedNotes } from '../notes/noteIndex';
+import { pinMoves } from '../notes/pinOrder';
 import { toDocumentSummary } from './documents';
 
 function appStoreDoc(docId: string) {
@@ -110,10 +112,35 @@ export async function renameDocument(docId: string, title: string): Promise<Docu
 
 // Pinning keeps a note in the sidebar, on every device: it is the user's
 // choice about the note, like its title (ADR 0027). The stamp comes back from
-// Rust, which wrote it.
+// Rust, which wrote it. Pinning or unpinning clears the note's place in the
+// list, in Rust as here: a pin always starts at the top (ADR 0039).
 export async function setPinned(docId: string, pinned: boolean): Promise<void> {
     const pinnedUpdatedAt = await invoke<number>('set_document_pinned', { docId, pinned });
-    appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
+    appStore.setDocumentPinned(docId, pinned, null, pinnedUpdatedAt);
+}
+
+// Put a pinned note at `to` in the pinned list, on every device (ADR 0039).
+//
+// The store moves first and the write follows, the other way round from every
+// action above. A dragged row is let go where it is meant to stay, and waiting
+// on the write would show it back in its old place for a moment first.
+export async function movePinnedNote(docId: string, to: number): Promise<void> {
+    const pinned = pinnedNotes(get(appStore).documents);
+    const from = pinned.findIndex((note) => note.id === docId);
+    if (from === -1) return;
+    const moves = pinMoves(pinned, from, to);
+    if (moves.length === 0) return;
+
+    const before = new Map(pinned.map((note) => [note.id, note.pin_position]));
+    appStore.setPinPositions(moves);
+    try {
+        await invoke('set_pin_positions', { moves });
+    } catch (error) {
+        appStore.setPinPositions(
+            moves.map(({ docId }) => ({ docId, position: before.get(docId) ?? null })),
+        );
+        throw error;
+    }
 }
 
 export async function deleteDocument(docId: string): Promise<void> {

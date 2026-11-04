@@ -56,7 +56,13 @@ pub trait Repo {
     /// A peer's tombstone for a document this device never held.
     fn ensure_tombstone(&self, entry: &ManifestEntry) -> Result<(), String>;
     fn apply_rename(&self, id: &str, title: &str, at: i64) -> Result<bool, String>;
-    fn apply_pin(&self, id: &str, pinned: bool, at: i64) -> Result<bool, String>;
+    fn apply_pin(
+        &self,
+        id: &str,
+        pinned: bool,
+        position: Option<&str>,
+        at: i64,
+    ) -> Result<bool, String>;
     fn apply_delete(&self, id: &str, deleted_at: i64) -> Result<bool, String>;
     fn local_state_vector(&self, id: &str) -> Result<Vec<u8>, String>;
     /// What a peer at `sv` is missing; everything when `sv` is empty; `None`
@@ -278,7 +284,11 @@ impl Session {
                 id,
                 pinned,
                 pinned_updated_at,
-            } => log_err(repo.apply_pin(&id, pinned, pinned_updated_at), &id),
+                pin_position,
+            } => log_err(
+                repo.apply_pin(&id, pinned, pin_position.as_deref(), pinned_updated_at),
+                &id,
+            ),
             Message::DocDeleted { id, deleted_at } => {
                 log_err(repo.apply_delete(&id, deleted_at), &id)
             }
@@ -407,7 +417,12 @@ impl Session {
                     repo.apply_rename(&entry.id, &entry.title, entry.title_updated_at)?;
                 }
                 if repin {
-                    repo.apply_pin(&entry.id, entry.pinned.unwrap_or(false), pin_stamp(entry))?;
+                    repo.apply_pin(
+                        &entry.id,
+                        entry.pinned.unwrap_or(false),
+                        entry.pin_position.as_deref(),
+                        pin_stamp(entry),
+                    )?;
                 }
                 if pull {
                     let sv = repo.local_state_vector(&entry.id)?;

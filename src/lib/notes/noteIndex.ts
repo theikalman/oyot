@@ -6,6 +6,7 @@
 // sidebar and the Notes page take their order from here, so a note sits in the
 // same place relative to the others in both.
 
+import { comparePinned } from '$lib/notes/pinOrder';
 import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
 import { normalizeTagName } from '$lib/tiptap/tags';
 import type { DocumentSummary } from '$lib/types';
@@ -28,9 +29,14 @@ export function notesOf(documents: DocumentSummary[]): DocumentSummary[] {
         .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
 }
 
-/** The notes pinned to the sidebar, in the order every note is listed in. */
+/**
+ * The notes pinned to the sidebar, in the order the user put them (ADR 0039).
+ * Those never placed by hand come first, newest first, as every note is listed.
+ */
 export function pinnedNotes(documents: DocumentSummary[]): DocumentSummary[] {
-    return notesOf(documents).filter((doc) => doc.pinned);
+    return notesOf(documents)
+        .filter((doc) => doc.pinned)
+        .sort(comparePinned);
 }
 
 /**

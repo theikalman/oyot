@@ -39,10 +39,21 @@ impl Events for TauriEvents {
         );
     }
 
-    fn doc_pinned(&self, id: &str, pinned: bool, pinned_updated_at: i64) {
+    fn doc_pinned(
+        &self,
+        id: &str,
+        pinned: bool,
+        pin_position: Option<&str>,
+        pinned_updated_at: i64,
+    ) {
         self.emit(
             "sync-doc-pinned",
-            json!({ "id": id, "pinned": pinned, "pinnedUpdatedAt": pinned_updated_at }),
+            json!({
+                "id": id,
+                "pinned": pinned,
+                "pinPosition": pin_position,
+                "pinnedUpdatedAt": pinned_updated_at,
+            }),
         );
     }
 

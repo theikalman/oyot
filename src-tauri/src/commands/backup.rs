@@ -625,6 +625,7 @@ fn preview_of(
                 lifecycle_updated_at: doc.lifecycle_updated_at,
                 pinned: doc.pinned,
                 pinned_updated_at: doc.pinned_updated_at,
+                pin_position: doc.pin_position.clone(),
                 content_hash,
             })
         })

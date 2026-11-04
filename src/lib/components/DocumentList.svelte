@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { reorderable } from '$lib/gestures/reorder';
     import type { DocumentSummary } from '$lib/types';
     import Icon from './Icon.svelte';
 
@@ -19,6 +20,14 @@
         onDelete: (doc: DocumentSummary) => void;
         /** Offered in the menu when given, as Pin or Unpin for the row. */
         onTogglePin?: (doc: DocumentSummary) => void;
+        /**
+         * Put this document at this index. Rows can be dragged to it, or moved
+         * a place at a time from the menu, which is what there is for a
+         * keyboard, and for anyone who cannot hold and drag.
+         */
+        onReorder: (docId: string, to: number) => void;
+        /** A row was picked up, so an open menu has to close. */
+        onDragStart: () => void;
     }
 
     let {
@@ -30,12 +39,27 @@
         onRename,
         onDelete,
         onTogglePin,
+        onReorder,
+        onDragStart,
     }: Props = $props();
+
+    // The menu opens below its row, and on a row near the foot of the sidebar
+    // that left Delete out of sight below the fold.
+    function revealOnOpen(menu: HTMLElement) {
+        menu.scrollIntoView({ block: 'nearest' });
+    }
 </script>
 
-<ul class="doc-list">
-    {#each documents as doc (doc.id)}
-        <li class="doc-item">
+<ul
+    class="doc-list"
+    use:reorderable={{
+        onMove: onReorder,
+        onLift: onDragStart,
+        ignore: '.doc-menu-btn, .doc-menu',
+    }}
+>
+    {#each documents as doc, index (doc.id)}
+        <li class="doc-item" data-row-id={doc.id}>
             <button
                 class="doc-btn"
                 class:current={currentDocId === doc.id}
@@ -76,10 +100,20 @@
                 >
             </button>
             {#if openMenuId === doc.id}
-                <div class="doc-menu">
+                <div class="doc-menu" use:revealOnOpen>
                     {#if onTogglePin}
                         <button class="doc-menu-item" onclick={() => onTogglePin(doc)}>
                             {doc.pinned ? 'Unpin' : 'Pin'}
+                        </button>
+                    {/if}
+                    {#if index > 0}
+                        <button class="doc-menu-item" onclick={() => onReorder(doc.id, index - 1)}>
+                            Move up
+                        </button>
+                    {/if}
+                    {#if index < documents.length - 1}
+                        <button class="doc-menu-item" onclick={() => onReorder(doc.id, index + 1)}>
+                            Move down
                         </button>
                     {/if}
                     <button class="doc-menu-item" onclick={() => onRename(doc)}>Rename</button>
@@ -104,10 +138,41 @@
         color: var(--todo-text);
     }
 
+    /* Rows are held to pick them up, and held text would otherwise be
+       selected, or bring up the platform's menu for it. */
     .doc-list {
         list-style: none;
         padding: 0;
         margin: 0;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+    }
+
+    /* A row is up. The classes are set by the reorderable action. */
+    .doc-list:global(.reordering) {
+        cursor: grabbing;
+    }
+
+    /* So the other rows do not light up as the row passes over them. */
+    .doc-list:global(.reordering) .doc-item {
+        pointer-events: none;
+        transition: transform 0.12s ease;
+    }
+
+    .doc-list:global(.reordering) .doc-item:global(.lifted) {
+        z-index: 10;
+        transition: none;
+    }
+
+    .doc-item:global(.lifted) .doc-btn {
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        box-shadow: var(--shadow-pop);
+    }
+
+    .doc-item:global(.lifted) .doc-menu-btn {
+        visibility: hidden;
     }
 
     .doc-list li {

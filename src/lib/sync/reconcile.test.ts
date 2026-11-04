@@ -124,6 +124,33 @@ describe('reconcile', () => {
 
     // Without a rule for a tie, two devices that set different pins at one
     // stamp would each keep their own for good.
+    it('takes a newer position on a note pinned on both sides', () => {
+        const local = entry({ pinned: true, pinnedUpdatedAt: 50, pinPosition: '7' });
+        const remote = entry({ pinned: true, pinnedUpdatedAt: 60, pinPosition: '3' });
+
+        expect(reconcile(remote, local)).toMatchObject({ kind: 'update', repin: true });
+    });
+
+    // Two devices that moved a note at one stamp would otherwise each keep
+    // their own place for good.
+    it('breaks a tie on the stamp in favour of the later position, from either side', () => {
+        const early = entry({ pinned: true, pinnedUpdatedAt: 50, pinPosition: '3' });
+        const late = entry({ pinned: true, pinnedUpdatedAt: 50, pinPosition: '7' });
+
+        expect(reconcile(late, early)).toMatchObject({ kind: 'update', repin: true });
+        expect(reconcile(early, late)).toEqual({ kind: 'up-to-date' });
+    });
+
+    // An older build keeps a move's stamp and drops its position, and has to
+    // be able to come back without undoing the move.
+    it('lets a position beat none at the same stamp, from either side', () => {
+        const none = entry({ pinned: true, pinnedUpdatedAt: 50 });
+        const placed = entry({ pinned: true, pinnedUpdatedAt: 50, pinPosition: '3' });
+
+        expect(reconcile(placed, none)).toMatchObject({ kind: 'update', repin: true });
+        expect(reconcile(none, placed)).toEqual({ kind: 'up-to-date' });
+    });
+
     it('breaks a tie on the pin stamp in favour of pinned, from either side', () => {
         const pinned = entry({ pinned: true, pinnedUpdatedAt: 50 });
         const unpinned = entry({ pinned: false, pinnedUpdatedAt: 50 });

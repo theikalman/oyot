@@ -19,6 +19,7 @@ function doc(
         updated_at: 0,
         has_content: true,
         pinned: false,
+        pin_position: null,
         ...extra,
     };
 }

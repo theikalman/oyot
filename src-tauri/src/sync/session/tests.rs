@@ -23,6 +23,7 @@ struct Row {
     lifecycle_updated_at: i64,
     pinned: bool,
     pinned_updated_at: Option<i64>,
+    pin_position: Option<String>,
     state: Vec<u8>,
 }
 
@@ -83,6 +84,7 @@ impl FakeRepo {
                 lifecycle_updated_at: 1,
                 pinned: false,
                 pinned_updated_at: None,
+                pin_position: None,
                 state: state_with(text),
             },
         );
@@ -172,6 +174,7 @@ impl Repo for FakeRepo {
                 lifecycle_updated_at: Some(row.lifecycle_updated_at),
                 pinned: Some(row.pinned),
                 pinned_updated_at: row.pinned_updated_at,
+                pin_position: row.pin_position.clone(),
                 content_hash: if row.is_deleted {
                     None
                 } else {
@@ -206,6 +209,7 @@ impl Repo for FakeRepo {
                 lifecycle_updated_at: stamp,
                 pinned: entry.pinned.unwrap_or(false),
                 pinned_updated_at: entry.pinned_updated_at,
+                pin_position: entry.pin_position.clone(),
                 state: Vec::new(),
             },
         );
@@ -230,6 +234,7 @@ impl Repo for FakeRepo {
                 lifecycle_updated_at: stamp,
                 pinned: false,
                 pinned_updated_at: None,
+                pin_position: None,
                 state: Vec::new(),
             },
         );
@@ -248,15 +253,24 @@ impl Repo for FakeRepo {
         }
     }
 
-    fn apply_pin(&self, id: &str, pinned: bool, at: i64) -> Result<bool, String> {
+    fn apply_pin(
+        &self,
+        id: &str,
+        pinned: bool,
+        position: Option<&str>,
+        at: i64,
+    ) -> Result<bool, String> {
         let mut rows = self.rows.borrow_mut();
         let Some(row) = rows.get_mut(id) else {
             return Ok(false);
         };
         let ours = row.pinned_updated_at.unwrap_or(0);
-        if ours < at || (ours == at && pinned && !row.pinned) {
+        let tie_won = (pinned && !row.pinned)
+            || (pinned == row.pinned && row.pin_position.as_deref() < position);
+        if ours < at || (ours == at && tie_won) {
             row.pinned = pinned;
             row.pinned_updated_at = Some(at);
+            row.pin_position = position.map(str::to_string);
             return Ok(true);
         }
         Ok(false)
@@ -404,6 +418,7 @@ fn assert_converged(a: &FakeRepo, b: &FakeRepo) {
             assert_eq!(a.text(&id), b.text(&id), "{id} content mismatch");
             assert_eq!(ra.title, rb.title, "{id} title mismatch");
             assert_eq!(ra.pinned, rb.pinned, "{id} pin mismatch");
+            assert_eq!(ra.pin_position, rb.pin_position, "{id} position mismatch");
         }
     }
 }
@@ -541,7 +556,7 @@ fn a_pin_set_on_one_device_reaches_the_other() {
     let (a, b) = (FakeRepo::default(), FakeRepo::default());
     a.seed("doc", "x", 1);
     b.seed("doc", "x", 1);
-    a.apply_pin("doc", true, 50).unwrap();
+    a.apply_pin("doc", true, None, 50).unwrap();
 
     converge(&a, &b);
     assert!(b.row("doc").pinned);
@@ -556,8 +571,8 @@ fn pin_race_the_later_stamp_wins_on_both_sides_even_when_it_unpins() {
     let (a, b) = (FakeRepo::default(), FakeRepo::default());
     a.seed("doc", "x", 1);
     b.seed("doc", "x", 1);
-    a.apply_pin("doc", true, 20).unwrap();
-    b.apply_pin("doc", false, 30).unwrap();
+    a.apply_pin("doc", true, None, 20).unwrap();
+    b.apply_pin("doc", false, None, 30).unwrap();
 
     converge(&a, &b);
     assert!(!a.row("doc").pinned);
@@ -568,7 +583,7 @@ fn pin_race_the_later_stamp_wins_on_both_sides_even_when_it_unpins() {
 fn a_note_first_seen_from_a_peer_arrives_pinned() {
     let (a, b) = (FakeRepo::default(), FakeRepo::default());
     a.seed("doc", "x", 1);
-    a.apply_pin("doc", true, 50).unwrap();
+    a.apply_pin("doc", true, None, 50).unwrap();
 
     converge(&a, &b);
     assert!(b.row("doc").pinned);
@@ -579,13 +594,14 @@ fn a_note_first_seen_from_a_peer_arrives_pinned() {
 fn a_live_pin_applies_when_newer_and_is_ignored_when_older() {
     let a = FakeRepo::default();
     a.seed("doc", "x", 1);
-    a.apply_pin("doc", true, 50).unwrap();
+    a.apply_pin("doc", true, None, 50).unwrap();
     let mut session = Session::new();
 
     let older = Message::DocPinned {
         id: "doc".into(),
         pinned: false,
         pinned_updated_at: 40,
+        pin_position: None,
     };
     session.handle(&a, older, 0);
     assert!(a.row("doc").pinned);
@@ -594,9 +610,65 @@ fn a_live_pin_applies_when_newer_and_is_ignored_when_older() {
         id: "doc".into(),
         pinned: false,
         pinned_updated_at: 60,
+        pin_position: None,
     };
     session.handle(&a, newer, 0);
     assert!(!a.row("doc").pinned);
+}
+
+#[test]
+fn a_live_move_carries_the_position() {
+    let a = FakeRepo::default();
+    a.seed("doc", "x", 1);
+    a.apply_pin("doc", true, None, 50).unwrap();
+    let mut session = Session::new();
+
+    let moved = Message::DocPinned {
+        id: "doc".into(),
+        pinned: true,
+        pinned_updated_at: 60,
+        pin_position: Some("5".into()),
+    };
+    session.handle(&a, moved, 0);
+
+    assert_eq!(a.row("doc").pin_position.as_deref(), Some("5"));
+}
+
+// A note moved here while the other device was away, and another moved there:
+// each note's place is its own, so both moves survive the meeting.
+#[test]
+fn moves_of_different_notes_on_two_devices_both_survive() {
+    let (a, b) = (FakeRepo::default(), FakeRepo::default());
+    for doc in ["one", "two"] {
+        a.seed(doc, "x", 1);
+        b.seed(doc, "x", 1);
+        a.apply_pin(doc, true, None, 50).unwrap();
+        b.apply_pin(doc, true, None, 50).unwrap();
+    }
+    a.apply_pin("one", true, Some("3"), 60).unwrap();
+    b.apply_pin("two", true, Some("7"), 70).unwrap();
+
+    converge(&a, &b);
+
+    for repo in [&a, &b] {
+        assert_eq!(repo.row("one").pin_position.as_deref(), Some("3"));
+        assert_eq!(repo.row("two").pin_position.as_deref(), Some("7"));
+    }
+    assert_converged(&a, &b);
+}
+
+#[test]
+fn the_later_move_of_one_note_wins_on_both_devices() {
+    let (a, b) = (FakeRepo::default(), FakeRepo::default());
+    a.seed("doc", "x", 1);
+    b.seed("doc", "x", 1);
+    a.apply_pin("doc", true, Some("3"), 60).unwrap();
+    b.apply_pin("doc", true, Some("7"), 50).unwrap();
+
+    converge(&a, &b);
+
+    assert_eq!(b.row("doc").pin_position.as_deref(), Some("3"));
+    assert_converged(&a, &b);
 }
 
 #[test]

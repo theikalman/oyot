@@ -60,6 +60,7 @@ export interface RawSyncEntry {
     lifecycle_updated_at: number;
     pinned: boolean;
     pinned_updated_at: number | null;
+    pin_position: string | null;
     content_hash: string | null; // base64
 }
 
@@ -75,6 +76,7 @@ export function toManifestEntry(r: RawSyncEntry): ManifestEntry {
         lifecycleUpdatedAt: r.lifecycle_updated_at,
         pinned: r.pinned,
         pinnedUpdatedAt: r.pinned_updated_at,
+        pinPosition: r.pin_position,
         contentHash: r.content_hash,
     };
 }
@@ -90,6 +92,7 @@ function toSummary(doc: Document): DocumentSummary {
         updated_at: doc.updated_at,
         has_content: false,
         pinned: doc.pinned,
+        pin_position: doc.pin_position,
     };
 }
 
@@ -105,6 +108,7 @@ function summaryOf(entry: ManifestEntry): DocumentSummary {
         updated_at: entry.titleUpdatedAt,
         has_content: false,
         pinned: entry.pinned ?? false,
+        pin_position: entry.pinPosition ?? null,
     };
 }
 
@@ -403,6 +407,7 @@ export class DocumentRepository {
                 lifecycleUpdatedAt: lifecycleStamp(entry),
                 pinned: entry.pinned ?? false,
                 pinnedUpdatedAt: entry.pinnedUpdatedAt ?? null,
+                pinPosition: entry.pinPosition ?? null,
             },
         });
         appStore.addDocument(toSummary(doc));
@@ -440,13 +445,19 @@ export class DocumentRepository {
 
     // Last-writer-wins on the pin stamp, decided in Rust by the same rule
     // `reconcile()` uses. The sidebar only moves when the row did.
-    async applyPin(docId: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void> {
+    async applyPin(
+        docId: string,
+        pinned: boolean,
+        pinPosition: string | null,
+        pinnedUpdatedAt: number,
+    ): Promise<void> {
         const changed = await invoke<boolean>('apply_remote_pin', {
             docId,
             pinned,
+            pinPosition,
             pinnedUpdatedAt,
         });
-        if (changed) this.peerPinned(docId, pinned, pinnedUpdatedAt);
+        if (changed) this.peerPinned(docId, pinned, pinPosition, pinnedUpdatedAt);
     }
 
     // Returns true if the tombstone won. A losing tombstone (the document was
@@ -473,8 +484,13 @@ export class DocumentRepository {
         }
     }
 
-    peerPinned(docId: string, pinned: boolean, pinnedUpdatedAt: number): void {
-        appStore.setDocumentPinned(docId, pinned, pinnedUpdatedAt);
+    peerPinned(
+        docId: string,
+        pinned: boolean,
+        pinPosition: string | null,
+        pinnedUpdatedAt: number,
+    ): void {
+        appStore.setDocumentPinned(docId, pinned, pinPosition, pinnedUpdatedAt);
     }
 
     peerDeleted(docId: string): void {

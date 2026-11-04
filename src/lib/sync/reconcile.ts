@@ -76,10 +76,17 @@ export function reconcile(remote: ManifestEntry, local: ManifestEntry | undefine
  * setting them independently, and with no rule for a tie each would keep its
  * own for good. `apply_remote_pin` breaks it the same way, so a manifest
  * exchange and a live message cannot settle on different answers (ADR 0027).
+ *
+ * Pinned on both sides, the later position wins, and any position beats none
+ * (ADR 0039): an older build keeps a move's stamp and loses its position, and
+ * reads here as that same stamp with none. Compared as plain strings, to agree
+ * with Rust's comparison of the bytes.
  */
 function pinWins(remote: ManifestEntry, local: ManifestEntry): boolean {
     const theirs = pinStamp(remote);
     const ours = pinStamp(local);
     if (theirs !== ours) return theirs > ours;
-    return (remote.pinned ?? false) && !(local.pinned ?? false);
+    const theirPin = remote.pinned ?? false;
+    if (theirPin !== (local.pinned ?? false)) return theirPin;
+    return (remote.pinPosition ?? '') > (local.pinPosition ?? '');
 }

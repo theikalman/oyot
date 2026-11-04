@@ -10,7 +10,14 @@ pub trait Events: Send + Sync {
     /// A peer created a document, or revived one this device had deleted.
     fn doc_created(&self, _entry: &ManifestEntry) {}
     fn doc_renamed(&self, _id: &str, _title: &str, _title_updated_at: i64) {}
-    fn doc_pinned(&self, _id: &str, _pinned: bool, _pinned_updated_at: i64) {}
+    fn doc_pinned(
+        &self,
+        _id: &str,
+        _pinned: bool,
+        _pin_position: Option<&str>,
+        _pinned_updated_at: i64,
+    ) {
+    }
     fn doc_deleted(&self, _id: &str) {}
     /// A peer's update was merged into a document's stored state, and
     /// `update` is what it added. The page applies it to the open copy, if it

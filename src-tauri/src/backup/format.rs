@@ -133,6 +133,10 @@ pub struct BackupDocument {
     pub pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_updated_at: Option<i64>,
+    /// Where it sits among the pinned notes (ADR 0039). Left out, for the same
+    /// reason, for a note nobody placed by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_position: Option<String>,
     /// The entry holding the document's Yjs state. `None` for a tombstone,
     /// and for a document nobody has typed in.
     pub state: Option<String>,
@@ -290,6 +294,7 @@ mod tests {
             lifecycle_updated_at: 1,
             pinned: false,
             pinned_updated_at: None,
+            pin_position: None,
             state: Some(state_entry_path(0)),
         }
     }
@@ -314,6 +319,20 @@ mod tests {
     fn a_row_never_pinned_is_written_as_it_always_was() {
         let json = serde_json::to_string(&document()).unwrap();
         assert!(!json.contains("pinned"), "got {json}");
+        assert!(!json.contains("pinPosition"), "got {json}");
+    }
+
+    #[test]
+    fn a_position_survives_the_round_trip() {
+        let row = BackupDocument {
+            pinned: true,
+            pinned_updated_at: Some(5),
+            pin_position: Some("55".to_string()),
+            ..document()
+        };
+        let back: BackupDocument =
+            serde_json::from_str(&serde_json::to_string(&row).unwrap()).unwrap();
+        assert_eq!(back, row);
     }
 
     // Unpinning is stamped, and the stamp is what stops an older pin winning,

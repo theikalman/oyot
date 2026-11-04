@@ -159,9 +159,9 @@ describe('importing a backup', () => {
         const here = new FakeRepo();
         share(backedUp, here, 'pinned-there');
         share(backedUp, here, 'unpinned-here');
-        await backedUp.applyPin('pinned-there', true, 50);
-        await backedUp.applyPin('unpinned-here', true, 20);
-        await here.applyPin('unpinned-here', false, 30);
+        await backedUp.applyPin('pinned-there', true, null, 50);
+        await backedUp.applyPin('unpinned-here', true, null, 20);
+        await here.applyPin('unpinned-here', false, null, 30);
 
         const { plan, result, calls } = await importInto(here, await backupOf(backedUp));
         expect(here.docs.get('pinned-there')?.pinned).toBe(true);
@@ -175,10 +175,33 @@ describe('importing a backup', () => {
         expect(again.result.changed).toBe(0);
     });
 
+    it('takes a newer place in the pinned list, and counts it as a change', async () => {
+        const [backedUp, here] = [new FakeRepo(), new FakeRepo()];
+        backedUp.seed('groceries', 'body');
+        share(backedUp, here, 'groceries');
+        await here.applyPin('groceries', true, '7', 40);
+        await backedUp.applyPin('groceries', true, '3', 50);
+
+        const { result } = await importInto(here, await backupOf(backedUp));
+
+        expect(here.docs.get('groceries')?.pinPosition).toBe('3');
+        expect(result.changed).toBe(1);
+    });
+
+    it('restores a note to its place in the pinned list', async () => {
+        const [old, fresh] = [new FakeRepo(), new FakeRepo()];
+        old.seed('groceries', 'body');
+        await old.applyPin('groceries', true, '3', 50);
+
+        await importInto(fresh, await backupOf(old));
+
+        expect(fresh.docs.get('groceries')?.pinPosition).toBe('3');
+    });
+
     it('restores a pinned note as pinned', async () => {
         const old = new FakeRepo();
         old.seed('groceries', 'milk, eggs');
-        await old.applyPin('groceries', true, 50);
+        await old.applyPin('groceries', true, null, 50);
 
         const fresh = new FakeRepo();
         await importInto(fresh, await backupOf(old));

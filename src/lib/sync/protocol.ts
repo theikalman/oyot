@@ -25,6 +25,9 @@ export interface ManifestEntry {
     // `pinStamp()` reads that as never pinned.
     pinned?: boolean;
     pinnedUpdatedAt?: number | null;
+    // Where it sits among the pinned notes, part of the pin and under the same
+    // stamp (ADR 0039). A peer on a build from before positions sends none.
+    pinPosition?: string | null;
     // base64 of the content hash (ADR 0033); null when unknown, which is
     // treated as "exchange state vectors".
     contentHash: string | null;

@@ -68,6 +68,7 @@ fn request(entry: &ManifestEntry) -> EnsureDocumentRequest {
         deleted_at: entry.deleted_at,
         pinned: entry.pinned.unwrap_or(false),
         pinned_updated_at: entry.pinned_updated_at,
+        pin_position: entry.pin_position.clone(),
     }
 }
 
@@ -95,6 +96,7 @@ pub fn manifest_entry(r: documents::DocSyncEntry) -> ManifestEntry {
         lifecycle_updated_at: Some(r.lifecycle_updated_at),
         pinned: Some(r.pinned),
         pinned_updated_at: r.pinned_updated_at,
+        pin_position: r.pin_position,
         content_hash: r.content_hash,
     }
 }
@@ -124,10 +126,16 @@ impl Repo for SqliteRepo {
         Ok(changed)
     }
 
-    fn apply_pin(&self, id: &str, pinned: bool, at: i64) -> Result<bool, String> {
-        let changed = documents::apply_pin_if_newer(&self.db.lock(), id, pinned, at)?;
+    fn apply_pin(
+        &self,
+        id: &str,
+        pinned: bool,
+        position: Option<&str>,
+        at: i64,
+    ) -> Result<bool, String> {
+        let changed = documents::apply_pin_if_newer(&self.db.lock(), id, pinned, position, at)?;
         if changed {
-            self.events.doc_pinned(id, pinned, at);
+            self.events.doc_pinned(id, pinned, position, at);
         }
         Ok(changed)
     }
