@@ -3,8 +3,7 @@
 //
 // Pure, and separate from the pages, for the reason the journal index is: the
 // order and the filter are rules, and a page is only markup over them. The
-// sidebar and the Notes page take their order from here, so a note sits in the
-// same place relative to the others in both.
+// sidebar and the Notes page take their order from here.
 
 import { comparePinned } from '$lib/notes/pinOrder';
 import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
@@ -82,12 +81,47 @@ export function noteStatus(note: DocumentSummary): string {
     return '';
 }
 
-/** The orders a phone's note list can be in. */
-export type NoteOrder = 'edited' | 'created';
+/** The orders the Notes page can list notes in, as it offers them. */
+export const NOTE_ORDERS = ['name', 'created', 'edited'] as const;
 
-/** These notes, most recently edited first, or newest first as notesOf has them. */
+export type NoteOrder = (typeof NOTE_ORDERS)[number];
+
+/** How the Notes page lists notes until the user picks something else. */
+export const DEFAULT_NOTE_ORDER: NoteOrder = 'name';
+
+export const NOTE_ORDER_LABELS: Record<NoteOrder, string> = {
+    name: 'Name',
+    created: 'Date created',
+    edited: 'Last edited',
+};
+
+/** The order a stored value names, or the default when it names none this build knows. */
+export function parseNoteOrder(value: unknown): NoteOrder {
+    return NOTE_ORDERS.find((order) => order === value) ?? DEFAULT_NOTE_ORDER;
+}
+
+/** The order after this one, for a control that steps through them. */
+export function nextNoteOrder(order: NoteOrder): NoteOrder {
+    return NOTE_ORDERS[(NOTE_ORDERS.indexOf(order) + 1) % NOTE_ORDERS.length];
+}
+
+// The way a person reads a list of names rather than the way a computer does:
+// "apple" sits by "Apple", not after "Zebra", and "Week 2" comes before
+// "Week 10".
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/**
+ * These notes by name from A to Z, most recently edited first, or newest first
+ * as notesOf has them. The id breaks a tie, as it does there, so two notes with
+ * the same title do not swap places between renders.
+ */
 export function sortNotes(notes: DocumentSummary[], order: NoteOrder): DocumentSummary[] {
     if (order === 'created') return notes;
+    if (order === 'name') {
+        return [...notes].sort(
+            (a, b) => byName.compare(a.title, b.title) || a.id.localeCompare(b.id),
+        );
+    }
     return [...notes].sort((a, b) => b.updated_at - a.updated_at || a.id.localeCompare(b.id));
 }
 

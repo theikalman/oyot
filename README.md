@@ -17,9 +17,10 @@ and move between paired devices over an encrypted peer-to-peer connection.
   the Journals index lists every day you have an entry for, newest first.
   Opening one from there moves the calendar to it.
 - **Pinned notes.** The sidebar holds only the notes you pin, from a note's own
-  page or from the Notes index, which lists every note with a filter. Drag them
-  into the order you want, or hold and drag on a touch screen. Pins and their
-  order follow you to your other devices, and into your backups.
+  page or from the Notes index, which lists every note with a filter, sorted by
+  name, date created or last edited. Drag them into the order you want, or hold
+  and drag on a touch screen. Pins and their order follow you to your other
+  devices, and into your backups.
 - **Rich text editing.** Headings, lists, tables, task lists, images, and slash
   commands, built on Tiptap.
 - **Reading first.** Notes and journals open for reading, without the toolbar

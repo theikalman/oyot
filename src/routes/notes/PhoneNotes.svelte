@@ -4,11 +4,12 @@
     import { toasts } from '$lib/services/toast';
     import {
         editedLabel,
+        nextNoteOrder,
+        NOTE_ORDER_LABELS,
         openTodos,
         pinnedNotes,
-        sortNotes,
-        type NoteOrder,
     } from '$lib/notes/noteIndex';
+    import { noteOrder } from '$lib/notes/noteOrder.svelte';
     import { tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
     import { longpress } from '$lib/gestures/longpress';
     import type { DocumentSummary } from '$lib/types';
@@ -31,8 +32,8 @@
 
     let { notes, shown, tags, filter = $bindable(), onRename, onDelete }: Props = $props();
 
-    let order = $state<NoteOrder>('edited');
-    let rows = $derived(sortNotes(shown, order));
+    let orderLabel = $derived(NOTE_ORDER_LABELS[noteOrder.value]);
+    let nextOrder = $derived(nextNoteOrder(noteOrder.value));
     // In the order they have in the sidebar, which is where it is set.
     let pinned = $derived(pinnedNotes(shown));
     let pinnedCount = $derived(notes.filter((note) => note.pinned).length);
@@ -115,15 +116,15 @@
             <h2>All notes</h2>
             <button
                 class="order"
-                onclick={() => (order = order === 'edited' ? 'created' : 'edited')}
-                aria-label="Sort by {order === 'edited' ? 'when made' : 'last edited'}"
+                onclick={() => (noteOrder.value = nextOrder)}
+                aria-label="Sorted by {orderLabel}. Sort by {NOTE_ORDER_LABELS[nextOrder]} instead"
             >
-                {order === 'edited' ? 'Last edited' : 'Newest'}
+                {orderLabel}
                 <Icon name="chevron-down" size={14} />
             </button>
         </div>
         <ul class="rows">
-            {#each rows as note (note.id)}
+            {#each shown as note (note.id)}
                 {@const noteTags = tagsOf(tags, note.id)}
                 <li>
                     <SwipeRow actionsWidth={156}>

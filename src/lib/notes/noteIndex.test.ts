@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { editedLabel, filterNotes, notesOf, noteStatus, pinnedNotes, sortNotes } from './noteIndex';
+import {
+    DEFAULT_NOTE_ORDER,
+    editedLabel,
+    filterNotes,
+    nextNoteOrder,
+    NOTE_ORDERS,
+    notesOf,
+    noteStatus,
+    parseNoteOrder,
+    pinnedNotes,
+    sortNotes,
+    type NoteOrder,
+} from './noteIndex';
 import { tagsByDocument } from '$lib/tags/documentTags';
 import type { DocumentSummary } from '$lib/types';
 
@@ -210,6 +222,77 @@ describe('sortNotes', () => {
         const b = doc('b', 'B', 'note', { updated_at: 30 });
         expect(sortNotes([a, b], 'edited').map((n) => n.id)).toEqual(['b', 'a']);
         expect(sortNotes([a, b], 'created').map((n) => n.id)).toEqual(['a', 'b']);
+    });
+
+    const named = (...titles: string[]) => titles.map((title) => doc(title, title, 'note'));
+    const byName = (notes: DocumentSummary[]) => sortNotes(notes, 'name').map((n) => n.title);
+
+    it('puts names in alphabetical order, whatever their case', () => {
+        expect(byName(named('banana', 'Cherry', 'apple'))).toEqual(['apple', 'banana', 'Cherry']);
+    });
+
+    it('reads the numbers in a name as numbers', () => {
+        expect(byName(named('Week 10', 'Week 2', 'Week 1'))).toEqual([
+            'Week 1',
+            'Week 2',
+            'Week 10',
+        ]);
+    });
+
+    it('keeps an accented name by its plain letter', () => {
+        expect(byName(named('Zoo', 'Éclair', 'Apple'))).toEqual(['Apple', 'Éclair', 'Zoo']);
+    });
+
+    it('keeps two notes of the same name in one order, however they arrive', () => {
+        const a = doc('a', 'Same', 'note');
+        const b = doc('b', 'same', 'note');
+
+        expect(sortNotes([a, b], 'name').map((n) => n.id)).toEqual(['a', 'b']);
+        expect(sortNotes([b, a], 'name').map((n) => n.id)).toEqual(['a', 'b']);
+    });
+
+    it('leaves the list it was given as it was', () => {
+        const notes = named('b', 'a');
+
+        sortNotes(notes, 'name');
+
+        expect(notes.map((n) => n.title)).toEqual(['b', 'a']);
+    });
+
+    it('gives a filtered list the same order', () => {
+        const notes = notesOf([
+            doc('n1', 'Zebra plan', 'note', { created_at: 30 }),
+            doc('n2', 'Apple plan', 'note', { created_at: 20 }),
+            doc('n3', 'Shopping', 'note', { created_at: 10 }),
+        ]);
+
+        const shown = sortNotes(filterNotes(notes, 'plan'), 'name');
+
+        expect(shown.map((n) => n.id)).toEqual(['n2', 'n1']);
+    });
+});
+
+describe('note orders', () => {
+    it('lists by name until told otherwise', () => {
+        expect(DEFAULT_NOTE_ORDER).toBe('name');
+        expect(parseNoteOrder(null)).toBe('name');
+    });
+
+    it('keeps an order it knows', () => {
+        for (const order of NOTE_ORDERS) expect(parseNoteOrder(order)).toBe(order);
+    });
+
+    it('falls back to the default on anything else', () => {
+        expect(parseNoteOrder('size')).toBe('name');
+        expect(parseNoteOrder(3)).toBe('name');
+    });
+
+    it('steps through every order and back to the first', () => {
+        const seen: NoteOrder[] = [NOTE_ORDERS[0]];
+        while (seen.length < NOTE_ORDERS.length) seen.push(nextNoteOrder(seen[seen.length - 1]));
+
+        expect(seen).toEqual([...NOTE_ORDERS]);
+        expect(nextNoteOrder(seen[seen.length - 1])).toBe(NOTE_ORDERS[0]);
     });
 });
 
