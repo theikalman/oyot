@@ -165,6 +165,7 @@ describe('taggedResults', () => {
             updated_at: updatedAt,
             has_content: true,
             pinned: false,
+            pin_position: null,
         };
     }
 

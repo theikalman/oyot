@@ -69,7 +69,7 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<LibrarySnapshot, String
                     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
                     content_hash, \
                     is_deleted = 0 AND COALESCE(length(crdt_state), 0) > 2, \
-                    pinned, pinned_updated_at \
+                    pinned, pinned_updated_at, pin_position \
              FROM documents ORDER BY id",
         )
         .map_err(|e| format!("could not read the documents: {e}"))?;
@@ -92,6 +92,7 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<LibrarySnapshot, String
                     lifecycle_updated_at: row.get(8)?,
                     pinned: row.get::<_, i64>(11)? != 0,
                     pinned_updated_at: row.get(12)?,
+                    pin_position: row.get(13)?,
                     state: None,
                 },
                 content_hash: row.get(9)?,
@@ -318,6 +319,15 @@ mod tests {
 
         crate::commands::documents::set_pinned(&db, "a", false, 101).unwrap();
         changed(&db, "an unpin");
+
+        crate::commands::documents::set_pinned(&db, "a", true, 102).unwrap();
+        changed(&db, "a pin again");
+        let pin_move = crate::commands::documents::PinMove {
+            doc_id: "a".to_string(),
+            position: "5".to_string(),
+        };
+        crate::commands::documents::write_pin_positions(&db, &[pin_move], 103).unwrap();
+        changed(&db, "a move in the pinned list");
 
         add_document(&db, "b", b"more");
         changed(&db, "a new document");

@@ -47,17 +47,43 @@ function createAppStore() {
             })),
         // The open document is kept in step too, so nothing reading the pin
         // off it is left holding the one it had when it was opened.
-        setDocumentPinned: (docId: string, pinned: boolean, pinnedUpdatedAt: number) =>
+        setDocumentPinned: (
+            docId: string,
+            pinned: boolean,
+            pinPosition: string | null,
+            pinnedUpdatedAt: number,
+        ) =>
             update((s) => ({
                 ...s,
                 documents: s.documents.map((d) =>
-                    d.id === docId && d.pinned !== pinned ? { ...d, pinned } : d,
+                    d.id === docId && (d.pinned !== pinned || d.pin_position !== pinPosition)
+                        ? { ...d, pinned, pin_position: pinPosition }
+                        : d,
                 ),
                 currentDocument:
                     s.currentDocument?.id === docId
-                        ? { ...s.currentDocument, pinned, pinned_updated_at: pinnedUpdatedAt }
+                        ? {
+                              ...s.currentDocument,
+                              pinned,
+                              pin_position: pinPosition,
+                              pinned_updated_at: pinnedUpdatedAt,
+                          }
                         : s.currentDocument,
             })),
+        // Several at once, as one move in the pinned list can place them.
+        setPinPositions: (moves: { docId: string; position: string | null }[]) =>
+            update((s) => {
+                const moved = new Map(moves.map((m) => [m.docId, m.position]));
+                const place = <T extends { id: string; pin_position: string | null }>(d: T): T => {
+                    const position = moved.get(d.id);
+                    return position === undefined ? d : { ...d, pin_position: position };
+                };
+                return {
+                    ...s,
+                    documents: s.documents.map(place),
+                    currentDocument: s.currentDocument && place(s.currentDocument),
+                };
+            }),
         addDocument: (doc: DocumentSummary) =>
             update((s) => {
                 const exists = s.documents.some((d) => d.id === doc.id);

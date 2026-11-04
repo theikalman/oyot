@@ -80,5 +80,6 @@ export function toDocumentSummary(doc: Document): DocumentSummary {
         updated_at: doc.updated_at,
         has_content: false,
         pinned: doc.pinned,
+        pin_position: doc.pin_position,
     };
 }

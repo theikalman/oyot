@@ -366,7 +366,10 @@
                     <li>
                         <strong>Pinned notes.</strong> The sidebar lists only the notes you pin. Pin one
                         with the pin beside its title, or from the Notes page. A note started with the
-                        + beside Pinned notes is pinned from the start.
+                        + beside Pinned notes is pinned from the start. New pins go to the top of the
+                        list. Drag one to put it somewhere else, or on a touch screen hold it a moment
+                        first and then drag. Move up and Move down in a note's menu do the same a place
+                        at a time, and the order follows you to your other devices.
                     </li>
                     <li>
                         <strong>The places.</strong> At the top of the sidebar, Today opens today's journal,

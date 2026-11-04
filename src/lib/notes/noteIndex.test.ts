@@ -19,6 +19,7 @@ function doc(
         updated_at: 0,
         has_content: true,
         pinned: false,
+        pin_position: null,
         ...extra,
     };
 }
@@ -79,6 +80,38 @@ describe('pinnedNotes', () => {
         ]);
 
         expect(pinned.map((n) => n.title)).toEqual(['Pinned, new', 'Pinned, old']);
+    });
+
+    it('lists notes in the order they were put, whenever they were made', () => {
+        const pinned = pinnedNotes([
+            doc('n1', 'Second', 'note', { pinned: true, pin_position: '5', created_at: 30 }),
+            doc('n2', 'Third', 'note', { pinned: true, pin_position: '7', created_at: 20 }),
+            doc('n3', 'First', 'note', { pinned: true, pin_position: '3', created_at: 10 }),
+        ]);
+
+        expect(pinned.map((n) => n.title)).toEqual(['First', 'Second', 'Third']);
+    });
+
+    // A note just pinned has no place yet, and that is what puts it on top.
+    it('lists a note never placed above the ones that were, newest first', () => {
+        const pinned = pinnedNotes([
+            doc('n1', 'Placed', 'note', { pinned: true, pin_position: '3', created_at: 40 }),
+            doc('n2', 'New, old', 'note', { pinned: true, created_at: 10 }),
+            doc('n3', 'New, newer', 'note', { pinned: true, created_at: 20 }),
+        ]);
+
+        expect(pinned.map((n) => n.title)).toEqual(['New, newer', 'New, old', 'Placed']);
+    });
+
+    // Two devices can each move a note into one gap and land on one position.
+    // Every device has to break that the same way, whatever order it holds
+    // them in.
+    it('agrees on two notes at one position, whichever came first', () => {
+        const a = doc('a', 'A', 'note', { pinned: true, pin_position: '5', created_at: 10 });
+        const b = doc('b', 'B', 'note', { pinned: true, pin_position: '5', created_at: 20 });
+
+        expect(pinnedNotes([a, b]).map((n) => n.id)).toEqual(['b', 'a']);
+        expect(pinnedNotes([b, a]).map((n) => n.id)).toEqual(['b', 'a']);
     });
 
     // Nothing offers a pin on a journal, and the section is for notes, so one

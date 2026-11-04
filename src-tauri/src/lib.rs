@@ -41,7 +41,8 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             lifecycle_updated_at INTEGER,
             index_version INTEGER NOT NULL DEFAULT 0,
             pinned INTEGER NOT NULL DEFAULT 0,
-            pinned_updated_at INTEGER
+            pinned_updated_at INTEGER,
+            pin_position TEXT
         );
 
         CREATE TABLE IF NOT EXISTS document_index (
@@ -249,7 +250,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -684,6 +685,23 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
         .map_err(|e| format!("Migration v15 failed: {}", e))?;
     }
 
+    // v16: pinned notes can be put in the order the user wants (ADR 0039).
+    // Nothing to backfill: a pin with no position is listed the way every pin
+    // has been until now.
+    if version < 16 {
+        // Guarded, as v12 guards its columns: a fresh install's base schema
+        // already has it.
+        let has_position = db
+            .prepare("SELECT pin_position FROM documents LIMIT 0")
+            .is_ok();
+        if !has_position {
+            db.execute_batch("ALTER TABLE documents ADD COLUMN pin_position TEXT;")
+                .map_err(|e| format!("Migration v16 failed: {}", e))?;
+        }
+        db.execute_batch("PRAGMA user_version = 16;")
+            .map_err(|e| format!("Failed to set user_version: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -855,6 +873,7 @@ pub fn run() {
             update_document,
             delete_document,
             set_document_pinned,
+            set_pin_positions,
             list_document_sync_state,
             ensure_document,
             ensure_tombstone,
@@ -1628,6 +1647,39 @@ mod migration_tests {
         assert_eq!(version, SCHEMA_VERSION);
     }
 
+    // Every install shipped so far. A pin keeps its stamp and gains no
+    // position, which is what lists it where it has always been.
+    #[test]
+    fn migrates_v15_to_v16_and_leaves_every_pin_where_it_was() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        setup_database_tables(&db).unwrap();
+        db.execute_batch(
+            "ALTER TABLE documents DROP COLUMN pin_position;
+             INSERT INTO documents
+                 (id, type, title, created_at, updated_at, pinned, pinned_updated_at)
+                 VALUES ('d1', 'note', 'One', 1, 1, 1, 40);
+             PRAGMA user_version = 15;",
+        )
+        .unwrap();
+        setup_database_tables(&db).unwrap();
+
+        run_migrations(&db).unwrap();
+
+        let (pinned, stamp, position): (i64, Option<i64>, Option<String>) = db
+            .query_row(
+                "SELECT pinned, pinned_updated_at, pin_position FROM documents WHERE id = 'd1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((pinned, stamp, position), (1, Some(40), None));
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
     #[test]
     fn migrating_to_v13_clears_the_old_hashes_and_keeps_the_content() {
         let db = Connection::open_in_memory().unwrap();
@@ -1693,6 +1745,6 @@ mod migration_tests {
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 15);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 }

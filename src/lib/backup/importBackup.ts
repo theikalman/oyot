@@ -151,7 +151,12 @@ export interface ImportTarget {
     ensureDoc(entry: ManifestEntry): Promise<void>;
     ensureTombstone(entry: ManifestEntry): Promise<void>;
     applyRename(docId: string, title: string, titleUpdatedAt: number): Promise<void>;
-    applyPin(docId: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void>;
+    applyPin(
+        docId: string,
+        pinned: boolean,
+        pinPosition: string | null,
+        pinnedUpdatedAt: number,
+    ): Promise<void>;
     applyDelete(docId: string, deletedAt: number): Promise<boolean>;
     mergeDelta(docId: string, updateB64: string): Promise<void>;
 }
@@ -232,7 +237,12 @@ export async function applyImport(
                         await target.applyRename(entry.id, entry.title, entry.titleUpdatedAt);
                     }
                     if (decision.repin) {
-                        await target.applyPin(entry.id, entry.pinned ?? false, pinStamp(entry));
+                        await target.applyPin(
+                            entry.id,
+                            entry.pinned ?? false,
+                            entry.pinPosition ?? null,
+                            pinStamp(entry),
+                        );
                     }
                     if (step.merge) await mergeFromBackup(entry.id);
                     updated.push(step);
@@ -255,7 +265,8 @@ export async function applyImport(
             if (
                 now.contentHash !== step.local.contentHash ||
                 now.title !== step.local.title ||
-                (now.pinned ?? false) !== (step.local.pinned ?? false)
+                (now.pinned ?? false) !== (step.local.pinned ?? false) ||
+                (now.pinPosition ?? null) !== (step.local.pinPosition ?? null)
             ) {
                 result.changed++;
             }

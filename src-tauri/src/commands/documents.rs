@@ -22,6 +22,9 @@ pub struct Document {
     /// When `pinned` was last set, on this device or another. None for a
     /// document nobody has ever pinned.
     pub pinned_updated_at: Option<i64>,
+    /// Where it sits among the pinned notes (ADR 0039). None until it is
+    /// placed by hand. Part of the pin, under the same stamp.
+    pub pin_position: Option<String>,
 }
 
 // Column list backing `row_to_document`; keep the two in lockstep.
@@ -36,7 +39,7 @@ pub struct Document {
 const DOCUMENT_COLUMNS: &str = "id, type, title, created_at, updated_at, \
      COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
      COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
-     pinned, pinned_updated_at";
+     pinned, pinned_updated_at, pin_position";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DocumentSummary {
@@ -49,6 +52,7 @@ pub struct DocumentSummary {
     pub updated_at: i64,
     pub has_content: bool,
     pub pinned: bool,
+    pub pin_position: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -82,8 +86,9 @@ pub fn get_today_date() -> String {
     now.format("%Y-%m-%d").to_string()
 }
 
-// Every query read through this selects the same nine columns, ending
-// `{HAS_CONTENT} as has_content, d.pinned`; keep them in lockstep.
+// Every query read through this selects the same ten columns, ending
+// `{HAS_CONTENT} as has_content, d.pinned, d.pin_position`; keep them in
+// lockstep.
 fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSummary> {
     let has_content_int: i32 = row.get(7)?;
     let pinned_int: i64 = row.get(8)?;
@@ -97,6 +102,7 @@ fn row_to_document_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSumm
         updated_at: row.get(6)?,
         has_content: has_content_int != 0,
         pinned: pinned_int != 0,
+        pin_position: row.get(9)?,
     })
 }
 
@@ -115,6 +121,7 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
         lifecycle_updated_at: row.get(8)?,
         pinned: pinned_int != 0,
         pinned_updated_at: row.get(10)?,
+        pin_position: row.get(11)?,
     })
 }
 
@@ -138,7 +145,7 @@ pub(crate) fn query_all_documents(db: &rusqlite::Connection) -> Result<IndexData
     // which days have an entry; it is not a reason to hide a row.
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                {HAS_CONTENT} as has_content, d.pinned
+                {HAS_CONTENT} as has_content, d.pinned, d.pin_position
          FROM documents d
          LEFT JOIN document_index i ON d.id = i.document_id
          WHERE d.is_deleted = 0
@@ -184,6 +191,8 @@ pub struct DocSyncEntry {
     /// Last-writer-wins on `pinned_updated_at`, like the title (ADR 0027).
     pub pinned: bool,
     pub pinned_updated_at: Option<i64>,
+    /// Part of the pin, under the same stamp (ADR 0039).
+    pub pin_position: Option<String>,
     /// base64 of the content hash, matching how it crosses IPC elsewhere.
     pub content_hash: Option<String>,
 }
@@ -215,7 +224,7 @@ fn sync_entries(db: &Connection, only: Option<&str>) -> Result<Vec<DocSyncEntry>
                     COALESCE(title_updated_at, updated_at), is_deleted, deleted_at, \
                     COALESCE(lifecycle_updated_at, deleted_at, title_updated_at, updated_at, created_at), \
                     content_hash, pinned, pinned_updated_at, \
-                    crdt_state IS NULL OR length(crdt_state) <= 2 \
+                    crdt_state IS NULL OR length(crdt_state) <= 2, pin_position \
              FROM documents WHERE ?1 IS NULL OR id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -242,6 +251,7 @@ fn sync_entries(db: &Connection, only: Option<&str>) -> Result<Vec<DocSyncEntry>
                 lifecycle_updated_at: row.get(8)?,
                 pinned: pinned_int != 0,
                 pinned_updated_at: row.get(11)?,
+                pin_position: row.get(13)?,
                 content_hash,
             })
         })
@@ -295,6 +305,8 @@ pub struct EnsureDocumentRequest {
     pub pinned: bool,
     #[serde(default)]
     pub pinned_updated_at: Option<i64>,
+    #[serde(default)]
+    pub pin_position: Option<String>,
 }
 
 /// Record a peer's tombstone for a document we have never seen. Returns
@@ -383,8 +395,8 @@ pub fn ensure_row(db: &Connection, entry: &EnsureDocumentRequest) -> Result<(), 
         "INSERT INTO documents
              (id, type, title, created_at, updated_at, title_updated_at,
               is_deleted, deleted_at, lifecycle_updated_at,
-              pinned, pinned_updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7, ?8, ?9)
+              pinned, pinned_updated_at, pin_position)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7, ?8, ?9, ?10)
          ON CONFLICT(id) DO UPDATE SET
              is_deleted           = 0,
              deleted_at           = NULL,
@@ -401,7 +413,8 @@ pub fn ensure_row(db: &Connection, entry: &EnsureDocumentRequest) -> Result<(), 
             title_updated_at,
             lifecycle_updated_at,
             entry.pinned,
-            entry.pinned_updated_at
+            entry.pinned_updated_at,
+            entry.pin_position
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -462,19 +475,28 @@ pub fn apply_rename_if_newer(
 /// own for good. The reconciler breaks it the same way
 /// (src/lib/sync/reconcile.ts), so a manifest exchange and a live message
 /// cannot settle on different answers.
+///
+/// Two pins at one stamp then go to the later position, and any position beats
+/// none (ADR 0039). A peer on a build from before positions takes the stamp of
+/// a move without its position, so it reads as "none" here, and must not undo
+/// the move when it comes back.
 pub fn apply_pin_if_newer(
     db: &Connection,
     doc_id: &str,
     pinned: bool,
+    pin_position: Option<&str>,
     pinned_updated_at: i64,
 ) -> Result<bool, String> {
     let changed = db
         .execute(
-            "UPDATE documents SET pinned = ?1, pinned_updated_at = ?2
+            "UPDATE documents SET pinned = ?1, pinned_updated_at = ?2, pin_position = ?4
               WHERE id = ?3
                 AND (COALESCE(pinned_updated_at, 0) < ?2
-                     OR (COALESCE(pinned_updated_at, 0) = ?2 AND pinned < ?1))",
-            params![pinned, pinned_updated_at, doc_id],
+                     OR (COALESCE(pinned_updated_at, 0) = ?2
+                         AND (pinned < ?1
+                              OR (pinned = ?1
+                                  AND COALESCE(pin_position, '') < COALESCE(?4, '')))))",
+            params![pinned, pinned_updated_at, doc_id, pin_position],
         )
         .map_err(|e| e.to_string())?;
     Ok(changed > 0)
@@ -485,10 +507,17 @@ pub fn apply_remote_pin(
     state: tauri::State<'_, AppState>,
     doc_id: String,
     pinned: bool,
+    pin_position: Option<String>,
     pinned_updated_at: i64,
 ) -> Result<bool, String> {
     let db = state.db.lock();
-    let changed = apply_pin_if_newer(&db, &doc_id, pinned, pinned_updated_at)?;
+    let changed = apply_pin_if_newer(
+        &db,
+        &doc_id,
+        pinned,
+        pin_position.as_deref(),
+        pinned_updated_at,
+    )?;
     if changed {
         crate::sync::announce(
             &state.app_handle,
@@ -496,6 +525,7 @@ pub fn apply_remote_pin(
                 id: doc_id,
                 pinned,
                 pinned_updated_at,
+                pin_position,
             },
         );
     }
@@ -741,10 +771,14 @@ pub fn delete_document(state: tauri::State<'_, AppState>, doc_id: String) -> Res
 /// That one may have come from a peer whose clock runs ahead of this device's,
 /// and a pin stamped by this clock alone would lose to it: the user's newest
 /// choice undone by the next exchange (ADR 0027).
+///
+/// The position goes either way. A note unpinned has no place in the list, and
+/// one pinned again starts at the top like any new pin (ADR 0039).
 pub fn set_pinned(db: &Connection, doc_id: &str, pinned: bool, now: i64) -> Result<i64, String> {
     db.query_row(
         "UPDATE documents
             SET pinned            = ?1,
+                pin_position      = NULL,
                 pinned_updated_at = MAX(?2, COALESCE(pinned_updated_at, 0) + 1)
           WHERE id = ?3 AND is_deleted = 0
       RETURNING pinned_updated_at",
@@ -771,9 +805,74 @@ pub fn set_document_pinned(
             id: doc_id,
             pinned,
             pinned_updated_at: stamp,
+            pin_position: None,
         },
     );
     Ok(stamp)
+}
+
+/// One pinned note's new place in the list.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinMove {
+    pub doc_id: String,
+    pub position: String,
+}
+
+/// Put pinned notes where a move left them, all or none, and say what was
+/// written: each note with the stamp its row now holds.
+///
+/// A position is part of the pin, so it is stamped as `set_pinned` stamps one
+/// and travels under the same stamp (ADR 0039). The frontend works positions
+/// out, since it holds the list. A note that stopped being pinned while it was
+/// being dragged is left out rather than given a position it has no use for.
+pub fn write_pin_positions(
+    db: &Connection,
+    moves: &[PinMove],
+    now: i64,
+) -> Result<Vec<(PinMove, i64)>, String> {
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut written = Vec::with_capacity(moves.len());
+    for pin_move in moves {
+        let stamp: Option<i64> = tx
+            .query_row(
+                "UPDATE documents
+                    SET pin_position      = ?1,
+                        pinned_updated_at = MAX(?2, COALESCE(pinned_updated_at, 0) + 1)
+                  WHERE id = ?3 AND is_deleted = 0 AND pinned = 1
+              RETURNING pinned_updated_at",
+                params![pin_move.position, now, pin_move.doc_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(stamp) = stamp {
+            written.push((pin_move.clone(), stamp));
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(written)
+}
+
+#[tauri::command]
+pub fn set_pin_positions(
+    state: tauri::State<'_, AppState>,
+    moves: Vec<PinMove>,
+) -> Result<(), String> {
+    let now = current_timestamp();
+    let db = state.db.lock();
+    for (pin_move, stamp) in write_pin_positions(&db, &moves, now)? {
+        crate::sync::announce(
+            &state.app_handle,
+            crate::sync::protocol::Message::DocPinned {
+                id: pin_move.doc_id,
+                pinned: true,
+                pinned_updated_at: stamp,
+                pin_position: Some(pin_move.position),
+            },
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -912,7 +1011,7 @@ pub(crate) fn query_backlinks(
 ) -> Result<Vec<DocumentSummary>, String> {
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                {HAS_CONTENT} as has_content, d.pinned
+                {HAS_CONTENT} as has_content, d.pinned, d.pin_position
            FROM document_links l
            JOIN documents d ON d.id = l.source_id
            LEFT JOIN document_index i ON d.id = i.document_id
@@ -1102,7 +1201,7 @@ pub(crate) fn query_documents_with_tag(
 ) -> Result<Vec<DocumentSummary>, String> {
     let sql = format!(
         "SELECT d.id, d.type, d.title, COALESCE(i.todo_count, 0), COALESCE(i.completed_todo_count, 0), d.created_at, d.updated_at,
-                {HAS_CONTENT} as has_content, d.pinned
+                {HAS_CONTENT} as has_content, d.pinned, d.pin_position
            FROM document_tags t
            JOIN documents d ON d.id = t.document_id
            LEFT JOIN document_index i ON d.id = i.document_id
@@ -2112,6 +2211,7 @@ mod tests {
             deleted_at: Some(700),
             pinned: false,
             pinned_updated_at: None,
+            pin_position: None,
         }
     }
 
@@ -2222,6 +2322,141 @@ mod tests {
         (doc.pinned, doc.pinned_updated_at)
     }
 
+    fn position_of(db: &Connection, id: &str) -> Option<String> {
+        db.query_row(
+            "SELECT pin_position FROM documents WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn pin_move(id: &str, position: &str) -> PinMove {
+        PinMove {
+            doc_id: id.to_string(),
+            position: position.to_string(),
+        }
+    }
+
+    // What `movePinnedNote` and `ensureDoc` send over IPC, spelled as they spell
+    // it. Nothing else crosses from the frontend to these structs in a test,
+    // and a name that did not match would fail every move in the real app.
+    #[test]
+    fn reads_a_position_as_the_frontend_sends_it() {
+        let moved: Vec<PinMove> =
+            serde_json::from_value(serde_json::json!([{ "docId": "d1", "position": "5" }]))
+                .unwrap();
+        assert_eq!(moved, vec![pin_move("d1", "5")]);
+
+        let entry: EnsureDocumentRequest = serde_json::from_value(serde_json::json!({
+            "docId": "d1",
+            "docType": "note",
+            "title": "T",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "pinned": true,
+            "pinnedUpdatedAt": 2,
+            "pinPosition": "5",
+        }))
+        .unwrap();
+        assert_eq!(entry.pin_position.as_deref(), Some("5"));
+    }
+
+    #[test]
+    fn a_move_stamps_the_pin_and_says_what_it_wrote() {
+        let db = db();
+        set_pinned(&db, "d1", true, 500).unwrap();
+
+        let written = write_pin_positions(&db, &[pin_move("d1", "5")], 900).unwrap();
+
+        assert_eq!(written, vec![(pin_move("d1", "5"), 900)]);
+        assert_eq!(pin_of(&db, "d1"), (true, Some(900)));
+        assert_eq!(position_of(&db, "d1"), Some("5".to_string()));
+    }
+
+    // The stamp may have come from a peer with a clock ahead of this one, and
+    // the move would otherwise be the older word and be undone by the next
+    // exchange, as a pin would (ADR 0027, decision 4).
+    #[test]
+    fn a_move_is_stamped_past_a_stamp_from_a_clock_ahead_of_this_one() {
+        let db = db();
+        assert!(apply_pin_if_newer(&db, "d1", true, None, 5000).unwrap());
+
+        let written = write_pin_positions(&db, &[pin_move("d1", "5")], 900).unwrap();
+
+        assert_eq!(written[0].1, 5001);
+    }
+
+    // Unpinned on another device while it was being dragged here. A position
+    // on a note that is not in the list would only come back to confuse it.
+    #[test]
+    fn a_move_leaves_a_note_that_is_not_pinned_alone() {
+        let db = db();
+        add_doc(&db, "d2", "note", "Two", 20);
+        set_pinned(&db, "d1", true, 500).unwrap();
+
+        let written =
+            write_pin_positions(&db, &[pin_move("d2", "3"), pin_move("d1", "5")], 900).unwrap();
+
+        assert_eq!(written, vec![(pin_move("d1", "5"), 900)]);
+        assert_eq!(pin_of(&db, "d2"), (false, None));
+        assert_eq!(position_of(&db, "d2"), None);
+    }
+
+    #[test]
+    fn pinning_again_starts_over_at_the_top() {
+        let db = db();
+        set_pinned(&db, "d1", true, 500).unwrap();
+        write_pin_positions(&db, &[pin_move("d1", "5")], 600).unwrap();
+
+        set_pinned(&db, "d1", false, 700).unwrap();
+        assert_eq!(position_of(&db, "d1"), None);
+
+        set_pinned(&db, "d1", true, 800).unwrap();
+        assert_eq!(position_of(&db, "d1"), None);
+    }
+
+    #[test]
+    fn a_peers_position_travels_with_its_pin() {
+        let db = db();
+        set_pinned(&db, "d1", true, 500).unwrap();
+
+        assert!(apply_pin_if_newer(&db, "d1", true, Some("5"), 600).unwrap());
+        assert_eq!(position_of(&db, "d1"), Some("5".to_string()));
+
+        assert!(!apply_pin_if_newer(&db, "d1", true, Some("7"), 550).unwrap());
+        assert_eq!(position_of(&db, "d1"), Some("5".to_string()));
+
+        // An unpin says the note has left the list, position and all.
+        assert!(apply_pin_if_newer(&db, "d1", false, None, 700).unwrap());
+        assert_eq!(position_of(&db, "d1"), None);
+    }
+
+    // The reconciler breaks the tie the same way, so two devices that moved a
+    // note at one stamp both end up with the later position.
+    #[test]
+    fn a_tie_on_the_stamp_between_two_positions_goes_to_the_later_one() {
+        let db = db();
+        assert!(apply_pin_if_newer(&db, "d1", true, Some("5"), 500).unwrap());
+
+        assert!(!apply_pin_if_newer(&db, "d1", true, Some("3"), 500).unwrap());
+        assert_eq!(position_of(&db, "d1"), Some("5".to_string()));
+
+        assert!(apply_pin_if_newer(&db, "d1", true, Some("7"), 500).unwrap());
+        assert_eq!(position_of(&db, "d1"), Some("7".to_string()));
+    }
+
+    // An older build takes a move's stamp and drops its position, so it comes
+    // back holding the same stamp and no position. It must not undo the move.
+    #[test]
+    fn a_pin_with_no_position_does_not_undo_a_move_at_the_same_stamp() {
+        let db = db();
+        assert!(apply_pin_if_newer(&db, "d1", true, Some("5"), 500).unwrap());
+
+        assert!(!apply_pin_if_newer(&db, "d1", true, None, 500).unwrap());
+        assert_eq!(position_of(&db, "d1"), Some("5".to_string()));
+    }
+
     #[test]
     fn pinning_a_note_records_when() {
         let db = db();
@@ -2310,8 +2545,18 @@ mod tests {
         add_tag(&db, "d2", "work");
         set_pinned(&db, "d2", true, 900).unwrap();
 
-        assert!(query_backlinks(&db, "d1").unwrap()[0].pinned);
-        assert!(query_documents_with_tag(&db, "work").unwrap()[0].pinned);
+        write_pin_positions(&db, &[pin_move("d2", "5")], 950).unwrap();
+
+        let position = Some("5".to_string());
+        let backlink = &query_backlinks(&db, "d1").unwrap()[0];
+        assert!(backlink.pinned);
+        assert_eq!(backlink.pin_position, position);
+        let tagged = &query_documents_with_tag(&db, "work").unwrap()[0];
+        assert!(tagged.pinned);
+        assert_eq!(tagged.pin_position, position);
+        let listed = query_all_documents(&db).unwrap();
+        let row = listed.documents.iter().find(|d| d.id == "d2").unwrap();
+        assert_eq!(row.pin_position, position);
     }
 
     #[test]
@@ -2319,17 +2564,17 @@ mod tests {
         let db = db();
         set_pinned(&db, "d1", true, 500).unwrap();
 
-        assert!(!apply_pin_if_newer(&db, "d1", false, 400).unwrap());
+        assert!(!apply_pin_if_newer(&db, "d1", false, None, 400).unwrap());
         assert_eq!(pin_of(&db, "d1"), (true, Some(500)));
 
-        assert!(apply_pin_if_newer(&db, "d1", false, 600).unwrap());
+        assert!(apply_pin_if_newer(&db, "d1", false, None, 600).unwrap());
         assert_eq!(pin_of(&db, "d1"), (false, Some(600)));
     }
 
     #[test]
     fn a_peers_pin_reaches_a_note_nobody_here_ever_pinned() {
         let db = db();
-        assert!(apply_pin_if_newer(&db, "d1", true, 1).unwrap());
+        assert!(apply_pin_if_newer(&db, "d1", true, None, 1).unwrap());
         assert_eq!(pin_of(&db, "d1"), (true, Some(1)));
     }
 
@@ -2339,15 +2584,15 @@ mod tests {
     fn a_tie_on_the_stamp_goes_to_pinned() {
         let db = db();
         set_pinned(&db, "d1", false, 500).unwrap();
-        assert!(apply_pin_if_newer(&db, "d1", true, 500).unwrap());
+        assert!(apply_pin_if_newer(&db, "d1", true, None, 500).unwrap());
         assert_eq!(pin_of(&db, "d1"), (true, Some(500)));
 
         assert!(
-            !apply_pin_if_newer(&db, "d1", false, 500).unwrap(),
+            !apply_pin_if_newer(&db, "d1", false, None, 500).unwrap(),
             "and the same tie seen from the other side changes nothing"
         );
         assert!(
-            !apply_pin_if_newer(&db, "d1", true, 500).unwrap(),
+            !apply_pin_if_newer(&db, "d1", true, None, 500).unwrap(),
             "nor does hearing the winning pin again"
         );
     }
@@ -2401,7 +2646,21 @@ mod tests {
             deleted_at: None,
             pinned,
             pinned_updated_at: stamp,
+            pin_position: None,
         }
+    }
+
+    // A place in the list arrives with the note, for the same reason.
+    #[test]
+    fn a_note_first_seen_from_a_peer_arrives_with_its_position() {
+        let db = db();
+        let entry = EnsureDocumentRequest {
+            pin_position: Some("5".to_string()),
+            ..peer_entry("d9", true, Some(50))
+        };
+        ensure_row(&db, &entry).unwrap();
+
+        assert_eq!(position_of(&db, "d9"), Some("5".to_string()));
     }
 
     // A note pinned on the device that made it must arrive pinned, not turn

@@ -14,6 +14,8 @@ export interface Document {
     pinned: boolean;
     /** When `pinned` was last set, here or on a peer. Null if it never was. */
     pinned_updated_at: number | null;
+    /** Where it sits among the pinned notes (ADR 0039). Null until placed by hand. */
+    pin_position: string | null;
 }
 
 export interface DocumentSummary {
@@ -26,6 +28,7 @@ export interface DocumentSummary {
     updated_at: number;
     has_content: boolean;
     pinned: boolean;
+    pin_position: string | null;
 }
 
 export interface IndexData {

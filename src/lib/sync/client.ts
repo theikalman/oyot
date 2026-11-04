@@ -342,13 +342,15 @@ async function setupEventListeners(): Promise<void> {
             },
         ),
 
-        listen<{ id: string; pinned: boolean; pinnedUpdatedAt: number }>(
-            'sync-doc-pinned',
-            (event) => {
-                const { id, pinned, pinnedUpdatedAt } = event.payload;
-                repo.peerPinned(id, pinned, pinnedUpdatedAt);
-            },
-        ),
+        listen<{
+            id: string;
+            pinned: boolean;
+            pinPosition: string | null;
+            pinnedUpdatedAt: number;
+        }>('sync-doc-pinned', (event) => {
+            const { id, pinned, pinPosition, pinnedUpdatedAt } = event.payload;
+            repo.peerPinned(id, pinned, pinPosition, pinnedUpdatedAt);
+        }),
 
         listen<{ id: string }>('sync-doc-deleted', (event) => repo.peerDeleted(event.payload.id)),
 

@@ -44,6 +44,10 @@ pub struct ManifestEntry {
     pub pinned: Option<bool>,
     #[serde(default)]
     pub pinned_updated_at: Option<i64>,
+    /// Where it sits among the pinned notes, part of the pin and under the
+    /// same stamp (ADR 0039). A peer on an older build sends none.
+    #[serde(default)]
+    pub pin_position: Option<String>,
     /// base64 of the content hash (ADR 0033); `None` means unknown.
     pub content_hash: Option<String>,
 }
@@ -119,6 +123,8 @@ pub enum Message {
         id: String,
         pinned: bool,
         pinned_updated_at: i64,
+        #[serde(default)]
+        pin_position: Option<String>,
     },
     DocDeleted {
         id: String,
@@ -242,6 +248,7 @@ mod tests {
             lifecycle_updated_at: Some(1),
             pinned: Some(true),
             pinned_updated_at: Some(5),
+            pin_position: Some("5".into()),
             content_hash: Some("abc=".into()),
         }
     }
@@ -258,10 +265,39 @@ mod tests {
             "lifecycleUpdatedAt",
             "pinned",
             "pinnedUpdatedAt",
+            "pinPosition",
             "contentHash",
         ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
+    }
+
+    // A peer on a build from before positions sends neither field, and one
+    // on this build sends a move an older peer can still read.
+    #[test]
+    fn a_pin_reads_the_same_with_or_without_a_position() {
+        let older: Message = serde_json::from_value(serde_json::json!({
+            "t": "doc-pinned", "id": "d", "pinned": true, "pinnedUpdatedAt": 3,
+        }))
+        .unwrap();
+        assert_eq!(
+            older,
+            Message::DocPinned {
+                id: "d".into(),
+                pinned: true,
+                pinned_updated_at: 3,
+                pin_position: None,
+            }
+        );
+
+        let json = serde_json::to_value(Message::DocPinned {
+            id: "d".into(),
+            pinned: true,
+            pinned_updated_at: 3,
+            pin_position: Some("5".into()),
+        })
+        .unwrap();
+        assert_eq!(json["pinPosition"], "5");
     }
 
     #[test]

@@ -18,6 +18,7 @@ export class FakeRepo {
             lifecycleUpdatedAt: number;
             pinned: boolean;
             pinnedUpdatedAt: number | null;
+            pinPosition: string | null;
             ydoc: Y.Doc;
         }
     >();
@@ -35,6 +36,7 @@ export class FakeRepo {
             lifecycleUpdatedAt: 1,
             pinned: false,
             pinnedUpdatedAt: null,
+            pinPosition: null,
             ydoc,
         });
     }
@@ -80,6 +82,7 @@ export class FakeRepo {
                 lifecycleUpdatedAt: d.lifecycleUpdatedAt,
                 pinned: d.pinned,
                 pinnedUpdatedAt: d.pinnedUpdatedAt,
+                pinPosition: d.pinPosition,
                 // As Rust reports it: an empty document has a hash too (ADR 0033).
                 contentHash: contentDigest(d.ydoc),
             });
@@ -117,6 +120,7 @@ export class FakeRepo {
             // Only a new row takes the peer's pin, as ensure_document does.
             pinned: entry.pinned ?? false,
             pinnedUpdatedAt: entry.pinnedUpdatedAt ?? null,
+            pinPosition: entry.pinPosition ?? null,
             ydoc: new Y.Doc(),
         });
     }
@@ -136,6 +140,7 @@ export class FakeRepo {
             lifecycleUpdatedAt: stamp,
             pinned: false,
             pinnedUpdatedAt: null,
+            pinPosition: null,
             ydoc: new Y.Doc(),
         });
     }
@@ -148,14 +153,23 @@ export class FakeRepo {
         }
     }
 
-    // Mirrors apply_pin_if_newer: last writer wins on the stamp, and a tie
-    // goes to pinned.
-    async applyPin(id: string, pinned: boolean, pinnedUpdatedAt: number): Promise<void> {
+    // Mirrors apply_pin_if_newer: last writer wins on the stamp, a tie goes to
+    // pinned, and then to the later position.
+    async applyPin(
+        id: string,
+        pinned: boolean,
+        pinPosition: string | null,
+        pinnedUpdatedAt: number,
+    ): Promise<void> {
         const d = this.docs.get(id);
         if (!d) return;
         const ours = d.pinnedUpdatedAt ?? 0;
-        if (ours < pinnedUpdatedAt || (ours === pinnedUpdatedAt && pinned && !d.pinned)) {
+        const tieWon =
+            (pinned && !d.pinned) ||
+            (pinned === d.pinned && (d.pinPosition ?? '') < (pinPosition ?? ''));
+        if (ours < pinnedUpdatedAt || (ours === pinnedUpdatedAt && tieWon)) {
             d.pinned = pinned;
+            d.pinPosition = pinPosition;
             d.pinnedUpdatedAt = pinnedUpdatedAt;
         }
     }

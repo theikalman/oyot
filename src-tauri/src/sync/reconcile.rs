@@ -90,13 +90,24 @@ pub fn reconcile(remote: &ManifestEntry, local: Option<&ManifestEntry>) -> Recon
 /// A tie goes to pinned. Two devices hold different pins at one stamp only by
 /// setting them independently, and with no rule for a tie each would keep its
 /// own for good. `apply_pin_if_newer` breaks it the same way (ADR 0027).
+///
+/// Pinned on both sides, the later position wins, and any position beats none
+/// (ADR 0039): an older build keeps a move's stamp and loses its position, and
+/// reads here as that same stamp with none.
 fn pin_wins(remote: &ManifestEntry, local: &ManifestEntry) -> bool {
     let theirs = pin_stamp(remote);
     let ours = pin_stamp(local);
     if theirs != ours {
         return theirs > ours;
     }
-    remote.pinned.unwrap_or(false) && !local.pinned.unwrap_or(false)
+    let (their_pin, our_pin) = (
+        remote.pinned.unwrap_or(false),
+        local.pinned.unwrap_or(false),
+    );
+    if their_pin != our_pin {
+        return their_pin;
+    }
+    remote.pin_position > local.pin_position
 }
 
 #[cfg(test)]
@@ -116,6 +127,7 @@ mod tests {
             lifecycle_updated_at: Some(1),
             pinned: None,
             pinned_updated_at: None,
+            pin_position: None,
             content_hash: Some("hash-a".into()),
         }
     }
@@ -299,5 +311,41 @@ mod tests {
             e.pinned_updated_at = Some(50);
         });
         assert_eq!(reconcile(&entry(), Some(&local)), UpToDate);
+    }
+
+    fn pinned_at(stamp: i64, position: Option<&str>) -> ManifestEntry {
+        with(|e| {
+            e.pinned = Some(true);
+            e.pinned_updated_at = Some(stamp);
+            e.pin_position = position.map(str::to_string);
+        })
+    }
+
+    #[test]
+    fn takes_a_newer_position_on_a_note_pinned_on_both_sides() {
+        assert!(matches!(
+            reconcile(&pinned_at(60, Some("3")), Some(&pinned_at(50, Some("7")))),
+            Update { repin: true, .. }
+        ));
+    }
+
+    #[test]
+    fn breaks_a_tie_on_the_stamp_in_favour_of_the_later_position_from_either_side() {
+        let (early, late) = (pinned_at(50, Some("3")), pinned_at(50, Some("7")));
+        assert!(matches!(
+            reconcile(&late, Some(&early)),
+            Update { repin: true, .. }
+        ));
+        assert_eq!(reconcile(&early, Some(&late)), UpToDate);
+    }
+
+    #[test]
+    fn a_position_beats_none_at_the_same_stamp_from_either_side() {
+        let (none, placed) = (pinned_at(50, None), pinned_at(50, Some("3")));
+        assert!(matches!(
+            reconcile(&placed, Some(&none)),
+            Update { repin: true, .. }
+        ));
+        assert_eq!(reconcile(&none, Some(&placed)), UpToDate);
     }
 }

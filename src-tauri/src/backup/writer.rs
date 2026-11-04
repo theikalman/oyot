@@ -483,16 +483,21 @@ mod tests {
         add_document(&db, "pinned", b"state");
         add_document(&db, "plain", b"state");
         crate::commands::documents::set_pinned(&db, "pinned", true, 700).unwrap();
+        let pin_move = crate::commands::documents::PinMove {
+            doc_id: "pinned".to_string(),
+            position: "5".to_string(),
+        };
+        crate::commands::documents::write_pin_positions(&db, &[pin_move], 800).unwrap();
         let destination = dir.join("backup.zip");
         write_backup(&db, &dir, &Preferences::default(), 0, &destination).unwrap();
 
         let reader = BackupReader::open(&destination).unwrap();
         let pin = |id: &str| {
             let doc = reader.documents().iter().find(|d| d.id == id).unwrap();
-            (doc.pinned, doc.pinned_updated_at)
+            (doc.pinned, doc.pinned_updated_at, doc.pin_position.clone())
         };
-        assert_eq!(pin("pinned"), (true, Some(700)));
-        assert_eq!(pin("plain"), (false, None));
+        assert_eq!(pin("pinned"), (true, Some(800), Some("5".to_string())));
+        assert_eq!(pin("plain"), (false, None, None));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
