@@ -5,7 +5,15 @@
     import { loadTagsByDocument } from '$lib/services/tags';
     import { markdownImport } from '$lib/import';
     import { onDestroy } from 'svelte';
-    import { filterNotes, notesOf, noteStatus } from '$lib/notes/noteIndex';
+    import {
+        filterNotes,
+        NOTE_ORDER_LABELS,
+        NOTE_ORDERS,
+        notesOf,
+        noteStatus,
+        sortNotes,
+    } from '$lib/notes/noteIndex';
+    import { noteOrder } from '$lib/notes/noteOrder.svelte';
     import { NO_TAGS, tagsOf, type TagsByDocument } from '$lib/tags/documentTags';
     import type { DocumentSummary } from '$lib/types';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
@@ -53,7 +61,7 @@
     // paging. A note's tags find it as well as its title does, since both
     // are there on its row.
     let filter = $state('');
-    let shown = $derived(filterNotes(notes, filter, tags));
+    let shown = $derived(sortNotes(filterNotes(notes, filter, tags), noteOrder.value));
 
     let creating = $state(false);
     let renaming = $state<DocumentSummary | null>(null);
@@ -87,9 +95,9 @@
         openMenuId = null;
     }
 
-    // Markdown files in, a note each. The notes land at the top of this list
-    // as they are made; one on its own opens, as a new note does, since that
-    // is what there is to look at, unless the user has gone elsewhere since.
+    // Markdown files in, a note each. The notes join this list as they are
+    // made; one on its own opens, as a new note does, since that is what there
+    // is to look at, unless the user has gone elsewhere since.
     // Whether an import is running, and how far it has got, is shared with
     // Settings, which can start one too.
     let here = true;
@@ -160,6 +168,14 @@
                             bind:value={filter}
                             aria-label="Filter notes by title or tag"
                         />
+                        <label class="sort">
+                            Sort by
+                            <select class="field-input" bind:value={noteOrder.value}>
+                                {#each NOTE_ORDERS as order (order)}
+                                    <option value={order}>{NOTE_ORDER_LABELS[order]}</option>
+                                {/each}
+                            </select>
+                        </label>
                     {/if}
                     <button
                         class="btn"
@@ -293,6 +309,18 @@
         top: 46px;
         z-index: 20;
         min-width: 200px;
+    }
+
+    .sort {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+    }
+
+    .sort select {
+        min-width: 0;
     }
 
     .note {

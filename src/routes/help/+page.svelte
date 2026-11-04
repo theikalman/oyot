@@ -379,8 +379,9 @@
                         opens with the menu button or a swipe in from the left edge.
                     </li>
                     <li>
-                        <strong>Notes</strong> lists every note, newest first. Its filter finds a note
-                        by title or by tag; start with # to look at tags alone, so #home finds the notes
+                        <strong>Notes</strong> lists every note by name, or by date created or last edited
+                        if you would rather, and remembers which you picked. Its filter finds a note by
+                        title or by tag; start with # to look at tags alone, so #home finds the notes
                         tagged home and not one called Homework.
                     </li>
                     <li>
