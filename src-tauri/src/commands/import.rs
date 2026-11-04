@@ -20,6 +20,7 @@ use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
 /// The extensions Markdown is saved under, for the dialog's filter.
+#[cfg(desktop)]
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn", "mdwn"];
 
 /// Largest file read as one note: the export's cap on a note, so a note
