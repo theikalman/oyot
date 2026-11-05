@@ -36,6 +36,26 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.36-alpha',
+        date: '2026-11-05',
+        summary:
+            'Notes can be put in the order you want: pinned notes by hand, and the Notes page by name, date created or last edited.',
+        changes: [
+            {
+                kind: 'added',
+                text: "Pinned notes can be put in any order. Drag one with a mouse, or on a touch screen hold it a moment first and then drag, or use Move up and Move down in a note's menu. A new pin goes to the top, and the order follows you to your other devices.",
+            },
+            {
+                kind: 'added',
+                text: 'The Notes page has a Sort by control for Name, Date created and Last edited, and the sort button on a phone steps through the same three. It lists by name until you pick something else, and each device remembers its own choice. Names sort the way you read them, so Week 2 comes before Week 10.',
+            },
+            {
+                kind: 'fixed',
+                text: 'A long line in a code block stays on one line and scrolls sideways within its block, where it used to wrap and read as two lines.',
+            },
+        ],
+    },
+    {
         version: '0.0.35-alpha',
         date: '2026-10-27',
         summary:
