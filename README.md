@@ -26,6 +26,8 @@ and move between paired devices over an encrypted peer-to-peer connection.
   it in a step, and Shift+Tab moves it back, as do the toolbar's indent
   buttons. In a list they nest an item, or move the whole list from its first
   item.
+  Images can sit on the left, in the centre or on the right of their line,
+  carry alt text, and open full size with a click.
 - **Reading first.** Notes and journals open for reading, without the toolbar
   and with nothing a stray tap can change, though tasks can still be ticked
   off. Press Edit, or Cmd/Ctrl+Shift+E, to write, and Done to go back. A note
