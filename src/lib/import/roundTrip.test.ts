@@ -252,6 +252,11 @@ describe('a round trip through Markdown loses, on purpose', () => {
             from: [image({ width: 320, height: 200 })],
             to: [image({})],
         },
+        // Nor where an image sits on its line.
+        "an image's alignment": {
+            from: [image({ align: 'center' })],
+            to: [image({})],
+        },
         'column widths': {
             from: [
                 {

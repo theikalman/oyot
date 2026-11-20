@@ -12,8 +12,43 @@ import {
     requestAttachment,
     resolveAttachmentSrc,
 } from '../attachments';
-import { Plugin } from '@tiptap/pm/state';
-import { PluginKey } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
+import { IMAGE_ALIGNS, alignOf, storedAlign, type ImageAlign } from '../imageAttrs';
+
+declare module '@tiptap/core' {
+    interface Commands<ReturnType> {
+        resizableImage: {
+            /** Move the selected image to the left, centre or right of its line. */
+            setImageAlign: (align: ImageAlign) => ReturnType;
+        };
+    }
+}
+
+// Icons on a 24-unit square, stroked the way the editing toolbar strokes its own.
+const ICONS: Record<ImageAlign, string[]> = {
+    left: ['M4 5h16', 'M4 10h10', 'M4 14h16', 'M4 19h10'],
+    center: ['M4 5h16', 'M7 10h10', 'M4 14h16', 'M7 19h10'],
+    right: ['M4 5h16', 'M10 10h10', 'M4 14h16', 'M10 19h10'],
+};
+
+const LABELS: Record<ImageAlign, string> = {
+    left: 'Align left',
+    center: 'Align centre',
+    right: 'Align right',
+};
+
+function iconSvg(paths: string[]): string {
+    const d = paths.map((path) => `<path d="${path}"/>`).join('');
+    return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+}
+
+// A flex container lays the image out, so its line position is where the
+// container puts its one child.
+const JUSTIFY: Record<ImageAlign, string> = {
+    left: 'flex-start',
+    center: 'center',
+    right: 'flex-end',
+};
 
 const ResizableImagePluginKey = new PluginKey('resizableImage');
 
@@ -39,6 +74,40 @@ function migrateLegacyImageSrcs(editor: Editor): void {
 }
 
 export const ResizableImage = Image.extend({
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            // Null for left, so a note nobody aligns is stored as before.
+            align: {
+                default: null,
+                parseHTML: (element: HTMLElement) =>
+                    storedAlign(element.getAttribute('data-align')),
+                renderHTML: (attributes: Record<string, unknown>) => {
+                    const align = storedAlign(attributes.align);
+                    return align ? { 'data-align': align } : {};
+                },
+            },
+        };
+    },
+
+    addCommands() {
+        return {
+            ...this.parent?.(),
+            setImageAlign:
+                (align: ImageAlign) =>
+                ({ state, tr, dispatch }) => {
+                    const { selection } = state;
+                    if (!(selection instanceof NodeSelection)) return false;
+                    if (selection.node.type.name !== this.name) return false;
+                    if (dispatch) {
+                        tr.setNodeAttribute(selection.from, 'align', storedAlign(align));
+                        tr.setSelection(NodeSelection.create(tr.doc, selection.from));
+                    }
+                    return true;
+                },
+        };
+    },
+
     onCreate() {
         // Deferred a tick: dispatching a transaction synchronously inside
         // onCreate races the collaboration plugin's own setup.
@@ -135,6 +204,8 @@ export const ResizableImage = Image.extend({
                 },
                 onUpdate: (updatedNode) => {
                     if (updatedNode.type.name !== node.type.name) return false;
+                    current = updatedNode as ProseMirrorNode;
+                    applyAlign();
                     return true;
                 },
                 options: {
@@ -144,6 +215,59 @@ export const ResizableImage = Image.extend({
             });
 
             const dom = nodeView.dom as HTMLElement;
+            const wrapper = nodeView.wrapper as HTMLElement;
+            let current = node as ProseMirrorNode;
+
+            // The image's own toolbar, shown by the stylesheet while it is
+            // selected for editing. In the node view rather than floating
+            // over the page, so it scrolls with the image and needs no
+            // positioning of its own.
+            const toolbar = document.createElement('div');
+            toolbar.className = 'image-toolbar';
+            toolbar.contentEditable = 'false';
+            toolbar.setAttribute('role', 'toolbar');
+            toolbar.setAttribute('aria-label', 'Image');
+            const buttons = new Map<ImageAlign, HTMLButtonElement>();
+            const addButton = (id: ImageAlign, run: () => void) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'image-toolbar-btn';
+                button.dataset.action = id;
+                button.title = LABELS[id];
+                button.setAttribute('aria-label', LABELS[id]);
+                button.innerHTML = iconSvg(ICONS[id]);
+                // Held, so the press does not take the editor's focus or
+                // the image's selection with it.
+                button.addEventListener('mousedown', (e) => e.preventDefault());
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    run();
+                });
+                buttons.set(id, button);
+                toolbar.appendChild(button);
+            };
+            for (const align of IMAGE_ALIGNS) {
+                addButton(align, () =>
+                    (editor as Editor).chain().focus().setImageAlign(align).run(),
+                );
+            }
+            wrapper.appendChild(toolbar);
+
+            const applyAlign = () => {
+                const align = alignOf(current.attrs.align);
+                dom.dataset.align = align;
+                dom.style.justifyContent = JUSTIFY[align];
+                for (const option of IMAGE_ALIGNS) {
+                    buttons.get(option)?.setAttribute('aria-pressed', String(option === align));
+                }
+            };
+            applyAlign();
+
+            // Presses on the toolbar are the toolbar's, not the editor's.
+            (nodeView as unknown as { stopEvent: (e: Event) => boolean }).stopEvent = (e) =>
+                toolbar.contains(e.target as globalThis.Node);
+
             dom.style.visibility = 'hidden';
             dom.style.pointerEvents = 'none';
             (el as HTMLImageElement).onload = () => {

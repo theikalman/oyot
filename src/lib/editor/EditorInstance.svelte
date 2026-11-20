@@ -906,6 +906,71 @@
         cursor: pointer;
     }
 
+    /* An image's own toolbar: where it sits on the line. Over the top of
+       the image while it is selected for editing, on the side the image is
+       aligned to. */
+    .editor-content :global(.image-toolbar) {
+        position: absolute;
+        top: calc(1em + 8px);
+        left: 8px;
+        z-index: 11;
+        display: none;
+        align-items: center;
+        gap: 2px;
+        padding: 3px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+        white-space: nowrap;
+        user-select: none;
+    }
+
+    .editor-content :global([data-align='center'] .image-toolbar) {
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    .editor-content :global([data-align='right'] .image-toolbar) {
+        left: auto;
+        right: 8px;
+    }
+
+    .editor-content :global(.ProseMirror-selectednode .image-toolbar) {
+        display: flex;
+    }
+
+    .editor-content :global(.image-toolbar-btn) {
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: none;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+
+    .editor-content :global(.image-toolbar-btn:hover) {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .editor-content :global(.image-toolbar-btn[aria-pressed='true']) {
+        color: var(--accent-color);
+    }
+
+    /* A touch is a finger, not a pointer: bigger targets. */
+    @media (pointer: coarse) {
+        .editor-content :global(.image-toolbar-btn) {
+            width: 38px;
+            height: 38px;
+        }
+    }
+
     .editor-content :global(.ProseMirror-selectednode img) {
         outline: 2px solid var(--accent-color);
     }
@@ -940,6 +1005,10 @@
        those itself, and this covers an image drawn before it has. */
     .editor-content.read-only :global(img) {
         cursor: default;
+    }
+
+    .editor-content.read-only :global(.image-toolbar) {
+        display: none !important;
     }
 
     .editor-content.read-only :global(.ProseMirror-selectednode img),
