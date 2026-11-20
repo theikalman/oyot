@@ -36,6 +36,15 @@
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
+    import {
+        IMAGE_ALT_EVENT,
+        IMAGE_VIEW_EVENT,
+        requestImageView,
+        type ImageAltRequest,
+        type ImageViewRequest,
+    } from '$lib/tiptap/extensions/ResizableImage';
+    import ImageLightbox from './ImageLightbox.svelte';
+    import ImageAltDialog from './ImageAltDialog.svelte';
 
     // A document being read is still announced as a text box, which is what
     // the editor is, so a screen reader is also told it cannot be typed into.
@@ -96,6 +105,10 @@
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
     let isLoadingEditor = $state.raw(false);
+    // The image shown at full size, and the one whose alt text is being
+    // written, when there is one.
+    let viewing = $state.raw<ImageViewRequest | null>(null);
+    let describing = $state.raw<ImageAltRequest | null>(null);
 
     async function initializeEditor() {
         const docId: string | null = document?.id ?? null;
@@ -189,7 +202,10 @@
         if (!editable) ed.setEditable(false);
         else placeCaretIfOnScreen(ed);
 
+        ed.view.dom.addEventListener('pointerdown', handleImagePress, true);
         ed.view.dom.addEventListener('click', handleImageClick);
+        ed.view.dom.addEventListener(IMAGE_VIEW_EVENT, handleImageView);
+        ed.view.dom.addEventListener(IMAGE_ALT_EVENT, handleImageAlt);
 
         // These register into a module-level registry, not into `ed`. They
         // took an editor argument that none of them used.
@@ -340,19 +356,65 @@
     }
 
     function handleImageClick(e: MouseEvent) {
-        // Selecting an image is how it gets its resize handles.
-        if (!editor || !editor.isEditable) return;
+        if (!editor) return;
 
         const target = e.target as HTMLElement;
         if (target.tagName !== 'IMG') return;
+        const img = target as HTMLImageElement;
+
+        // Reading, a click is only ever to look: the image opens full size.
+        if (!editor.isEditable) {
+            if (requestImageView(img, img)) e.preventDefault();
+            return;
+        }
+
         e.preventDefault();
         e.stopPropagation();
 
         const pos = editor.view.posAtDOM(target, 0);
-        if (typeof pos === 'number') {
-            const tr = editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos));
-            editor.view.dispatch(tr);
+        if (typeof pos !== 'number') return;
+
+        // Editing, the first click selects the image, which is how it gets
+        // its resize handles and its toolbar. A click on the image already
+        // selected opens it full size. Asked of the selection as the press
+        // began: by the click, ProseMirror has selected the image itself.
+        const wasSelected = pressedSelectedImage === img;
+        pressedSelectedImage = null;
+        if (wasSelected) {
+            requestImageView(img, img);
+            return;
         }
+        const tr = editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos));
+        editor.view.dispatch(tr);
+    }
+
+    // The image a press began on, if it was already the one selected.
+    let pressedSelectedImage: HTMLImageElement | null = null;
+
+    function handleImagePress(e: Event) {
+        pressedSelectedImage = null;
+        const target = e.target as HTMLElement;
+        if (!editor || target.tagName !== 'IMG') return;
+        const { selection } = editor.state;
+        if (!(selection instanceof NodeSelection)) return;
+        if (editor.view.posAtDOM(target, 0) === selection.from) {
+            pressedSelectedImage = target as HTMLImageElement;
+        }
+    }
+
+    function handleImageView(e: Event) {
+        viewing = (e as CustomEvent<ImageViewRequest>).detail;
+    }
+
+    function handleImageAlt(e: Event) {
+        if (!editor?.isEditable) return;
+        describing = (e as CustomEvent<ImageAltRequest>).detail;
+    }
+
+    function saveImageAlt(alt: string) {
+        const request = describing;
+        if (!request || !editor) return;
+        editor.chain().focus().setImageAlt(alt, request.pos).run();
     }
 
     // A phone's keyboard coming up makes the viewport shorter: on Android the
@@ -396,7 +458,10 @@
         }
 
         if (editor) {
+            editor.view.dom.removeEventListener('pointerdown', handleImagePress, true);
             editor.view.dom.removeEventListener('click', handleImageClick);
+            editor.view.dom.removeEventListener(IMAGE_VIEW_EVENT, handleImageView);
+            editor.view.dom.removeEventListener(IMAGE_ALT_EVENT, handleImageAlt);
             // The document-link and tag pickers are mounted on the page, not
             // in the editor, so destroying the editor left one open. On the
             // next page it still took every key typed there, into an editor
@@ -424,6 +489,18 @@
         <div bind:this={element}></div>
     </div>
 </div>
+
+{#if viewing}
+    <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={() => (viewing = null)} />
+{/if}
+
+{#if describing}
+    <ImageAltDialog
+        alt={describing.alt}
+        onSave={saveImageAlt}
+        onClose={() => (describing = null)}
+    />
+{/if}
 
 <style>
     .editor-instance {
@@ -906,6 +983,84 @@
         cursor: pointer;
     }
 
+    /* An image's own toolbar: where it sits on the line, its alt text, and
+       full size. Over the top of the image while it is selected for
+       editing, on the side the image is aligned to. */
+    .editor-content :global(.image-toolbar) {
+        position: absolute;
+        top: calc(1em + 8px);
+        left: 8px;
+        z-index: 11;
+        display: none;
+        align-items: center;
+        gap: 2px;
+        padding: 3px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+        white-space: nowrap;
+        user-select: none;
+    }
+
+    .editor-content :global([data-align='center'] .image-toolbar) {
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    .editor-content :global([data-align='right'] .image-toolbar) {
+        left: auto;
+        right: 8px;
+    }
+
+    .editor-content :global(.ProseMirror-selectednode .image-toolbar) {
+        display: flex;
+    }
+
+    .editor-content :global(.image-toolbar-btn) {
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: none;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+
+    .editor-content :global(.image-toolbar-btn:hover) {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .editor-content :global(.image-toolbar-btn[aria-pressed='true']),
+    .editor-content :global(.image-toolbar-btn.has-value) {
+        color: var(--accent-color);
+    }
+
+    .editor-content :global(.image-toolbar-divider) {
+        width: 1px;
+        height: 18px;
+        margin: 0 3px;
+        background: var(--border-color);
+    }
+
+    /* A touch is a finger, not a pointer: bigger targets. */
+    @media (pointer: coarse) {
+        .editor-content :global(.image-toolbar-btn) {
+            width: 38px;
+            height: 38px;
+        }
+    }
+
+    /* A selected image opens full size with another click. */
+    .editor-content :global(.ProseMirror-selectednode img) {
+        cursor: zoom-in;
+    }
+
     .editor-content :global(.ProseMirror-selectednode img) {
         outline: 2px solid var(--accent-color);
     }
@@ -939,7 +1094,15 @@
        selected, and images lose their resize handles; the editor removes
        those itself, and this covers an image drawn before it has. */
     .editor-content.read-only :global(img) {
+        cursor: zoom-in;
+    }
+
+    .editor-content.read-only :global(img.attachment-pending) {
         cursor: default;
+    }
+
+    .editor-content.read-only :global(.image-toolbar) {
+        display: none !important;
     }
 
     .editor-content.read-only :global(.ProseMirror-selectednode img),

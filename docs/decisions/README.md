@@ -51,6 +51,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0038](0038-draw-mermaid-diagrams-while-reading.md)                         | Draw Mermaid diagrams while reading                                                  | Proposed                                                                         |
 | [0039](0039-put-pinned-notes-in-order-by-hand.md)                           | Put pinned notes in order by hand, with a position in the pin                        | Proposed                                                                         |
 | [0040](0040-indent-paragraphs-and-headings-a-step-at-a-time.md)             | Indent paragraphs and headings a step at a time                                      | Proposed                                                                         |
+| [0041](0041-align-describe-and-enlarge-images.md)                           | Align, describe and enlarge images                                                   | Proposed                                                                         |
 
 ## Format
 

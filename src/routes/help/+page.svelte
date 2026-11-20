@@ -328,7 +328,10 @@
                     <li>
                         <strong>Images.</strong> Paste one, drag one in, or use Insert image on the toolbar.
                         PNG, JPEG, GIF and WebP work, up to 10 MB each. While editing, click an image
-                        to resize it by its handles. Images go to your other devices along with the note.
+                        to resize it by its handles, and use the bar over it to put it on the left, in
+                        the centre or on the right of its line, to give it alt text, or to see it full
+                        size. Click an image you are reading, or one already selected, to see it full
+                        size too. Images go to your other devices along with the note.
                     </li>
                     <li>
                         <strong>Indenting.</strong> Press <Keys keys={['Tab']} {command} /> at the start
