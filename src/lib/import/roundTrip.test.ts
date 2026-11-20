@@ -151,6 +151,7 @@ const exact: Record<string, unknown[]> = {
     ],
     'an image with no description': [image({})],
     'an image with a description': [image({ alt: 'A cat' })],
+    'an image whose description has brackets in it': [image({ alt: 'A [big] cat \\ dog' })],
     'tags, one with a space in it': [p(t('pack '), tag('travel'), t(' and '), tag('house move'))],
     'a tag in a heading': [
         { type: 'heading', attrs: { level: 1 }, content: [t('Plan '), tag('work')] },

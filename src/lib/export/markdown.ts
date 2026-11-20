@@ -217,7 +217,10 @@ function image(node: ProseMirrorNode, options: MarkdownOptions): string {
  */
 function imageAlt(node: ProseMirrorNode): string {
     const alt = typeof node.attrs.alt === 'string' ? node.attrs.alt : '';
-    return alt.startsWith('oyot:') ? '' : alt;
+    // A bracket would end the description early, and a backslash would take
+    // the character after it. Only those: anything else in an alt is read as
+    // plain text, and a reader of the file should not see it escaped.
+    return alt.startsWith('oyot:') ? '' : alt.replace(/([\\[\]])/g, '\\$1');
 }
 
 function table(node: ProseMirrorNode, options: MarkdownOptions): string {

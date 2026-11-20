@@ -307,6 +307,17 @@ describe('serializeDocument', () => {
         expect(md).toBe(`![](oyot-attachment://${hash})\n`);
     });
 
+    it('writes a description with brackets in it so it does not end early', () => {
+        const hash = 'a'.repeat(64);
+        const md = render([
+            {
+                type: 'image',
+                attrs: { src: `oyot-attachment://${hash}`, alt: 'a [big] cat \\ dog' },
+            },
+        ]);
+        expect(md).toBe(`![a \\[big\\] cat \\\\ dog](../attachments/${hash}.png)\n`);
+    });
+
     it('keeps an inline data URI as it is', () => {
         const src = 'data:image/gif;base64,R0lGOD';
         expect(render([{ type: 'image', attrs: { src, alt: 'a dot' } }])).toBe(
