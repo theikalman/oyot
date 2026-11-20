@@ -166,8 +166,14 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         where: 'While editing, in a list',
         shortcuts: [
             { action: 'New item, or end the list from an empty one', keys: ['Enter'] },
-            { action: 'Move the item in, under the one above', keys: ['Tab'] },
-            { action: 'Move the item back out', keys: ['Shift-Tab'] },
+            {
+                action: 'Move the item in, under the one above, or the whole list in from its first item',
+                keys: ['Tab'],
+            },
+            {
+                action: 'Move the item back out, or a list that was moved in back a step',
+                keys: ['Shift-Tab'],
+            },
         ],
     },
     {

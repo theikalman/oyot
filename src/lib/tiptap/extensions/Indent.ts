@@ -5,22 +5,41 @@ import type { Selection, Transaction } from '@tiptap/pm/state';
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         indent: {
-            /** Move the paragraphs and headings the selection touches one step in. */
+            /**
+             * Move the paragraphs, headings and lists the selection touches
+             * one step in.
+             */
             indent: () => ReturnType;
             /** Move them one step back out. */
             outdent: () => ReturnType;
+            /**
+             * What Tab and Increase indent do: nest a list item under the
+             * one above, or where it cannot be, move it in with its whole
+             * list, and move anything else that can be indented in a step.
+             */
+            increaseIndent: () => ReturnType;
+            /**
+             * What Shift-Tab and Decrease indent do: lift a nested list item
+             * out a level, move an indented list or block back a step, and
+             * lift an item of a list that is not indented out of its list.
+             */
+            decreaseIndent: () => ReturnType;
         };
     }
 }
 
-/** How many steps in a paragraph or heading can go. */
+/** How many steps in a paragraph, heading or list can go. */
 export const MAX_INDENT = 8;
 
-// What can be indented: a paragraph or a heading, and only one that stands
-// on its own in the note or in a quote. A list item's paragraph moves with
-// its item, which Tab already nests, and a table cell's stays in its cell.
-const INDENTABLE = new Set(['paragraph', 'heading']);
+// What can be indented: a paragraph, a heading or a whole list, and only one
+// that stands on its own in the note or in a quote. A list item's paragraph
+// moves with its item, a nested list with the list it is in, and a table
+// cell's paragraph stays in its cell.
+const BLOCKS = new Set(['paragraph', 'heading']);
+const LISTS = new Set(['bulletList', 'orderedList', 'taskList']);
+const INDENTABLE = new Set([...BLOCKS, ...LISTS]);
 const CONTAINERS = new Set(['doc', 'blockquote']);
+const ITEMS = ['listItem', 'taskItem'];
 
 /** How many steps in `node` is, 0 for one that is not indented. */
 export function indentOf(node: ProseMirrorNode): number {
@@ -38,9 +57,32 @@ function level(value: unknown): number {
 export function inIndentable($pos: ResolvedPos): boolean {
     return (
         $pos.depth > 0 &&
-        INDENTABLE.has($pos.parent.type.name) &&
+        BLOCKS.has($pos.parent.type.name) &&
         CONTAINERS.has($pos.node($pos.depth - 1).type.name)
     );
+}
+
+// The depth of the list item nearest `$pos`, or -1 outside a list.
+function itemDepth($pos: ResolvedPos): number {
+    for (let depth = $pos.depth; depth > 0; depth--) {
+        if (ITEMS.includes($pos.node(depth).type.name)) return depth;
+    }
+    return -1;
+}
+
+/** Whether `$pos` is in a list item that is itself inside another item. */
+export function inNestedItem($pos: ResolvedPos): boolean {
+    const depth = itemDepth($pos);
+    return depth >= 2 && ITEMS.includes($pos.node(depth - 2).type.name);
+}
+
+/** Whether `$pos` is in an item of a list that can be indented. */
+export function inIndentableList($pos: ResolvedPos): boolean {
+    for (let depth = $pos.depth; depth > 0; depth--) {
+        const name = $pos.node(depth).type.name;
+        if (LISTS.has(name) && CONTAINERS.has($pos.node(depth - 1).type.name)) return true;
+    }
+    return false;
 }
 
 /** Whether `selection` is a caret at the very start of a block that can be indented. */
@@ -49,7 +91,7 @@ export function atIndentableStart(selection: Selection): boolean {
 }
 
 /**
- * Move every paragraph and heading the selection in `tr` touches `by` steps,
+ * Move every paragraph, heading and list the selection in `tr` touches `by` steps,
  * within 0 and MAX_INDENT. False when that would change none of them.
  * Without `dispatch`, only says whether it would.
  */
@@ -76,10 +118,16 @@ export function shiftIndent(tr: Transaction, by: number, dispatch: boolean): boo
 }
 
 /**
- * Indenting paragraphs and headings a step at a time (ADR 0040): Tab at the
- * start of one moves it in, Shift-Tab moves it back out wherever the caret
- * is, and Backspace at the start of an indented one does too. Over a
- * selection, Tab and Shift-Tab move every block the selection touches.
+ * Indenting paragraphs, headings and lists a step at a time (ADR 0040): Tab
+ * at the start of a paragraph or heading moves it in, Shift-Tab moves it
+ * back out wherever the caret is, and Backspace at the start of an indented
+ * one does too. Over a selection, Tab and Shift-Tab move every block the
+ * selection touches.
+ *
+ * In a list, Tab nests the item under the one above, as it always has, and
+ * where it cannot, in the first item or the only one, moves the whole list
+ * in. It never leaves the note from a list, so a press that can do nothing
+ * does not send the caret away.
  *
  * Content, not only interaction: the indent is an attribute of the block,
  * stored with the note and synced. The keys come along because they are
@@ -87,9 +135,9 @@ export function shiftIndent(tr: Transaction, by: number, dispatch: boolean): boo
  * them in.
  *
  * Above the editor's own keys, at 101, so Backspace outdents before it
- * would join the block to the one above. Tab and Shift-Tab ask nothing of
- * a list or a table, which keep their own meanings for them, and a press
- * this does not take goes on to theirs.
+ * would join the block to the one above, and Tab in a list is answered here,
+ * before the list's own binding. A table keeps Tab: this takes no press in
+ * one, and the press goes on to it.
  */
 export const Indent = Extension.create({
     name: 'indent',
@@ -129,6 +177,22 @@ export const Indent = Extension.create({
                 () =>
                 ({ tr, dispatch }) =>
                     shiftIndent(tr, -1, dispatch !== undefined),
+            increaseIndent:
+                () =>
+                ({ commands }) =>
+                    commands.first([
+                        ...ITEMS.map((item) => () => commands.sinkListItem(item)),
+                        () => commands.indent(),
+                    ]),
+            // A nested item comes out a level before its list moves, and an
+            // indented list moves back before its items leave it.
+            decreaseIndent:
+                () =>
+                ({ state, commands }) => {
+                    const lift = ITEMS.map((item) => () => commands.liftListItem(item));
+                    if (inNestedItem(state.selection.$from)) return commands.first(lift);
+                    return commands.first([() => commands.outdent(), ...lift]);
+                },
         };
     },
 
@@ -140,6 +204,10 @@ export const Indent = Extension.create({
             // that cannot go further does not send the caret away.
             Tab: ({ editor }) => {
                 const { selection } = editor.state;
+                if (inIndentableList(selection.$from)) {
+                    editor.commands.increaseIndent();
+                    return true;
+                }
                 if (selection.empty) {
                     if (!atIndentableStart(selection)) return false;
                     editor.commands.indent();
@@ -147,7 +215,7 @@ export const Indent = Extension.create({
                 }
                 return editor.commands.indent();
             },
-            'Shift-Tab': ({ editor }) => editor.commands.outdent(),
+            'Shift-Tab': ({ editor }) => editor.commands.decreaseIndent(),
             Backspace: ({ editor }) => {
                 const { selection } = editor.state;
                 if (!atIndentableStart(selection) || indentOf(selection.$from.parent) === 0) {

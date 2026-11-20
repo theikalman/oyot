@@ -51,13 +51,6 @@ const FRAME =
 // room on the left for an arrow saying which way.
 const INDENTED = ['M4 5h16', 'M11 10h9', 'M11 14h9', 'M4 19h16'];
 
-// The indent tools nest a list item under the one above, or lift it out, as
-// Tab and Shift-Tab do there, and move anything else that can be indented a
-// step. The list commands come first and do nothing outside a list, and
-// indenting does nothing inside one, so whichever applies is the one that
-// runs.
-const LIST_ITEMS = ['listItem', 'taskItem'];
-
 /** Changing how text looks and what kind of block it is, in groups. */
 export const FORMATTING: readonly (readonly Tool[])[] = [
     [
@@ -158,35 +151,18 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
             label: 'Decrease indent',
             keys: 'Shift-Tab',
             icon: [...INDENTED, 'm6.5 9.5-2.5 2.5 2.5 2.5'],
-            canRun: (editor) =>
-                LIST_ITEMS.some((item) => editor.can().liftListItem(item)) ||
-                editor.can().outdent(),
-            run: (editor) =>
-                editor
-                    .chain()
-                    .focus()
-                    .first(({ commands }) => [
-                        ...LIST_ITEMS.map((item) => () => commands.liftListItem(item)),
-                        () => commands.outdent(),
-                    ])
-                    .run(),
+            // Shift-Tab's own command, so the two always do the same.
+            canRun: (editor) => editor.can().decreaseIndent(),
+            run: (editor) => editor.chain().focus().decreaseIndent().run(),
         },
         {
             id: 'indent',
             label: 'Increase indent',
             keys: 'Tab',
             icon: [...INDENTED, 'm4 9.5 2.5 2.5L4 14.5'],
-            canRun: (editor) =>
-                LIST_ITEMS.some((item) => editor.can().sinkListItem(item)) || editor.can().indent(),
-            run: (editor) =>
-                editor
-                    .chain()
-                    .focus()
-                    .first(({ commands }) => [
-                        ...LIST_ITEMS.map((item) => () => commands.sinkListItem(item)),
-                        () => commands.indent(),
-                    ])
-                    .run(),
+            // Tab's own command, so the two always do the same.
+            canRun: (editor) => editor.can().increaseIndent(),
+            run: (editor) => editor.chain().focus().increaseIndent().run(),
         },
     ],
     [
