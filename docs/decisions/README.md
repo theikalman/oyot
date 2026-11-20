@@ -49,6 +49,8 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0036](0036-colour-schemes-the-user-can-choose.md)                          | Colour schemes the user can choose, Catppuccin Macchiato by default                  | Proposed                                                                         |
 | [0037](0037-let-mcp-clients-read-and-edit-notes-through-the-running-app.md) | Let MCP clients read and edit notes through the running app                          | Proposed                                                                         |
 | [0038](0038-draw-mermaid-diagrams-while-reading.md)                         | Draw Mermaid diagrams while reading                                                  | Proposed                                                                         |
+| [0039](0039-put-pinned-notes-in-order-by-hand.md)                           | Put pinned notes in order by hand, with a position in the pin                        | Proposed                                                                         |
+| [0040](0040-indent-paragraphs-and-headings-a-step-at-a-time.md)             | Indent paragraphs and headings a step at a time                                      | Proposed                                                                         |
 
 ## Format
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { planEdit } from './planEdit';
 import { renderNote } from './noteMarkdown';
 import { ctx, doc, h, HASH, image, p, t } from './testDocs';
+import { blocksOf } from '../../test/blockJson';
 
 const sized = image({
     src: `oyot-attachment://${HASH}`,
@@ -72,7 +73,7 @@ describe('planEdit', () => {
 
     it('gives an emptied note the one empty paragraph a note always has', () => {
         const plan = planEdit(numbered(2), '', ctx);
-        expect(plan.root.toJSON().content).toEqual([p()]);
+        expect(blocksOf(plan.root)).toEqual([p()]);
         // In the hunks too, so the content gets it, not only the plan.
         expect(plan.hunks).toEqual([{ from: 0, to: 2, insert: [plan.root.child(0)] }]);
     });

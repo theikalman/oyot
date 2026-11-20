@@ -27,6 +27,13 @@ export interface Tool {
      * inserts something has nothing to show and leaves this out.
      */
     toggles?: { name: string; attributes?: Record<string, unknown> };
+    /**
+     * The keys that do the same, in the editor's notation, for a tool whose
+     * keys cannot be changed: Tab, which does something different in a list
+     * or a table. A tool with a shortcut of its own leaves this out, and its
+     * tooltip names the shortcut's keys instead.
+     */
+    keys?: string;
     /** Whether pressing it now would do anything. Left out, it always would. */
     canRun?: (editor: Editor) => boolean;
     run: (editor: Editor) => void;
@@ -39,6 +46,17 @@ const H = ['M4 6v12', 'M12 6v12', 'M4 12h8'];
 // sit side by side are the same size.
 const FRAME =
     'M6.8 21h10.4c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311C22 18.72 22 17.88 22 16.2V7.8c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C19.72 3 18.88 3 17.2 3H6.8c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C2 5.28 2 6.12 2 7.8v8.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C4.28 21 5.12 21 6.8 21';
+
+// The lines of text the two indent icons share, the middle two moved in, with
+// room on the left for an arrow saying which way.
+const INDENTED = ['M4 5h16', 'M11 10h9', 'M11 14h9', 'M4 19h16'];
+
+// The indent tools nest a list item under the one above, or lift it out, as
+// Tab and Shift-Tab do there, and move anything else that can be indented a
+// step. The list commands come first and do nothing outside a list, and
+// indenting does nothing inside one, so whichever applies is the one that
+// runs.
+const LIST_ITEMS = ['listItem', 'taskItem'];
 
 /** Changing how text looks and what kind of block it is, in groups. */
 export const FORMATTING: readonly (readonly Tool[])[] = [
@@ -132,6 +150,43 @@ export const FORMATTING: readonly (readonly Tool[])[] = [
                 'M12 17h8',
             ],
             run: (editor) => editor.chain().focus().toggleTaskList().run(),
+        },
+    ],
+    [
+        {
+            id: 'outdent',
+            label: 'Decrease indent',
+            keys: 'Shift-Tab',
+            icon: [...INDENTED, 'm6.5 9.5-2.5 2.5 2.5 2.5'],
+            canRun: (editor) =>
+                LIST_ITEMS.some((item) => editor.can().liftListItem(item)) ||
+                editor.can().outdent(),
+            run: (editor) =>
+                editor
+                    .chain()
+                    .focus()
+                    .first(({ commands }) => [
+                        ...LIST_ITEMS.map((item) => () => commands.liftListItem(item)),
+                        () => commands.outdent(),
+                    ])
+                    .run(),
+        },
+        {
+            id: 'indent',
+            label: 'Increase indent',
+            keys: 'Tab',
+            icon: [...INDENTED, 'm4 9.5 2.5 2.5L4 14.5'],
+            canRun: (editor) =>
+                LIST_ITEMS.some((item) => editor.can().sinkListItem(item)) || editor.can().indent(),
+            run: (editor) =>
+                editor
+                    .chain()
+                    .focus()
+                    .first(({ commands }) => [
+                        ...LIST_ITEMS.map((item) => () => commands.sinkListItem(item)),
+                        () => commands.indent(),
+                    ])
+                    .run(),
         },
     ],
     [

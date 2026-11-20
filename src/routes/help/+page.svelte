@@ -331,6 +331,13 @@
                         to resize it by its handles. Images go to your other devices along with the note.
                     </li>
                     <li>
+                        <strong>Indenting.</strong> Press <Keys keys={['Tab']} {command} /> at the start
+                        of a paragraph or heading to move it in a step, and
+                        <Keys keys={['Shift-Tab']} {command} /> to move it back, or use Increase indent
+                        and Decrease indent on the toolbar. In a list, the same keys and buttons move
+                        the item in under the one above, and back out.
+                    </li>
+                    <li>
                         <strong>Links between notes.</strong> A note that other notes link to lists them
                         under Linked from, at the bottom of the page.
                     </li>

@@ -4,6 +4,7 @@ import { CONTENT_FIELD } from '$lib/editor/contentField';
 import { rootFromYDoc } from '$lib/editor/headlessIndex';
 import { renderNote, revisionOf } from './noteMarkdown';
 import { doc, fakeDeps, HASH, image, p, t, task, tasks, ydocOf } from './testDocs';
+import { blocksOf } from '../../test/blockJson';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -93,7 +94,7 @@ describe('appendToNote', () => {
     it('fills a new, empty note rather than leaving a blank line above', async () => {
         const { ydoc, deps } = setup(p());
         await appendToNote('n1', '# Plan\n', deps);
-        expect(rootFromYDoc(ydoc).toJSON().content).toEqual([
+        expect(blocksOf(rootFromYDoc(ydoc))).toEqual([
             { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Plan' }] },
         ]);
     });

@@ -466,6 +466,10 @@
         color: var(--text-primary);
         font-size: 15.5px;
         line-height: 1.68;
+        /* How far one step of indent moves a paragraph or heading. About a
+           list's own indent, so text moved in once lines up with the items
+           of a list. */
+        --indent-step: 2rem;
     }
 
     @media (max-width: 768px) {
@@ -473,9 +477,18 @@
             padding: 18px 20px 120px;
         }
 
+        /* Shorter on a phone, so text moved in a long way still has room. */
         .editor-content :global(.tiptap) {
             font-size: 16px;
+            --indent-step: 1.5rem;
         }
+    }
+
+    /* A paragraph or heading moved in with Tab or the toolbar, a step for
+       each level it carries in --indent (ADR 0040). The step is in rem, so a
+       heading moves as far as the text around it whatever its own size. */
+    .editor-content :global(.tiptap [data-indent]) {
+        margin-left: calc(var(--indent) * var(--indent-step));
     }
 
     .editor-content :global(.tiptap p.is-editor-empty:first-child::before) {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { contentSchema } from '$lib/editor/headlessIndex';
 import { renderNote } from '$lib/export/note';
 import { noteDocument, prepareNote, titleFromFileName } from './note';
+import { blocksOf } from '../../test/blockJson';
 
 const schema = contentSchema();
 
@@ -10,7 +11,7 @@ function prepared(text: string, name = 'file.md') {
 }
 
 function content(text: string, name = 'file.md') {
-    return noteDocument(prepared(text, name), schema).doc.toJSON().content;
+    return blocksOf(noteDocument(prepared(text, name), schema).doc);
 }
 
 const tag = (name: string) => ({ type: 'tag', attrs: { name } });
@@ -165,7 +166,7 @@ describe('the round trip through the exporter', () => {
         expect(note.title).toBe('Moving house');
         expect(note.tags).toEqual(['house move', 'todo']);
 
-        const doc = noteDocument(note, schema).doc.toJSON().content;
+        const doc = blocksOf(noteDocument(note, schema).doc);
         expect(doc).toEqual([
             {
                 type: 'taskList',
