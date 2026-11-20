@@ -146,6 +146,21 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
         ],
     },
     {
+        // Tab only at the start, so in the middle of a sentence it still
+        // leaves the note, as it does in any text box.
+        id: 'indent',
+        title: 'Indent',
+        where: 'While editing, on a paragraph or heading outside a list or table',
+        shortcuts: [
+            {
+                action: 'Move it in a step, at the start of its text or with text selected',
+                keys: ['Tab'],
+            },
+            { action: 'Move it back out a step', keys: ['Shift-Tab'] },
+            { action: 'Move it back out a step, at the start of its text', keys: ['Backspace'] },
+        ],
+    },
+    {
         id: 'lists',
         title: 'Lists',
         where: 'While editing, in a list',

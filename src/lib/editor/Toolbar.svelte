@@ -2,6 +2,7 @@
     import type { Editor } from '@tiptap/core';
     import { FORMATTING, HISTORY, TOOLS, pressedTools, type Tool } from './toolbarTools';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
+    import { shortcutLabel } from '$lib/keyboard/keys';
 
     interface Props {
         editor: Editor | null;
@@ -12,9 +13,11 @@
     // A tool's tooltip names its shortcut too, the way the Edit button's
     // does, so the toolbar teaches the faster way in as it is used. The keys
     // in use, which the user may have changed; a tool shares its id with
-    // its shortcut.
+    // its shortcut. One whose keys cannot be changed names them itself.
     function tooltip(tool: Tool): string {
-        const keys = customShortcuts.labelFor(tool.id);
+        const keys =
+            customShortcuts.labelFor(tool.id) ??
+            (tool.keys ? shortcutLabel(tool.keys, customShortcuts.command) : null);
         return keys ? `${tool.label} (${keys})` : tool.label;
     }
 
@@ -221,7 +224,7 @@
     }
 
     /* Only the icon shows until the pointer is on it, as the sidebar's own
-       buttons do, so a row of fifteen reads as one quiet strip. */
+       buttons do, so a row of seventeen reads as one quiet strip. */
     .tool {
         position: relative;
         flex: 0 0 auto;

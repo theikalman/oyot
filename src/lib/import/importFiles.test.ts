@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
 import { indexFromYDoc, rootFromYDoc } from '$lib/editor/headlessIndex';
 import { importFiles, linkedFileName, type ImportTarget, type PublishedNote } from './importFiles';
+import { blocksOf } from '../../test/blockJson';
 
 const HASH = 'b'.repeat(64);
 const OTHER_HASH = 'c'.repeat(64);
@@ -55,7 +56,7 @@ class FakeTarget implements ImportTarget {
     /** A note's content, read back out of the CRDT it was saved as. */
     content(title: string) {
         const doc = this.docs.get(this.idOf(title));
-        return doc ? rootFromYDoc(doc).toJSON().content : null;
+        return doc ? blocksOf(rootFromYDoc(doc)) : null;
     }
 
     publishedNote(title: string): PublishedNote | undefined {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseNote, renderBlock, renderNote, revisionOf } from './noteMarkdown';
 import { ctx, doc, h, HASH, image, p, t } from './testDocs';
+import { blocksOf } from '../../test/blockJson';
 
 const DATA_URI =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
@@ -69,7 +70,7 @@ describe('parseNote', () => {
 
     it('keeps an inline image id it was not given as the text it is', () => {
         const back = parseNote('![x](oyot-inline-image://9)', ctx);
-        expect(back.toJSON().content).toEqual([p(t('![x](oyot-inline-image://9)'))]);
+        expect(blocksOf(back)).toEqual([p(t('![x](oyot-inline-image://9)'))]);
     });
 
     it('leaves a link to a note that does not exist a plain link', () => {

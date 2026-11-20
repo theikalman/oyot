@@ -81,7 +81,7 @@ function group(id: string): ShortcutGroup {
 describe('the shortcuts the help page lists', () => {
     // The ones the editor itself answers. The rest are answered by the app's
     // own code: the insert menu, search and dialogs.
-    const editorGroups = ['text', 'blocks', 'lists', 'tables', 'history'];
+    const editorGroups = ['text', 'blocks', 'indent', 'lists', 'tables', 'history'];
 
     it.each(editorGroups)('are all bound by the editor: %s', (id) => {
         const bound = editorBindings();
@@ -92,15 +92,25 @@ describe('the shortcuts the help page lists', () => {
     });
 
     // A tool's tooltip names the keys of the shortcut with its id, so every
-    // tool has one but the two that insert something.
+    // tool has one but the two that insert something and the ones whose
+    // keys cannot be changed, which name their keys themselves.
     it("give every toolbar tool a shortcut under its own id, by the tool's name", () => {
         for (const tool of TOOLS) {
             const shortcut = changeableShortcut(tool.id);
-            if (tool.id === 'table' || tool.id === 'image') {
+            if (tool.id === 'table' || tool.id === 'image' || tool.keys !== undefined) {
                 expect(shortcut, tool.id).toBeUndefined();
             } else {
                 expect(shortcut?.action, tool.id).toBe(tool.label);
             }
+        }
+    });
+
+    // So a tooltip never names keys the editor does not answer, or that the
+    // help page leaves out.
+    it('list the keys a toolbar tool names for itself', () => {
+        const listed = editorGroups.flatMap((id) => group(id).shortcuts.flatMap((s) => s.keys));
+        for (const tool of TOOLS) {
+            if (tool.keys !== undefined) expect(listed, tool.id).toContain(tool.keys);
         }
     });
 

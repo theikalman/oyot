@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { contentSchema } from '$lib/editor/headlessIndex';
 import { serializeDocument, type MarkdownOptions } from '$lib/export/markdown';
 import { leadingHeading, readMarkdown, storedImage, type MarkdownReadOptions } from './markdown';
+import { blocksOf } from '../../test/blockJson';
 
 const schema = contentSchema();
 const HASH = 'a'.repeat(64);
 
 function read(markdown: string, options: MarkdownReadOptions = {}) {
-    return readMarkdown(markdown, schema, options).doc.toJSON().content;
+    return blocksOf(readMarkdown(markdown, schema, options).doc);
 }
 
 const text = (value: string, marks?: unknown[]) =>
@@ -432,7 +433,7 @@ describe('readMarkdown: links between notes', () => {
     it('keeps an image inside a link to a note', () => {
         const doc = readMarkdown('[![map](maps/kyoto.png)](other-note.md)', schema, { noteLink });
         expect(doc.imagesKeptAsText).toBe(1);
-        expect(doc.doc.toJSON().content).toEqual([
+        expect(blocksOf(doc.doc)).toEqual([
             para(text('![map](maps/kyoto.png) '), chip('other', 'Other note')),
         ]);
     });

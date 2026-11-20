@@ -22,7 +22,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
   and drag on a touch screen. Pins and their order follow you to your other
   devices, and into your backups.
 - **Rich text editing.** Headings, lists, tables, task lists, images, and slash
-  commands, built on Tiptap.
+  commands, built on Tiptap. Tab at the start of a paragraph or heading moves
+  it in a step, and Shift+Tab moves it back, as do the toolbar's indent
+  buttons.
 - **Reading first.** Notes and journals open for reading, without the toolbar
   and with nothing a stray tap can change, though tasks can still be ticked
   off. Press Edit, or Cmd/Ctrl+Shift+E, to write, and Done to go back. A note
