@@ -13,28 +13,55 @@ import {
     resolveAttachmentSrc,
 } from '../attachments';
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state';
-import { IMAGE_ALIGNS, alignOf, storedAlign, type ImageAlign } from '../imageAttrs';
+import {
+    IMAGE_ALIGNS,
+    alignOf,
+    altFor,
+    describedAlt,
+    storedAlign,
+    type ImageAlign,
+} from '../imageAttrs';
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {
         resizableImage: {
             /** Move the selected image to the left, centre or right of its line. */
             setImageAlign: (align: ImageAlign) => ReturnType;
+            /**
+             * Describe the image at `pos`, or the selected one. An empty
+             * description clears it.
+             */
+            setImageAlt: (description: string, pos?: number) => ReturnType;
         };
     }
 }
 
+/**
+ * Asked for by an image's toolbar, on the editor's DOM, for the editor
+ * around it to answer: it owns the dialog, which a node view has no
+ * business drawing.
+ */
+export const IMAGE_ALT_EVENT = 'oyot-image-alt';
+
+export interface ImageAltRequest {
+    pos: number;
+    alt: string;
+}
+
 // Icons on a 24-unit square, stroked the way the editing toolbar strokes its own.
-const ICONS: Record<ImageAlign, string[]> = {
+const ICONS: Record<ImageAlign | 'alt', string[]> = {
     left: ['M4 5h16', 'M4 10h10', 'M4 14h16', 'M4 19h10'],
     center: ['M4 5h16', 'M7 10h10', 'M4 14h16', 'M7 19h10'],
     right: ['M4 5h16', 'M10 10h10', 'M4 14h16', 'M10 19h10'],
+    // "ALT" is too long to read at this size, so a speech-like tag.
+    alt: ['M4 6h16v10H9l-5 4z', 'M8 10h8', 'M8 13h5'],
 };
 
-const LABELS: Record<ImageAlign, string> = {
+const LABELS: Record<ImageAlign | 'alt', string> = {
     left: 'Align left',
     center: 'Align centre',
     right: 'Align right',
+    alt: 'Alt text',
 };
 
 function iconSvg(paths: string[]): string {
@@ -105,6 +132,25 @@ export const ResizableImage = Image.extend({
                     }
                     return true;
                 },
+            setImageAlt:
+                (description: string, pos?: number) =>
+                ({ state, tr, dispatch }) => {
+                    const { selection } = state;
+                    const at =
+                        pos ?? (selection instanceof NodeSelection ? selection.from : undefined);
+                    if (at === undefined) return false;
+                    const node = state.doc.nodeAt(at);
+                    if (!node || node.type.name !== this.name) return false;
+                    if (dispatch) {
+                        tr.setNodeAttribute(
+                            at,
+                            'alt',
+                            altFor(node.attrs.src, node.attrs.alt, description),
+                        );
+                        tr.setSelection(NodeSelection.create(tr.doc, at));
+                    }
+                    return true;
+                },
         };
     },
 
@@ -135,7 +181,9 @@ export const ResizableImage = Image.extend({
             editor: any;
         }) => {
             const el = document.createElement('img');
-            el.setAttribute('alt', HTMLAttributes.alt || node.attrs.alt || '');
+            // Only a description: the `oyot:<hash>` bookkeeping is not one,
+            // and a screen reader read it out.
+            el.setAttribute('alt', describedAlt(node.attrs.alt));
 
             // Resolve the stored reference to something the webview can load.
             // Never assign the raw `oyot-attachment://` scheme - that is what
@@ -205,6 +253,7 @@ export const ResizableImage = Image.extend({
                 onUpdate: (updatedNode) => {
                     if (updatedNode.type.name !== node.type.name) return false;
                     current = updatedNode as ProseMirrorNode;
+                    el.setAttribute('alt', describedAlt(current.attrs.alt));
                     applyAlign();
                     return true;
                 },
@@ -227,8 +276,8 @@ export const ResizableImage = Image.extend({
             toolbar.contentEditable = 'false';
             toolbar.setAttribute('role', 'toolbar');
             toolbar.setAttribute('aria-label', 'Image');
-            const buttons = new Map<ImageAlign, HTMLButtonElement>();
-            const addButton = (id: ImageAlign, run: () => void) => {
+            const buttons = new Map<string, HTMLButtonElement>();
+            const addButton = (id: ImageAlign | 'alt', run: () => void) => {
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'image-toolbar-btn';
@@ -252,6 +301,19 @@ export const ResizableImage = Image.extend({
                     (editor as Editor).chain().focus().setImageAlign(align).run(),
                 );
             }
+            const divider = document.createElement('span');
+            divider.className = 'image-toolbar-divider';
+            toolbar.appendChild(divider);
+            addButton('alt', () => {
+                const pos = getPos();
+                if (pos === undefined) return;
+                dom.dispatchEvent(
+                    new CustomEvent<ImageAltRequest>(IMAGE_ALT_EVENT, {
+                        bubbles: true,
+                        detail: { pos, alt: describedAlt(current.attrs.alt) },
+                    }),
+                );
+            });
             wrapper.appendChild(toolbar);
 
             const applyAlign = () => {
@@ -261,6 +323,9 @@ export const ResizableImage = Image.extend({
                 for (const option of IMAGE_ALIGNS) {
                     buttons.get(option)?.setAttribute('aria-pressed', String(option === align));
                 }
+                buttons
+                    .get('alt')
+                    ?.classList.toggle('has-value', !!describedAlt(current.attrs.alt));
             };
             applyAlign();
 

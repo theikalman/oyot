@@ -36,6 +36,8 @@
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
+    import { IMAGE_ALT_EVENT, type ImageAltRequest } from '$lib/tiptap/extensions/ResizableImage';
+    import ImageAltDialog from './ImageAltDialog.svelte';
 
     // A document being read is still announced as a text box, which is what
     // the editor is, so a screen reader is also told it cannot be typed into.
@@ -96,6 +98,8 @@
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
     let isLoadingEditor = $state.raw(false);
+    // The image whose alt text is being written, when there is one.
+    let describing = $state.raw<ImageAltRequest | null>(null);
 
     async function initializeEditor() {
         const docId: string | null = document?.id ?? null;
@@ -190,6 +194,7 @@
         else placeCaretIfOnScreen(ed);
 
         ed.view.dom.addEventListener('click', handleImageClick);
+        ed.view.dom.addEventListener(IMAGE_ALT_EVENT, handleImageAlt);
 
         // These register into a module-level registry, not into `ed`. They
         // took an editor argument that none of them used.
@@ -355,6 +360,17 @@
         }
     }
 
+    function handleImageAlt(e: Event) {
+        if (!editor?.isEditable) return;
+        describing = (e as CustomEvent<ImageAltRequest>).detail;
+    }
+
+    function saveImageAlt(alt: string) {
+        const request = describing;
+        if (!request || !editor) return;
+        editor.chain().focus().setImageAlt(alt, request.pos).run();
+    }
+
     // A phone's keyboard coming up makes the viewport shorter: on Android the
     // WebView is ended where the keyboard begins (see MainActivity). The caret
     // can then be below the new bottom edge, out of sight until something is
@@ -397,6 +413,7 @@
 
         if (editor) {
             editor.view.dom.removeEventListener('click', handleImageClick);
+            editor.view.dom.removeEventListener(IMAGE_ALT_EVENT, handleImageAlt);
             // The document-link and tag pickers are mounted on the page, not
             // in the editor, so destroying the editor left one open. On the
             // next page it still took every key typed there, into an editor
@@ -424,6 +441,14 @@
         <div bind:this={element}></div>
     </div>
 </div>
+
+{#if describing}
+    <ImageAltDialog
+        alt={describing.alt}
+        onSave={saveImageAlt}
+        onClose={() => (describing = null)}
+    />
+{/if}
 
 <style>
     .editor-instance {
@@ -906,9 +931,9 @@
         cursor: pointer;
     }
 
-    /* An image's own toolbar: where it sits on the line. Over the top of
-       the image while it is selected for editing, on the side the image is
-       aligned to. */
+    /* An image's own toolbar: where it sits on the line, and its alt text.
+       Over the top of the image while it is selected for editing, on the
+       side the image is aligned to. */
     .editor-content :global(.image-toolbar) {
         position: absolute;
         top: calc(1em + 8px);
@@ -959,8 +984,16 @@
         color: var(--text-primary);
     }
 
-    .editor-content :global(.image-toolbar-btn[aria-pressed='true']) {
+    .editor-content :global(.image-toolbar-btn[aria-pressed='true']),
+    .editor-content :global(.image-toolbar-btn.has-value) {
         color: var(--accent-color);
+    }
+
+    .editor-content :global(.image-toolbar-divider) {
+        width: 1px;
+        height: 18px;
+        margin: 0 3px;
+        background: var(--border-color);
     }
 
     /* A touch is a finger, not a pointer: bigger targets. */

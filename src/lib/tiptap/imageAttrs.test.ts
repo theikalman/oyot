@@ -3,7 +3,7 @@ import * as Y from 'yjs';
 import { getSchema } from '@tiptap/core';
 import { prosemirrorJSONToYXmlFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { createContentExtensions } from '$lib/editor/extensions';
-import { alignOf, storedAlign } from './imageAttrs';
+import { altFor, alignOf, describedAlt, storedAlign } from './imageAttrs';
 
 const HASH = 'a'.repeat(64);
 const SRC = `oyot-attachment://${HASH}`;
@@ -24,6 +24,31 @@ describe('storedAlign', () => {
     it('reads a missing alignment as left', () => {
         expect(alignOf(null)).toBe('left');
         expect(alignOf('right')).toBe('right');
+    });
+});
+
+describe('describedAlt', () => {
+    it('hides the bookkeeping the editor keeps in alt', () => {
+        expect(describedAlt(`oyot:${HASH}`)).toBe('');
+        expect(describedAlt(null)).toBe('');
+    });
+
+    it('keeps a real description', () => {
+        expect(describedAlt('A cat on a mat')).toBe('A cat on a mat');
+    });
+});
+
+describe('altFor', () => {
+    it('stores a description in place of the bookkeeping', () => {
+        expect(altFor(SRC, `oyot:${HASH}`, '  A cat\n on a mat ')).toBe('A cat on a mat');
+    });
+
+    it('gives an attachment its hash back when the description is cleared', () => {
+        expect(altFor(SRC, 'A cat', '   ')).toBe(`oyot:${HASH}`);
+    });
+
+    it('gives an inline image no alt when the description is cleared', () => {
+        expect(altFor('data:image/png;base64,AAAA', 'A cat', '')).toBeNull();
     });
 });
 
