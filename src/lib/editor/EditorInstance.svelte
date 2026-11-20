@@ -484,11 +484,13 @@
         }
     }
 
-    /* A paragraph or heading moved in with Tab or the toolbar, a step for
-       each level it carries in --indent (ADR 0040). The step is in rem, so a
-       heading moves as far as the text around it whatever its own size. */
+    /* A paragraph, heading or list moved in with Tab or the toolbar, a step
+       for each level it carries in --indent (ADR 0040). The step is in rem,
+       so a heading moves as far as the text around it whatever its own size.
+       Important because a list's margin below is, and would otherwise put an
+       indented list back at the edge. */
     .editor-content :global(.tiptap [data-indent]) {
-        margin-left: calc(var(--indent) * var(--indent-step));
+        margin-left: calc(var(--indent) * var(--indent-step)) !important;
     }
 
     .editor-content :global(.tiptap p.is-editor-empty:first-child::before) {

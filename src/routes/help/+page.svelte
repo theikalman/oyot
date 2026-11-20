@@ -334,8 +334,9 @@
                         <strong>Indenting.</strong> Press <Keys keys={['Tab']} {command} /> at the start
                         of a paragraph or heading to move it in a step, and
                         <Keys keys={['Shift-Tab']} {command} /> to move it back, or use Increase indent
-                        and Decrease indent on the toolbar. In a list, the same keys and buttons move
-                        the item in under the one above, and back out.
+                        and Decrease indent on the toolbar. In a bulleted, numbered or task list, the
+                        same keys and buttons move the item in under the one above, and back out. In the
+                        first item, which has none above it, they move the whole list.
                     </li>
                     <li>
                         <strong>Links between notes.</strong> A note that other notes link to lists them

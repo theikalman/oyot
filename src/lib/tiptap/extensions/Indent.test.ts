@@ -5,7 +5,14 @@ import type { Node } from '@tiptap/pm/model';
 import { EditorState, TextSelection } from '@tiptap/pm/state';
 import { prosemirrorJSONToYXmlFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { createContentExtensions } from '$lib/editor/extensions';
-import { MAX_INDENT, atIndentableStart, indentOf, shiftIndent } from './Indent';
+import {
+    MAX_INDENT,
+    atIndentableStart,
+    inIndentableList,
+    inNestedItem,
+    indentOf,
+    shiftIndent,
+} from './Indent';
 
 // The editor's real schema, so the attribute is tested on the nodes that
 // carry it in a note.
@@ -99,20 +106,58 @@ describe('shiftIndent', () => {
         expect(indentOf(state!.doc.firstChild!.firstChild!)).toBe(1);
     });
 
-    // A list item is nested by the list's own Tab, and a cell stays in its
-    // cell, so neither is moved here and the press goes on to them.
-    it('leaves list items, table cells and code alone', () => {
-        const source = doc(
-            {
-                type: 'bulletList',
-                content: [{ type: 'listItem', content: [para('a point')] }],
-            },
-            {
-                type: 'taskList',
+    // A list moves as a whole: in its first item, or its only one, there is
+    // no item above to nest under, and Tab moved the caret out of the note.
+    it('moves the whole list an item is in, and not the item', () => {
+        for (const [list, item] of [
+            ['bulletList', 'listItem'],
+            ['orderedList', 'listItem'],
+            ['taskList', 'taskItem'],
+        ]) {
+            const source = doc({
+                type: list,
                 content: [
-                    { type: 'taskItem', attrs: { checked: false }, content: [para('a task')] },
+                    {
+                        type: item,
+                        attrs: item === 'taskItem' ? { checked: false } : {},
+                        content: [para('only one')],
+                    },
                 ],
-            },
+            });
+            const state = shifted(caretAt(source, 'only'), 1);
+
+            expect(indentOf(state!.doc.firstChild!), list).toBe(1);
+            expect(indentOf(state!.doc.firstChild!.firstChild!.firstChild!), list).toBe(0);
+        }
+    });
+
+    // A nested list sits under its item, so the list it is in is what moves.
+    it('moves the outermost list from inside a nested one', () => {
+        const source = doc({
+            type: 'bulletList',
+            content: [
+                {
+                    type: 'listItem',
+                    content: [
+                        para('parent'),
+                        {
+                            type: 'bulletList',
+                            content: [{ type: 'listItem', content: [para('child')] }],
+                        },
+                    ],
+                },
+            ],
+        });
+        const state = shifted(caretAt(source, 'child'), 1);
+        const nested = state!.doc.firstChild!.firstChild!.child(1);
+
+        expect(indentOf(state!.doc.firstChild!)).toBe(1);
+        expect(indentOf(nested)).toBe(0);
+    });
+
+    // A cell stays in its cell, so the press goes on to the table.
+    it('leaves table cells and code alone', () => {
+        const source = doc(
             {
                 type: 'table',
                 content: [
@@ -125,7 +170,7 @@ describe('shiftIndent', () => {
             { type: 'codeBlock', content: [text('let x = 1;')] },
         );
 
-        for (const needle of ['point', 'task', 'cell', 'let']) {
+        for (const needle of ['cell', 'let']) {
             expect(shifted(caretAt(source, needle), 1), needle).toBeNull();
         }
     });
@@ -157,6 +202,63 @@ describe('atIndentableStart', () => {
 
     it('is not the start of a list item', () => {
         expect(atIndentableStart(caretAt(source, 'a point').selection)).toBe(false);
+    });
+});
+
+describe('where the caret is in a list', () => {
+    const source = doc(
+        para('words'),
+        {
+            type: 'bulletList',
+            content: [
+                {
+                    type: 'listItem',
+                    content: [
+                        para('parent'),
+                        {
+                            type: 'bulletList',
+                            content: [{ type: 'listItem', content: [para('child')] }],
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            type: 'table',
+            content: [
+                {
+                    type: 'tableRow',
+                    content: [
+                        {
+                            type: 'tableCell',
+                            content: [
+                                {
+                                    type: 'bulletList',
+                                    content: [{ type: 'listItem', content: [para('celled')] }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    );
+    const $at = (needle: string) => caretAt(source, needle).selection.$from;
+
+    // Shift-Tab lifts a nested item out a level before it moves the list.
+    it('tells a nested item from one at the top of its list', () => {
+        expect(inNestedItem($at('child'))).toBe(true);
+        expect(inNestedItem($at('parent'))).toBe(false);
+        expect(inNestedItem($at('words'))).toBe(false);
+    });
+
+    // Where Tab is always taken, so it never leaves the note from a list. A
+    // list in a table cell is not, so Tab still goes to the next cell.
+    it('knows a list that can be indented', () => {
+        expect(inIndentableList($at('child'))).toBe(true);
+        expect(inIndentableList($at('parent'))).toBe(true);
+        expect(inIndentableList($at('words'))).toBe(false);
+        expect(inIndentableList($at('celled'))).toBe(false);
     });
 });
 

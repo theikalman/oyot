@@ -20,7 +20,7 @@ of the shortcuts a user changes (ADR 0035).
 
 ## Decision
 
-**1. An indent is an `indent` attribute on paragraphs and headings,** a step
+**1. An indent is an `indent` attribute on paragraphs, headings and lists,** a step
 count from 1 to 8, added by a content extension, `Indent`, so it is part of
 the schema the sync layer shares. It defaults to null, not 0, and returns to
 null when a block is moved back out: the collaboration binding stores every
@@ -29,19 +29,30 @@ before. The block draws the count as `data-indent` and `--indent`, and the
 stylesheet decides how far a step is: 2rem, about a list's own indent, and
 1.5rem on a phone. In rem, so a heading moves as far as the text around it.
 
-**2. Only a paragraph or heading in the note or in a quote is indented.** A
-list item's paragraph moves with its item, and a cell's stays in its cell.
+**2. Only a paragraph, heading or list in the note or in a quote is
+indented.** A list item's paragraph moves with its item, a nested list with
+the list it is in, and a cell's paragraph stays in its cell.
+
+**2a. In a list, Tab nests the item, and moves the whole list where it
+cannot.** The first item of a list, or its only one, has no item above to
+nest under, so as first released Tab there did nothing and the caret left
+the note, and Increase indent was greyed out. Now the list moves in a step
+instead. Tab is always taken in a list that can be indented, even at the
+deepest step, so it never leaves the note from one. Shift-Tab lifts a nested
+item out a level first, then moves an indented list back a step, and only
+then lifts an item out of its list, as it always did. A list in a table cell
+is not indented, so Tab there still goes to the next cell.
 
 **3. Tab indents at the start of the text, or with text selected,** where it
 moves every paragraph and heading the selection touches. In the middle of a
 sentence it still leaves the note. Shift-Tab moves an indented block back
 out wherever the caret is in it, and Backspace at the start of one does too,
-before it would join the block to the one above. Lists and tables are asked
-nothing new: the extension takes only presses on a block it can indent, and
-the rest go on to them.
+before it would join the block to the one above. A table is asked nothing
+new: the extension takes no press in one, and it goes on to the table.
 
 **4. The toolbar's Increase indent and Decrease indent do what Tab and
-Shift-Tab would,** in a list too, where they nest and lift the item. Unlike
+Shift-Tab would,** in a list too, and run the same commands,
+`increaseIndent` and `decreaseIndent`, so the two cannot drift apart. Unlike
 Tab, they indent wherever the caret is, since a button means nothing else.
 
 **5. Tab and Shift-Tab are not shortcuts the user can change.** A toolbar
