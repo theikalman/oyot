@@ -36,7 +36,14 @@
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
     import { documentRepository } from '$lib/sync';
-    import { IMAGE_ALT_EVENT, type ImageAltRequest } from '$lib/tiptap/extensions/ResizableImage';
+    import {
+        IMAGE_ALT_EVENT,
+        IMAGE_VIEW_EVENT,
+        requestImageView,
+        type ImageAltRequest,
+        type ImageViewRequest,
+    } from '$lib/tiptap/extensions/ResizableImage';
+    import ImageLightbox from './ImageLightbox.svelte';
     import ImageAltDialog from './ImageAltDialog.svelte';
 
     // A document being read is still announced as a text box, which is what
@@ -98,7 +105,9 @@
     let isInitialized = $state.raw(false);
     let currentDocId = $state.raw<string | null>(null);
     let isLoadingEditor = $state.raw(false);
-    // The image whose alt text is being written, when there is one.
+    // The image shown at full size, and the one whose alt text is being
+    // written, when there is one.
+    let viewing = $state.raw<ImageViewRequest | null>(null);
     let describing = $state.raw<ImageAltRequest | null>(null);
 
     async function initializeEditor() {
@@ -193,7 +202,9 @@
         if (!editable) ed.setEditable(false);
         else placeCaretIfOnScreen(ed);
 
+        ed.view.dom.addEventListener('pointerdown', handleImagePress, true);
         ed.view.dom.addEventListener('click', handleImageClick);
+        ed.view.dom.addEventListener(IMAGE_VIEW_EVENT, handleImageView);
         ed.view.dom.addEventListener(IMAGE_ALT_EVENT, handleImageAlt);
 
         // These register into a module-level registry, not into `ed`. They
@@ -345,19 +356,54 @@
     }
 
     function handleImageClick(e: MouseEvent) {
-        // Selecting an image is how it gets its resize handles.
-        if (!editor || !editor.isEditable) return;
+        if (!editor) return;
 
         const target = e.target as HTMLElement;
         if (target.tagName !== 'IMG') return;
+        const img = target as HTMLImageElement;
+
+        // Reading, a click is only ever to look: the image opens full size.
+        if (!editor.isEditable) {
+            if (requestImageView(img, img)) e.preventDefault();
+            return;
+        }
+
         e.preventDefault();
         e.stopPropagation();
 
         const pos = editor.view.posAtDOM(target, 0);
-        if (typeof pos === 'number') {
-            const tr = editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos));
-            editor.view.dispatch(tr);
+        if (typeof pos !== 'number') return;
+
+        // Editing, the first click selects the image, which is how it gets
+        // its resize handles and its toolbar. A click on the image already
+        // selected opens it full size. Asked of the selection as the press
+        // began: by the click, ProseMirror has selected the image itself.
+        const wasSelected = pressedSelectedImage === img;
+        pressedSelectedImage = null;
+        if (wasSelected) {
+            requestImageView(img, img);
+            return;
         }
+        const tr = editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, pos));
+        editor.view.dispatch(tr);
+    }
+
+    // The image a press began on, if it was already the one selected.
+    let pressedSelectedImage: HTMLImageElement | null = null;
+
+    function handleImagePress(e: Event) {
+        pressedSelectedImage = null;
+        const target = e.target as HTMLElement;
+        if (!editor || target.tagName !== 'IMG') return;
+        const { selection } = editor.state;
+        if (!(selection instanceof NodeSelection)) return;
+        if (editor.view.posAtDOM(target, 0) === selection.from) {
+            pressedSelectedImage = target as HTMLImageElement;
+        }
+    }
+
+    function handleImageView(e: Event) {
+        viewing = (e as CustomEvent<ImageViewRequest>).detail;
     }
 
     function handleImageAlt(e: Event) {
@@ -412,7 +458,9 @@
         }
 
         if (editor) {
+            editor.view.dom.removeEventListener('pointerdown', handleImagePress, true);
             editor.view.dom.removeEventListener('click', handleImageClick);
+            editor.view.dom.removeEventListener(IMAGE_VIEW_EVENT, handleImageView);
             editor.view.dom.removeEventListener(IMAGE_ALT_EVENT, handleImageAlt);
             // The document-link and tag pickers are mounted on the page, not
             // in the editor, so destroying the editor left one open. On the
@@ -441,6 +489,10 @@
         <div bind:this={element}></div>
     </div>
 </div>
+
+{#if viewing}
+    <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={() => (viewing = null)} />
+{/if}
 
 {#if describing}
     <ImageAltDialog
@@ -931,9 +983,9 @@
         cursor: pointer;
     }
 
-    /* An image's own toolbar: where it sits on the line, and its alt text.
-       Over the top of the image while it is selected for editing, on the
-       side the image is aligned to. */
+    /* An image's own toolbar: where it sits on the line, its alt text, and
+       full size. Over the top of the image while it is selected for
+       editing, on the side the image is aligned to. */
     .editor-content :global(.image-toolbar) {
         position: absolute;
         top: calc(1em + 8px);
@@ -1004,6 +1056,11 @@
         }
     }
 
+    /* A selected image opens full size with another click. */
+    .editor-content :global(.ProseMirror-selectednode img) {
+        cursor: zoom-in;
+    }
+
     .editor-content :global(.ProseMirror-selectednode img) {
         outline: 2px solid var(--accent-color);
     }
@@ -1037,6 +1094,10 @@
        selected, and images lose their resize handles; the editor removes
        those itself, and this covers an image drawn before it has. */
     .editor-content.read-only :global(img) {
+        cursor: zoom-in;
+    }
+
+    .editor-content.read-only :global(img.attachment-pending) {
         cursor: default;
     }
 

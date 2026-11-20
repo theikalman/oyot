@@ -38,30 +38,38 @@ declare module '@tiptap/core' {
 
 /**
  * Asked for by an image's toolbar, on the editor's DOM, for the editor
- * around it to answer: it owns the dialog, which a node view has no
- * business drawing.
+ * around it to answer: it owns the dialog and the full-size view, which a
+ * node view has no business drawing.
  */
 export const IMAGE_ALT_EVENT = 'oyot-image-alt';
+export const IMAGE_VIEW_EVENT = 'oyot-image-view';
 
 export interface ImageAltRequest {
     pos: number;
     alt: string;
 }
 
+export interface ImageViewRequest {
+    src: string;
+    alt: string;
+}
+
 // Icons on a 24-unit square, stroked the way the editing toolbar strokes its own.
-const ICONS: Record<ImageAlign | 'alt', string[]> = {
+const ICONS: Record<ImageAlign | 'alt' | 'view', string[]> = {
     left: ['M4 5h16', 'M4 10h10', 'M4 14h16', 'M4 19h10'],
     center: ['M4 5h16', 'M7 10h10', 'M4 14h16', 'M7 19h10'],
     right: ['M4 5h16', 'M10 10h10', 'M4 14h16', 'M10 19h10'],
     // "ALT" is too long to read at this size, so a speech-like tag.
     alt: ['M4 6h16v10H9l-5 4z', 'M8 10h8', 'M8 13h5'],
+    view: ['M15 4h5v5', 'M20 4l-6 6', 'M9 20H4v-5', 'M4 20l6-6'],
 };
 
-const LABELS: Record<ImageAlign | 'alt', string> = {
+const LABELS: Record<ImageAlign | 'alt' | 'view', string> = {
     left: 'Align left',
     center: 'Align centre',
     right: 'Align right',
     alt: 'Alt text',
+    view: 'View full size',
 };
 
 function iconSvg(paths: string[]): string {
@@ -76,6 +84,29 @@ const JUSTIFY: Record<ImageAlign, string> = {
     center: 'center',
     right: 'flex-end',
 };
+
+/** The image's own `src` as the webview shows it, or null while it is on its way. */
+function shownSrc(img: HTMLImageElement): string | null {
+    if (img.classList.contains('attachment-pending')) return null;
+    const src = img.currentSrc || img.getAttribute('src') || '';
+    return src && src !== PENDING_IMAGE_SRC ? src : null;
+}
+
+/**
+ * Ask the editor around `target` to show the image `img` at full size, if it
+ * has arrived. Returns whether it asked.
+ */
+export function requestImageView(target: EventTarget, img: HTMLImageElement): boolean {
+    const src = shownSrc(img);
+    if (!src) return false;
+    target.dispatchEvent(
+        new CustomEvent<ImageViewRequest>(IMAGE_VIEW_EVENT, {
+            bubbles: true,
+            detail: { src, alt: img.getAttribute('alt') ?? '' },
+        }),
+    );
+    return true;
+}
 
 const ResizableImagePluginKey = new PluginKey('resizableImage');
 
@@ -277,7 +308,7 @@ export const ResizableImage = Image.extend({
             toolbar.setAttribute('role', 'toolbar');
             toolbar.setAttribute('aria-label', 'Image');
             const buttons = new Map<string, HTMLButtonElement>();
-            const addButton = (id: ImageAlign | 'alt', run: () => void) => {
+            const addButton = (id: ImageAlign | 'alt' | 'view', run: () => void) => {
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'image-toolbar-btn';
@@ -314,6 +345,7 @@ export const ResizableImage = Image.extend({
                     }),
                 );
             });
+            addButton('view', () => requestImageView(dom, el as HTMLImageElement));
             wrapper.appendChild(toolbar);
 
             const applyAlign = () => {
