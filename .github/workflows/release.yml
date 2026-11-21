@@ -67,7 +67,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # The action's default packages are "tools platform-tools", and the
+      # legacy "tools" package is no longer in the SDK repository, so
+      # sdkmanager fails on it. cmdline-tools already ships with the runner.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       # Must match `ndkVersion` in src-tauri/gen/android/app/build.gradle.kts
       # and ANDROID_NDK_VERSION in the Makefile. This installed 27 while the
