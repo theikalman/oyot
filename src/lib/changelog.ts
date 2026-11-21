@@ -36,6 +36,34 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.37-alpha',
+        date: '2026-11-22',
+        summary:
+            'Paragraphs, headings and lists can be indented, and images can be aligned, described and opened full size.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'Paragraphs and headings can be indented. Press Tab at the start of one, or use Increase indent and Decrease indent in the toolbar, and Shift-Tab moves it back out. With text selected, every block it touches moves together, and the indent follows you to your other devices.',
+            },
+            {
+                kind: 'added',
+                text: 'A selected image has a small toolbar to put it on the left, in the centre or on the right of its line.',
+            },
+            {
+                kind: 'added',
+                text: "An image can be given a description with Alt text in its toolbar. It is what a screen reader reads out, and it goes into the image's Markdown when you export.",
+            },
+            {
+                kind: 'added',
+                text: 'An image can be opened full size over the note, with its description under it. Click it while reading, click it again once selected while editing, or use View full size in its toolbar. Escape or a click outside it closes it.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Tab and Increase indent now work in the first item of a list, and in a list of one item, where they move the whole list in a step instead of doing nothing.',
+            },
+        ],
+    },
+    {
         version: '0.0.36-alpha',
         date: '2026-11-05',
         summary:
