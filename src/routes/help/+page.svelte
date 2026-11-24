@@ -136,6 +136,13 @@
                         language shows in its top right corner.
                     </li>
                     <li>
+                        <strong>HTML can be seen as a page.</strong> While you read, a code block
+                        whose language is <code>html</code> has Show page and Show code above it, and
+                        Full size. A whole page, one that starts with a doctype, shows as the page to
+                        begin with. Nothing in it runs, nothing is loaded from the web, and links out
+                        of it do not open.
+                    </li>
+                    <li>
                         <strong>There is nothing to save.</strong> What you write is saved as you type.
                     </li>
                     <li>
