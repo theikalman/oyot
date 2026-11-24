@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { sourceKey } from '../sourceKey';
 
 /**
  * Finding the code blocks that hold a Mermaid diagram, kept free of the DOM
@@ -49,16 +50,5 @@ export function findMermaidBlocks(doc: ProseMirrorNode): MermaidBlock[] {
  * a diagram's element when neither has changed, and as the cache key.
  */
 export function diagramKey(scheme: string, source: string): string {
-    return `mermaid:${scheme}:${fnv1a(source)}:${source.length}`;
-}
-
-// FNV-1a, 32 bits. Not for security: it only has to tell definitions apart,
-// and the length beside it makes a collision less likely still.
-function fnv1a(value: string): string {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < value.length; i++) {
-        hash ^= value.charCodeAt(i);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16);
+    return `mermaid:${scheme}:${sourceKey(source)}`;
 }
