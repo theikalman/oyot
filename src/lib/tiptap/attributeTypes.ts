@@ -106,6 +106,9 @@ const ATTRIBUTES: Record<string, Record<string, Fit>> = {
     tableHeader: cell,
     documentLink: { targetId: text, title: text },
     tag: { name: text },
+    unknownBlock: { ref: text, text, found: text },
+    unknownInline: { ref: text, text, found: text },
+    unknownMark: { name: text, value: text },
     link: { href: text, target: text, rel: text, class: text, title: text },
 };
 

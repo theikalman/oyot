@@ -46,10 +46,12 @@ const WRONG: Record<string, () => unknown> = {
 };
 
 /** Every attribute in the schema, by the node or mark it is on. */
-const EVERY = [
-    ...Object.values(contentSchema().nodes),
-    ...Object.values(contentSchema().marks),
-].flatMap((type) => Object.keys(type.spec.attrs ?? {}).map((name) => [type.name, name] as const));
+const EVERY = [...Object.values(contentSchema().nodes), ...Object.values(contentSchema().marks)]
+    // Never stored, so nothing can put a wrong value on one there.
+    .filter((type) => !type.name.startsWith('unknown'))
+    .flatMap((type) =>
+        Object.keys(type.spec.attrs ?? {}).map((name) => [type.name, name] as const),
+    );
 
 // --- notes -----------------------------------------------------------------
 

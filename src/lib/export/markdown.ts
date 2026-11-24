@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
 import { numberOf, textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
+import { UNKNOWN_BLOCK, UNKNOWN_INLINE, unknownLine } from '$lib/tiptap/unknownContent';
 
 /**
  * A document, rendered as Markdown.
@@ -109,9 +110,11 @@ function block(node: ProseMirrorNode, options: MarkdownOptions): string | null {
             return image(node, options);
         case 'table':
             return table(node, options);
+        case UNKNOWN_BLOCK:
+            return escapeLineStart(unknownBlock(node));
         default:
-            // A block type this build does not know about: render what is
-            // inside it rather than dropping the words on the floor.
+            // A block type this does not know about: render what is inside it
+            // rather than dropping the words on the floor.
             return node.isTextblock ? inline(node, options) : blocks(node, options);
     }
 }
@@ -189,6 +192,20 @@ function prefixLines(text: string, prefix: string): string {
         .split('\n')
         .map((line) => (line.length === 0 ? prefix.trimEnd() : prefix + line))
         .join('\n');
+}
+
+/** What is written for content this version cannot show, before its words. */
+export const UNKNOWN_CONTENT = '[content this version of Oyot cannot show]';
+
+/**
+ * Content only another version of Oyot shows, as its words on one line.
+ *
+ * Marked, and never empty. Whoever reads it is told there is more to it than
+ * the words, and an assistant's rewrite of the note is matched with it block
+ * by block (ADR 0037), where an empty one is taken for spacing.
+ */
+function unknownBlock(node: ProseMirrorNode): string {
+    return escapeInline(`${UNKNOWN_CONTENT} ${unknownLine(node)}`.trim());
 }
 
 function image(node: ProseMirrorNode, options: MarkdownOptions): string {
@@ -285,7 +302,10 @@ function alignDivider(align: string | null): string {
  */
 function cellText(cell: ProseMirrorNode, options: MarkdownOptions): string {
     const parts: string[] = [];
-    cell.forEach((child) => parts.push(child.isTextblock ? inline(child, options) : ''));
+    cell.forEach((child) => {
+        if (child.type.name === UNKNOWN_BLOCK) parts.push(unknownBlock(child));
+        else parts.push(child.isTextblock ? inline(child, options) : '');
+    });
     return parts
         .filter((part) => part.length > 0)
         .join(' ')
@@ -334,6 +354,8 @@ function inlineNode(node: ProseMirrorNode, options: MarkdownOptions): string {
         }
         case 'documentLink':
             return withMarks(documentLink(node, options), node);
+        case UNKNOWN_INLINE:
+            return escapeInline(unknownLine(node) || UNKNOWN_CONTENT);
         default:
             return inline(node, options);
     }

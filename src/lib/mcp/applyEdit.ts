@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { prosemirrorJSONToYXmlFragment } from '@tiptap/y-tiptap';
 import { CONTENT_FIELD } from '$lib/editor/contentField';
 import { contentSchema } from '$lib/editor/headlessIndex';
+import { childSlots } from '$lib/editor/noteBinding/slots';
 import type { EditHunk } from './planEdit';
 
 /**
@@ -25,15 +26,20 @@ import type { EditHunk } from './planEdit';
  */
 export function applyEdit(ydoc: Y.Doc, hunks: EditHunk[], expectedBlocks: number): void {
     const fragment = ydoc.getXmlFragment(CONTENT_FIELD);
-    if (fragment.length !== expectedBlocks) {
+    // A block is a slot, which is one place in the list for anything the
+    // editor writes, and can be more for what it does not.
+    const blocks = childSlots(fragment);
+    if (blocks.length !== expectedBlocks) {
         throw new Error(
-            `the note has ${fragment.length} blocks where the edit was planned against ${expectedBlocks}`,
+            `the note has ${blocks.length} blocks where the edit was planned against ${expectedBlocks}`,
         );
     }
+    const place = (block: number) => blocks[block]?.index ?? fragment.length;
     ydoc.transact(() => {
         for (const hunk of [...hunks].reverse()) {
-            if (hunk.to > hunk.from) fragment.delete(hunk.from, hunk.to - hunk.from);
-            if (hunk.insert.length > 0) fragment.insert(hunk.from, toYBlocks(hunk));
+            const from = place(hunk.from);
+            if (hunk.to > hunk.from) fragment.delete(from, place(hunk.to) - from);
+            if (hunk.insert.length > 0) fragment.insert(from, toYBlocks(hunk));
         }
     });
 }

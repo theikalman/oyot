@@ -11,9 +11,13 @@ const schema = getSchema(createContentExtensions());
 
 const typeNamed = (name: string): NodeType | MarkType => schema.nodes[name] ?? schema.marks[name];
 
-const every = [...Object.values(schema.nodes), ...Object.values(schema.marks)].flatMap((type) =>
-    Object.keys(type.spec.attrs ?? {}).map((name) => ({ owner: type.name, name })),
-);
+// Less what stands for unknown content, which is never stored, and is made
+// again from what is in the note wherever it is pasted (ADR 0044).
+const every = [...Object.values(schema.nodes), ...Object.values(schema.marks)]
+    .filter((type) => !type.name.startsWith('unknown'))
+    .flatMap((type) =>
+        Object.keys(type.spec.attrs ?? {}).map((name) => ({ owner: type.name, name })),
+    );
 
 /** What `value` on an attribute is read as. */
 function read(owner: string, name: string, value: unknown): unknown {

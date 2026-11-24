@@ -2,6 +2,13 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
 import { textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
+import {
+    isUnknown,
+    readFindings,
+    UNKNOWN_BLOCK,
+    UNKNOWN_INLINE,
+    unknownLine,
+} from '$lib/tiptap/unknownContent';
 
 /** Everything the todo index page needs about one task item. */
 export interface TodoEntry {
@@ -118,6 +125,8 @@ function inlineText(node: ProseMirrorNode): string {
         const name = normalizeTagName(textOf(node.attrs.name) ?? '');
         return name ? `#${name}` : '';
     }
+    // The words in it are the note's as much as the ones around it.
+    if (isUnknown(node)) return unknownLine(node);
     let out = '';
     node.forEach((child) => {
         out += inlineText(child);
@@ -187,6 +196,18 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
                 // into `parts`.
                 const hash = attachmentHash(node.attrs.src, node.attrs.alt);
                 if (hash) attachmentHashes.add(hash);
+                return false;
+            }
+            case UNKNOWN_BLOCK:
+            case UNKNOWN_INLINE: {
+                // Content only another build shows. Its words are searched for
+                // and its images are in use, whichever build is asking. Its
+                // tasks are left out: there is nothing here to tick.
+                const found = readFindings(node);
+                for (const target of found.linkTargets) linkTargets.add(target);
+                for (const tag of found.tags) tags.add(tag);
+                for (const hash of found.attachmentHashes) attachmentHashes.add(hash);
+                parts.push(unknownLine(node));
                 return false;
             }
             default:

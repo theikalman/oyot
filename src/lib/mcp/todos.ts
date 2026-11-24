@@ -1,7 +1,7 @@
-import * as Y from 'yjs';
-import { CONTENT_FIELD } from '$lib/editor/contentField';
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import type * as Y from 'yjs';
 import { MAX_TODO_TEXT, taskItemText } from '$lib/editor/documentIndex';
-import { rootFromYDoc } from '$lib/editor/headlessIndex';
+import { readNote } from '$lib/editor/headlessIndex';
 import { locateTaskItem } from '$lib/editor/taskItems';
 
 /**
@@ -31,42 +31,32 @@ export function toggleTodoInDoc(
     expectedText: string,
     checked: boolean,
 ): TodoToggle {
-    const root = rootFromYDoc(ydoc);
-    const target = locateTaskItem(root, ordinal);
-    const item = target ? root.nodeAt(target.pos) : null;
-    if (!item || taskItemText(item) !== normalizeText(expectedText)) return 'moved';
-    if (item.attrs.checked === checked) return 'unchanged';
+    const found = taskAt(ydoc, ordinal);
+    if (!found || taskItemText(found.item) !== normalizeText(expectedText)) return 'moved';
+    if (found.item.attrs.checked === checked) return 'unchanged';
 
-    const element = taskElementAt(ydoc.getXmlFragment(CONTENT_FIELD), ordinal);
-    if (!element) return 'moved';
     // y-tiptap stores a node's attributes as they are, so `checked` is a
     // boolean, which Yjs's default typing of attributes as strings does not say.
-    const task = element as unknown as Y.XmlElement<{ checked: boolean }>;
+    const task = found.element as unknown as Y.XmlElement<{ checked: boolean }>;
     ydoc.transact(() => task.setAttribute('checked', checked));
     return 'changed';
 }
 
 /**
- * The `ordinal`th task item element, counted depth first in document order,
- * the order `locateTaskItem` and the index count them in: an item is counted
- * where it is read, before the items nested inside it.
+ * The `ordinal`th task item, and the element it was read from. The element is
+ * the one the item was read from rather than the `ordinal`th in the Yjs
+ * content, which can hold tasks that are not in the note's list of them, in a
+ * block this version cannot show.
  */
-export function taskElementAt(
-    parent: Y.XmlFragment | Y.XmlElement,
+export function taskAt(
+    ydoc: Y.Doc,
     ordinal: number,
-): Y.XmlElement | null {
-    let seen = 0;
-    const walk = (node: Y.XmlFragment | Y.XmlElement): Y.XmlElement | null => {
-        for (const child of node.toArray()) {
-            // Only elements hold elements; a Y.XmlText holds words and marks.
-            if (!(child instanceof Y.XmlElement)) continue;
-            if (child.nodeName === 'taskItem' && seen++ === ordinal) return child;
-            const found = walk(child);
-            if (found) return found;
-        }
-        return null;
-    };
-    return Number.isInteger(ordinal) && ordinal >= 0 ? walk(parent) : null;
+): { item: ProseMirrorNode; element: Y.XmlElement } | null {
+    const { root, elementOf } = readNote(ydoc);
+    const target = locateTaskItem(root, ordinal);
+    const item = target && root.nodeAt(target.pos);
+    const element = item && elementOf(item);
+    return element ? { item, element } : null;
 }
 
 /**

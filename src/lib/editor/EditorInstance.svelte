@@ -27,6 +27,7 @@
     import { unregisterOpenDoc } from './openDocs';
     import { locateTaskItem } from './taskItems';
     import { JumpTarget, markJumpTarget } from './jumpTarget';
+    import { SelectBeforeDelete } from './selectBeforeDelete';
     import { TickWhileReading } from './tickWhileReading';
     import { MermaidDiagrams } from './mermaid/MermaidDiagrams';
     import {
@@ -182,6 +183,7 @@
                 ReadOnlyState,
                 JumpTarget,
                 TickWhileReading,
+                SelectBeforeDelete,
                 MermaidDiagrams,
                 HtmlPreviews,
                 CodeBlockLanguage,
@@ -893,6 +895,48 @@
         outline-offset: 1px;
     }
 
+    /* Content only another version of Oyot shows (ADR 0044): the words in it,
+       under a line that says so. The line is drawn rather than in the note, so
+       that copying the note copies what it says and not this. */
+    .editor-content :global(.unknown-content) {
+        margin: 0.8em 0;
+        padding: 10px 14px;
+        border: 1px dashed var(--control-line);
+        border-radius: var(--radius-lg);
+    }
+
+    .editor-content :global(.unknown-content::before) {
+        content: attr(data-label);
+        display: block;
+        color: var(--text-secondary);
+        font-size: 0.85em;
+    }
+
+    .editor-content :global(.unknown-content-words) {
+        max-height: 20em;
+        overflow: auto;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+    }
+
+    .editor-content :global(.unknown-inline) {
+        padding: 1px 6px;
+        border: 1px dashed var(--control-line);
+        border-radius: var(--radius-sm);
+        overflow-wrap: anywhere;
+    }
+
+    /* One with no words in it is still there to be seen. */
+    .editor-content :global(.unknown-inline:empty::before) {
+        content: '?';
+    }
+
+    .editor-content :global(.unknown-content.ProseMirror-selectednode),
+    .editor-content :global(.unknown-inline.ProseMirror-selectednode) {
+        outline: 2px solid var(--accent-color);
+        outline-offset: 1px;
+    }
+
     .editor-content :global(ul[data-type='taskList']) {
         list-style: none;
         padding-left: 0;
@@ -1173,7 +1217,9 @@
     }
 
     .editor-content.read-only :global(.ProseMirror-selectednode img),
-    .editor-content.read-only :global(.tag-chip.ProseMirror-selectednode) {
+    .editor-content.read-only :global(.tag-chip.ProseMirror-selectednode),
+    .editor-content.read-only :global(.unknown-content.ProseMirror-selectednode),
+    .editor-content.read-only :global(.unknown-inline.ProseMirror-selectednode) {
         outline: none;
     }
 

@@ -1,5 +1,6 @@
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { contentSchema } from '$lib/editor/headlessIndex';
+import { isUnknown } from '$lib/tiptap/unknownContent';
 import { parseNote, renderBlock, renderNote, type NoteContext } from './noteMarkdown';
 
 /**
@@ -79,8 +80,10 @@ export function planEdit(current: ProseMirrorNode, markdown: string, ctx: NoteCo
 
     const lossy: LossyBlock[] = [];
     for (const hunk of hunks) {
-        if (hunk.insert.length === 0) continue;
         for (let i = hunk.from; i < hunk.to; i++) {
+            // Taking a block out loses what it says, which was asked for. What
+            // is in one this version cannot show, the asker has not seen.
+            if (hunk.insert.length === 0 && !holdsUnknown(current.child(i))) continue;
             const md = rendered.blocks[i];
             if (md.trim().length === 0) continue;
             const losses = lossesOf(current.child(i), md, ctx, rendered.inlineImages);
@@ -246,6 +249,7 @@ function lossesOf(
     if (back.childCount === 1 && back.firstChild!.eq(node)) return [];
 
     const losses = new Set<string>();
+    if (holdsUnknown(node)) losses.add('content this version of Oyot cannot show');
     node.descendants((child, _pos, parent) => {
         const name = child.type.name;
         if (name === 'image' && (child.attrs.width || child.attrs.height)) {
@@ -277,4 +281,8 @@ function lossesOf(
     }
     if (losses.size === 0) losses.add('formatting that Markdown cannot write');
     return [...losses];
+}
+
+function holdsUnknown(node: ProseMirrorNode): boolean {
+    return isUnknown(node) || node.content.content.some(holdsUnknown);
 }
