@@ -1,5 +1,5 @@
 import type { ImportResult } from './importFiles';
-import { runMarkdownImport } from './importNotes';
+import { runNoteImport } from './importNotes';
 
 /**
  * The one import that can run at a time, and how far it has got.
@@ -8,7 +8,7 @@ import { runMarkdownImport } from './importNotes';
  * page and Settings, and either can be left and come back to while one runs.
  * Each has to show the same busy button, and neither may start a second.
  */
-function createMarkdownImport() {
+function createNoteImport() {
     let running = $state(false);
     let done = $state(0);
     let total = $state(0);
@@ -36,7 +36,7 @@ function createMarkdownImport() {
             done = 0;
             total = 0;
             try {
-                return await runMarkdownImport((doneNow, totalNow) => {
+                return await runNoteImport((doneNow, totalNow) => {
                     done = doneNow;
                     total = totalNow;
                 });
@@ -47,4 +47,4 @@ function createMarkdownImport() {
     };
 }
 
-export const markdownImport = createMarkdownImport();
+export const noteImport = createNoteImport();

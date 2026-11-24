@@ -8,19 +8,21 @@ import { toasts } from '$lib/services/toast';
 import { documentRepository } from '$lib/sync';
 import type { Document } from '$lib/types';
 import type { ImportResult, ImportTarget, SkipReason } from './importFiles';
+import type { NoteFile } from './note';
 import { describeImport } from './report';
 
 /**
- * Importing Markdown files as notes, as the pages start it.
+ * Importing Markdown and HTML files as notes, as the pages start it.
  *
- * Rust opens the dialog and reads the files (`pick_markdown_files`); this
+ * Rust opens the dialog and reads the files (`pick_note_files`); this
  * side makes the notes, since only it can build a document (ADR 0013). See
- * docs/decisions/0029-import-markdown-files-as-notes.md.
+ * docs/decisions/0029-import-markdown-files-as-notes.md, and
+ * docs/decisions/0042-import-html-files-as-editable-notes.md for HTML.
  */
 
-/** What `pick_markdown_files` hands back. */
+/** What `pick_note_files` hands back. */
 interface RawPicked {
-    files: { name: string; text: string }[];
+    files: NoteFile[];
     unread: { name: string; reason: Exclude<SkipReason, 'failed'> }[];
 }
 
@@ -47,6 +49,9 @@ function appTarget(): ImportTarget {
             );
         },
         deleteNote: (id) => deleteDocument(id),
+        // What a paste into the editor goes through: Rust decides the type
+        // from the bytes, holds it to the size limit, and tells paired devices.
+        saveImage: (imageData, mimeType) => invoke<string>('save_image', { imageData, mimeType }),
         async heldAttachments(hashes) {
             const held = new Set<string>();
             for (const hash of hashes) {
@@ -58,17 +63,17 @@ function appTarget(): ImportTarget {
 }
 
 /**
- * Let the user pick Markdown files, and make a note of each.
+ * Let the user pick files, and make a note of each.
  *
  * Resolves to null when the dialog is closed. Rejects only when the files
  * could not be picked or read at all; a file that could not become a note is
- * in the result. One import runs at a time, which `markdownImport` in
+ * in the result. One import runs at a time, which `noteImport` in
  * ./importState.svelte.ts sees to.
  */
-export async function importMarkdownFiles(
+export async function importNoteFiles(
     onProgress?: (done: number, total: number) => void,
 ): Promise<ImportResult | null> {
-    const picked = await invoke<RawPicked | null>('pick_markdown_files');
+    const picked = await invoke<RawPicked | null>('pick_note_files');
     if (!picked) return null;
 
     // Loaded here rather than with the page: the converter carries a
@@ -83,12 +88,12 @@ export async function importMarkdownFiles(
  * or null when there is nothing to act on: the dialog was closed, or the
  * import failed and has already said so.
  */
-export async function runMarkdownImport(
+export async function runNoteImport(
     onProgress?: (done: number, total: number) => void,
 ): Promise<ImportResult | null> {
     let result: ImportResult | null;
     try {
-        result = await importMarkdownFiles(onProgress);
+        result = await importNoteFiles(onProgress);
     } catch (error) {
         console.error('Failed to import notes:', error);
         toasts.error(`Import failed: ${message(error)}`);

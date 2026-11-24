@@ -42,6 +42,9 @@ hostname = "0.4"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 tauri-plugin-os = "2"
+# Reading an HTML file in the encoding its first lines name: the encodings the
+# web uses, from the crate Firefox reads them with.
+encoding_rs = "0.8"
 # Writing the export archive. `deflate` only: no encryption, no bzip2/zstd/lzma,
 # and no `time`/`chrono` feature, so nothing is pulled in to stamp entries we
 # do not stamp. Hand-rolling the container was the alternative and was rejected

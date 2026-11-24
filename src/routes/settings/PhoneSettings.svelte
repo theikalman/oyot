@@ -155,7 +155,7 @@
     </button>
     <button class="row" onclick={onImport} disabled={importing}>
         {@render tile('notes')}
-        <span class="label">{importing ? importLabel : 'Import Markdown'}</span>
+        <span class="label">{importing ? importLabel : 'Import notes'}</span>
     </button>
 </div>
 

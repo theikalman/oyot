@@ -4,8 +4,9 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { CONTENT_FIELD } from '$lib/editor/contentField';
 import { extractDocumentIndex, type DocumentIndex } from '$lib/editor/documentIndex';
 import { contentSchema } from '$lib/editor/headlessIndex';
+import { storeEmbedded, type SaveImage } from './embeddedImages';
 import type { NoteLinkTarget } from './markdown';
-import { isEmpty, noteDocument, prepareNote, type MarkdownFile, type PreparedNote } from './note';
+import { isEmpty, noteDocument, prepareNote, type NoteFile, type PreparedNote } from './note';
 
 /**
  * Turning picked files into notes: all of an import but the IPC.
@@ -24,7 +25,8 @@ import { isEmpty, noteDocument, prepareNote, type MarkdownFile, type PreparedNot
  *
  * The writes go through an interface rather than Tauri, as a backup import's
  * do, so this is testable without the app. See
- * docs/decisions/0029-import-markdown-files-as-notes.md.
+ * docs/decisions/0029-import-markdown-files-as-notes.md, and
+ * docs/decisions/0042-import-html-files-as-editable-notes.md for HTML.
  */
 
 /** What an import writes through: `documentActions` and the repository. */
@@ -40,6 +42,8 @@ export interface ImportTarget {
     publish(notes: PublishedNote[]): void;
     /** Take back a note whose content could not be saved. */
     deleteNote(id: string): Promise<void>;
+    /** Store a picture that was inside a file, and return its hash. */
+    saveImage: SaveImage;
     /** Which of these attachments this device holds. */
     heldAttachments(hashes: string[]): Promise<Set<string>>;
 }
@@ -66,6 +70,8 @@ export interface ImportResult {
     skipped: SkippedFile[];
     /** Images kept as their Markdown, because there was nothing to show. */
     imagesKeptAsText: number;
+    /** Drawings, players and pictures that had to be left out. */
+    leftOut: number;
     /**
      * Images the notes name by attachment that this device does not hold.
      * They show once a paired device that holds them has sent them over.
@@ -90,7 +96,7 @@ const PUBLISH_EVERY = 25;
  * links.
  */
 export async function importFiles(
-    files: MarkdownFile[],
+    files: NoteFile[],
     target: ImportTarget,
     onProgress: (done: number, total: number) => void = () => {},
     newId: () => string = () => crypto.randomUUID(),
@@ -117,6 +123,7 @@ export async function importFiles(
     const batch: PublishedNote[] = [];
     const attachments = new Set<string>();
     let imagesKeptAsText = 0;
+    let leftOut = 0;
     let done = 0;
     onProgress(done, prepared.length);
 
@@ -127,22 +134,29 @@ export async function importFiles(
             // Read before anything is written: a file that cannot be read
             // makes no note at all.
             const read = noteDocument(note, schema, { noteLink: links.find });
+            // A Markdown file's pictures stay as they are written, which is
+            // how its export writes them back.
+            const { doc, failed } =
+                note.format === 'html'
+                    ? await storeEmbedded(read.doc, (data, mime) => target.saveImage(data, mime))
+                    : { doc: read.doc, failed: 0 };
             await target.createNote(id, note.title);
             let index: DocumentIndex | null = null;
-            const hasContent = !isEmpty(read.doc);
+            const hasContent = !isEmpty(doc);
             if (hasContent) {
                 try {
-                    index = await target.saveContent(id, stateOf(read.doc));
+                    index = await target.saveContent(id, stateOf(doc));
                 } catch (e) {
                     await target.deleteNote(id).catch((error) => {
                         console.warn(`[import] could not take back ${id}:`, error);
                     });
                     throw e;
                 }
-                const named = index ?? extractDocumentIndex(read.doc);
+                const named = index ?? extractDocumentIndex(doc);
                 for (const hash of named.attachmentHashes) attachments.add(hash);
             }
             imagesKeptAsText += read.imagesKeptAsText;
+            leftOut += read.leftOut + failed;
             made.push({ id, title: note.title });
             batch.push({ id, hasContent, index });
             if (batch.length >= PUBLISH_EVERY) target.publish(batch.splice(0));
@@ -160,6 +174,7 @@ export async function importFiles(
         notes: made.reverse(),
         skipped,
         imagesKeptAsText,
+        leftOut,
         missingImages: await countMissing([...attachments], target),
     };
 }
