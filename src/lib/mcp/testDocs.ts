@@ -64,6 +64,7 @@ export function fakeDeps(docs: Map<string, Y.Doc>) {
             renamed.push([id, title]);
             return { title };
         },
+        saveImage: async () => HASH,
         codec: {
             decode: async () => ({ width: 3000, height: 2000, hasAlpha: false, animated: false }),
             encode: async () => new Uint8Array([1, 2, 3]),

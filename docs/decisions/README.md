@@ -55,6 +55,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0042](0042-import-html-files-as-editable-notes.md)                         | Import HTML files as editable notes                                                  | Proposed                                                                         |
 | [0043](0043-show-html-code-blocks-as-pages-while-reading.md)                | Show HTML code blocks as pages while reading                                         | Proposed                                                                         |
 | [0044](0044-keep-content-this-build-cannot-show.md)                         | Keep content this build cannot show                                                  | Proposed                                                                         |
+| [0045](0045-let-mcp-clients-save-html-pages-as-notes.md)                    | Let MCP clients save HTML pages as notes                                             | Proposed                                                                         |
 
 ## Format
 

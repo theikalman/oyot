@@ -116,6 +116,16 @@ export function renderBlock(
     return serializeBlocks(tokenized, writeOptions)[0] ?? '';
 }
 
+/** Finds the note an `oyot://note/` address names, when there is one. */
+export function noteLinkOf(ctx: NoteContext) {
+    return (href: string): { id: string; title: string } | null => {
+        if (!href.startsWith(NOTE_LINK_SCHEME)) return null;
+        const id = href.slice(NOTE_LINK_SCHEME.length);
+        const title = ctx.noteTitle(id);
+        return title === null ? null : { id, title };
+    };
+}
+
 /** The hex SHA-256 of a note's Markdown: the revision an edit has to name. */
 export async function revisionOf(markdown: string): Promise<string> {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(markdown));
@@ -136,12 +146,7 @@ function readOptions(
 ): MarkdownReadOptions {
     return {
         knownTags: ctx.knownTags,
-        noteLink: (href) => {
-            if (!href.startsWith(NOTE_LINK_SCHEME)) return null;
-            const id = href.slice(NOTE_LINK_SCHEME.length);
-            const title = ctx.noteTitle(id);
-            return title === null ? null : { id, title };
-        },
+        noteLink: noteLinkOf(ctx),
         noteLinkLabelIsTitle: true,
         imageSource: (src) => {
             if (!src.startsWith(INLINE_IMAGE_SCHEME)) return src;

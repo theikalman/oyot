@@ -14,8 +14,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const NAMES: [&str; 6] = [
+const NAMES: [&str; 7] = [
     "create_note",
+    "create_note_from_html",
     "edit_note",
     "append_to_note",
     "append_to_journal",
@@ -25,6 +26,10 @@ const NAMES: [&str; 6] = [
 
 /// A title longer than this is not a title.
 const MAX_TITLE: usize = 200;
+
+/// The longest page, in bytes, that becomes a note. Well under the export's cap
+/// on a note, since a code block of it has to be highlighted and synced whole.
+const MAX_HTML: usize = 1_000_000;
 
 pub fn handles(name: &str) -> bool {
     NAMES.contains(&name)
@@ -46,6 +51,29 @@ pub fn tools() -> Vec<Tool> {
                     "markdown": markdown
                 },
                 "required": ["title"]
+            }),
+            false,
+        ),
+        write_tool(
+            "create_note_from_html",
+            "Save an HTML page, such as an artifact, report or dashboard, as a new note. Returns \
+             its id. Make it one file that needs nothing else: styles in it, pictures as data: \
+             URIs or inline SVG. Scripts never run and nothing is loaded from outside, so send a \
+             page that is complete without them. To change a saved page later, use read_note and \
+             edit_note: it is an html code block.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "html": { "type": "string", "description": "The page's HTML, all of it." },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["page", "editable"],
+                        "default": "page",
+                        "description": "page keeps the page and shows it as it looks. editable keeps what it says as ordinary text, lists, tables and pictures the user can edit, without its look."
+                    }
+                },
+                "required": ["title", "html"]
             }),
             false,
         ),
@@ -142,6 +170,7 @@ fn write_tool(
 pub async fn answer(ctx: &Arc<Context>, name: &str, args: &Args) -> Result<Answer, String> {
     match name {
         "create_note" => create_note(ctx, args).await,
+        "create_note_from_html" => create_note_from_html(ctx, args).await,
         "edit_note" => edit_note(ctx, args).await,
         "append_to_note" => {
             let id = args.required_str("id")?.to_string();
@@ -197,6 +226,101 @@ async fn create_note(ctx: &Arc<Context>, args: &Args) -> Result<Answer, String> 
     Ok(Answer::new(
         format!("Created {title} (id {id}). Revision: {revision}\n"),
         json!({ "id": id, "title": title, "revision": revision }),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FromHtml {
+    id: String,
+    revision: String,
+    losses: HtmlLosses,
+    too_long: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HtmlLosses {
+    scripts: bool,
+    outside: bool,
+    images_kept_as_text: u64,
+    left_out: u64,
+}
+
+async fn create_note_from_html(ctx: &Arc<Context>, args: &Args) -> Result<Answer, String> {
+    let title = title(args)?;
+    let html = args.required_str("html")?;
+    if html.trim().is_empty() {
+        return Err("html cannot be empty.".to_string());
+    }
+    if html.len() > MAX_HTML {
+        return Err(format!(
+            "The page is {} KB, and one can be at most {} KB. Large pictures inside it are the \
+             usual reason.",
+            html.len() / 1000,
+            MAX_HTML / 1000
+        ));
+    }
+    if html.contains('\0') {
+        return Err("html holds a NUL character, which is not text.".to_string());
+    }
+    let mode = args.optional_str("mode")?.unwrap_or("page");
+    if !["page", "editable"].contains(&mode) {
+        return Err(format!("mode is \"page\" or \"editable\", not {mode:?}."));
+    }
+    let made: FromHtml = parse(
+        ctx.page
+            .ask(
+                "createNoteFromHtml",
+                json!({ "title": title, "html": html, "mode": mode }),
+            )
+            .await?,
+    )?;
+
+    let mut warnings = Vec::new();
+    if made.losses.scripts {
+        warnings.push("The page has scripts, which do not run in Oyot.".to_string());
+    }
+    if made.losses.outside {
+        warnings.push(
+            "The page uses files outside itself, or media or fonts, which are not loaded in Oyot."
+                .to_string(),
+        );
+    }
+    let kept = made.losses.images_kept_as_text;
+    if kept > 0 {
+        warnings.push(format!(
+            "{kept} {} outside the page, kept as text.",
+            if kept == 1 { "image is" } else { "images are" }
+        ));
+    }
+    let left = made.losses.left_out;
+    if left > 0 {
+        warnings.push(format!(
+            "{left} of its drawings, players or pictures could not be kept."
+        ));
+    }
+    if made.too_long {
+        warnings.push(
+            "The note is too long for read_note to give whole or edit_note to rewrite.".to_string(),
+        );
+    }
+    let mut text = format!(
+        "Created {title} (id {}). Revision: {}\n",
+        made.id, made.revision
+    );
+    for warning in &warnings {
+        text.push_str(&format!("- {warning}\n"));
+    }
+    Ok(Answer::new(
+        text,
+        json!({
+            "id": made.id,
+            "title": title,
+            "revision": made.revision,
+            "mode": mode,
+            "warnings": warnings,
+        }),
     ))
 }
 

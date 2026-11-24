@@ -457,8 +457,9 @@
                         Oyot itself. Off is the default. Read only lets it search and read your notes,
                         journals, todos and images. Read and write also lets it create notes, change them,
                         add to them and tick tasks, the way your own typing would, on every device. It
-                        can never delete a note. It reaches Oyot only from this computer, and starts Oyot
-                        in the tray if it is not running.
+                        can save an HTML page it made as a note that shows the page, or as one you can
+                        edit. It can never delete a note. It reaches Oyot only from this computer, and
+                        starts Oyot in the tray if it is not running.
                     </li>
                     <li>
                         <strong>Import.</strong> The Notes page, or Settings under Data, makes a note

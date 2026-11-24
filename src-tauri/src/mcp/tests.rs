@@ -675,9 +675,10 @@ async fn read_only_offers_no_tool_that_writes_and_refuses_one() {
 async fn read_write_offers_the_tools_that_write_and_none_that_delete() {
     let (mut client, _) = connected(Access::ReadWrite).await;
     let tools = client.tools().await;
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
     for name in [
         "create_note",
+        "create_note_from_html",
         "edit_note",
         "append_to_note",
         "append_to_journal",
@@ -860,4 +861,62 @@ async fn a_new_note_is_made_by_the_page() {
         s.page.asked.lock()[0].1,
         json!({ "title": "Ideas", "markdown": "one\n" })
     );
+}
+
+#[tokio::test]
+async fn a_page_becomes_a_note_and_what_will_not_show_is_said() {
+    let s = setup(Access::ReadWrite);
+    s.page.answer(
+        "createNoteFromHtml",
+        json!({
+            "id": "new-1", "revision": "r1", "tooLong": true,
+            "losses": { "scripts": true, "outside": true, "imagesKeptAsText": 1, "leftOut": 2 }
+        }),
+    );
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    let result = client
+        .call(
+            "create_note_from_html",
+            json!({ "title": " Report ", "html": "<p>hi</p>" }),
+        )
+        .await;
+    let said = text(&result);
+    assert!(said.starts_with("Created Report (id new-1). Revision: r1\n"));
+    assert!(said.contains("scripts, which do not run"), "{said}");
+    assert!(said.contains("1 image is outside the page"), "{said}");
+    assert_eq!(
+        result["structuredContent"]["warnings"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        s.page.asked.lock()[0].1,
+        json!({ "title": "Report", "html": "<p>hi</p>", "mode": "page" })
+    );
+}
+
+#[tokio::test]
+async fn a_page_that_cannot_be_a_note_is_refused_before_the_page_is_asked() {
+    let s = setup(Access::ReadWrite);
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+    for (args, why) in [
+        (json!({ "title": "x", "html": "  " }), "empty"),
+        (
+            json!({ "title": "x", "html": "x".repeat(1_000_001) }),
+            "at most 1000 KB",
+        ),
+        (json!({ "title": "x", "html": "a\0b" }), "NUL"),
+        (
+            json!({ "title": "x", "html": "a", "mode": "app" }),
+            "editable",
+        ),
+        (json!({ "title": " ", "html": "a" }), "title"),
+    ] {
+        let refused = client.call("create_note_from_html", args).await;
+        assert_eq!(refused["isError"], true);
+        assert!(text(&refused).contains(why), "{}", text(&refused));
+    }
+    assert!(s.page.methods().is_empty());
 }
