@@ -192,6 +192,26 @@ describe('extractDocumentIndex', () => {
         expect(index.text).not.toContain(hash);
     });
 
+    it('takes an attribute that is not text for one that is not set', () => {
+        for (const wrong of [['x'], { a: 1 }, { toString: 'x' }, null]) {
+            const { documentLink, tag, image } = schema.nodes;
+            const d = doc(
+                para(t('a'), documentLink.create({ targetId: wrong, title: wrong })),
+                taskList(taskOf(true, t('b'), tag.create({ name: wrong }))),
+                image.create({ src: wrong, alt: wrong }),
+            );
+            expect(extractDocumentIndex(d)).toEqual({
+                text: 'a b',
+                linkTargets: [],
+                attachmentHashes: [],
+                tags: [],
+                todos: [{ ordinal: 0, text: 'b', checked: true, depth: 0 }],
+                todoCount: 1,
+                completedTodoCount: 1,
+            });
+        }
+    });
+
     it('handles an empty document', () => {
         const index = extractDocumentIndex(doc(para()));
         expect(index).toEqual({

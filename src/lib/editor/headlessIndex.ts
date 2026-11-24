@@ -2,6 +2,7 @@ import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { Node as ProseMirrorNode, Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
+import { tolerateAttributes } from '$lib/tiptap/attributeTypes';
 import { createContentExtensions } from './extensions';
 import { extractDocumentIndex, type DocumentIndex } from './documentIndex';
 import { CONTENT_FIELD } from './contentField';
@@ -17,7 +18,7 @@ let cached: Schema | null = null;
  * way this module reads them: there is one schema and one cache of it.
  */
 export function contentSchema(): Schema {
-    cached ??= getSchema(createContentExtensions());
+    cached ??= tolerateAttributes(getSchema(createContentExtensions()));
     return cached;
 }
 

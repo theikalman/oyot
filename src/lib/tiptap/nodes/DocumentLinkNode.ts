@@ -2,6 +2,7 @@ import { Node, mergeAttributes } from '@tiptap/core';
 import { documents } from '$lib/stores/app';
 import { openDocument } from '$lib/services/navigation';
 import type { DocumentSummary } from '$lib/types';
+import { textOf } from '../attrValues';
 
 export interface DocumentLinkOptions {
     HTMLAttributes: Record<string, unknown>;
@@ -28,16 +29,16 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
                 default: null,
                 parseHTML: (element) => element.getAttribute('data-target-id'),
                 renderHTML: (attributes) => {
-                    if (!attributes.targetId) return {};
-                    return { 'data-target-id': attributes.targetId };
+                    const targetId = textOf(attributes.targetId);
+                    return targetId ? { 'data-target-id': targetId } : {};
                 },
             },
             title: {
                 default: null,
                 parseHTML: (element) => element.getAttribute('data-title'),
                 renderHTML: (attributes) => {
-                    if (!attributes.title) return {};
-                    return { 'data-title': attributes.title };
+                    const title = textOf(attributes.title);
+                    return title ? { 'data-title': title } : {};
                 },
             },
         };
@@ -88,12 +89,13 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
 
     addNodeView() {
         return ({ node }) => {
-            const targetId: string | null = node.attrs.targetId ?? null;
+            const targetId = textOf(node.attrs.targetId);
+            const title = textOf(node.attrs.title) ?? '';
             const dom = document.createElement('span');
             dom.setAttribute('data-type', 'document-link');
             dom.className = 'document-link';
             dom.setAttribute('data-target-id', targetId || '');
-            dom.setAttribute('data-title', node.attrs.title || '');
+            dom.setAttribute('data-title', title);
             dom.style.cursor = 'pointer';
 
             const icon = document.createElement('span');
@@ -121,7 +123,7 @@ export const DocumentLinkNode = Node.create<DocumentLinkOptions>({
                 // An empty list means the documents have not loaded yet, not
                 // that every link is dead.
                 missing = docs.length > 0 && !target;
-                titleEl.textContent = target?.title ?? node.attrs.title ?? '';
+                titleEl.textContent = target?.title ?? title;
                 dom.classList.toggle('document-link-missing', missing);
                 dom.style.cursor = missing ? 'default' : 'pointer';
                 dom.title = missing ? 'This note has been deleted' : '';

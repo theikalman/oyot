@@ -1,5 +1,6 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
+import { textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 
 /** Everything the todo index page needs about one task item. */
@@ -114,7 +115,7 @@ function inlineText(node: ProseMirrorNode): string {
     // would otherwise be recorded as "call mum" and the index page would show a
     // task that is not the task in the note.
     if (node.type.name === TAG_NODE_NAME) {
-        const name = normalizeTagName(String(node.attrs.name ?? ''));
+        const name = normalizeTagName(textOf(node.attrs.name) ?? '');
         return name ? `#${name}` : '';
     }
     let out = '';
@@ -170,7 +171,7 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
                 return true;
             }
             case TAG_NODE_NAME: {
-                const name = normalizeTagName(String(node.attrs.name ?? ''));
+                const name = normalizeTagName(textOf(node.attrs.name) ?? '');
                 if (name) {
                     tags.add(name);
                     // Worth matching on as well as recording: a tag is how the

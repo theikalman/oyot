@@ -559,6 +559,32 @@ describe('serializeDocument', () => {
         expect(render([para('a'), { type: 'horizontalRule' }, para('b')])).toBe('a\n\n---\n\nb\n');
     });
 
+    it('writes what an attribute of the wrong type is on as if it were not set', () => {
+        for (const wrong of [[2], { a: 1 }, { toString: 'x' }, true]) {
+            const list = (type: string, item: string, attrs = {}, itemAttrs = {}) => ({
+                type,
+                attrs,
+                content: [{ type: item, attrs: itemAttrs, content: [para('item')] }],
+            });
+            expect(
+                render([
+                    { ...para('heading'), type: 'heading', attrs: { level: wrong } },
+                    list('orderedList', 'listItem', { start: wrong, type: wrong }),
+                    list('taskList', 'taskItem', {}, { checked: 'no' }),
+                    { ...para('code'), type: 'codeBlock', attrs: { language: wrong } },
+                    { type: 'image', attrs: { src: wrong, alt: wrong } },
+                    {
+                        type: 'paragraph',
+                        content: [
+                            { type: 'text', text: 'see ' },
+                            { type: 'documentLink', attrs: { targetId: wrong, title: wrong } },
+                        ],
+                    },
+                ]),
+            ).toBe('# heading\n\n1.  item\n\n-   [ ] item\n\n```\ncode\n```\n\nsee Untitled\n');
+        }
+    });
+
     it('renders nothing for an empty document', () => {
         expect(render([])).toBe('');
     });

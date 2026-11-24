@@ -3,6 +3,7 @@ import { ResizableNodeView } from '@tiptap/core';
 import type { Editor } from '@tiptap/core';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { insertImageFromBlob } from '../commands/ImageCommand';
+import { numberOf, textOf } from '../attrValues';
 import {
     ATTACHMENT_SCHEME,
     PENDING_IMAGE_SRC,
@@ -118,9 +119,9 @@ function migrateLegacyImageSrcs(editor: Editor): void {
     const fixes: Array<{ pos: number; src: string }> = [];
     editor.state.doc.descendants((node, pos) => {
         if (node.type.name !== 'image') return;
-        const src: string | null = node.attrs.src ?? null;
+        const { src, alt } = node.attrs;
         if (!isLegacyBakedSrc(src)) return;
-        const hash = attachmentHash(src, node.attrs.alt);
+        const hash = attachmentHash(src, alt);
         if (hash) fixes.push({ pos, src: `${ATTACHMENT_SCHEME}${hash}` });
     });
     if (fixes.length === 0) return;
@@ -219,7 +220,7 @@ export const ResizableImage = Image.extend({
             // Resolve the stored reference to something the webview can load.
             // Never assign the raw `oyot-attachment://` scheme - that is what
             // produced "Failed to load resource" in the console.
-            const rawSrc: string = node.attrs.src || HTMLAttributes.src || '';
+            const rawSrc = textOf(node.attrs.src) || textOf(HTMLAttributes.src) || '';
             const hash = attachmentHash(rawSrc, node.attrs.alt);
             let unsubscribe: (() => void) | null = null;
 
@@ -255,11 +256,11 @@ export const ResizableImage = Image.extend({
             // both pixel values together with `max-width: 100%` meant a
             // resized image squashed on any screen narrower than the width it
             // was resized at: the width shrank and the height did not.
-            if (node.attrs.width) el.style.width = `${node.attrs.width}px`;
+            const width = numberOf(node.attrs.width);
+            const height = numberOf(node.attrs.height);
+            if (width) el.style.width = `${width}px`;
             el.style.height = 'auto';
-            if (node.attrs.width && node.attrs.height) {
-                el.style.aspectRatio = `${node.attrs.width} / ${node.attrs.height}`;
-            }
+            if (width && height) el.style.aspectRatio = `${width} / ${height}`;
             el.style.display = 'block';
             el.style.maxWidth = '100%';
 

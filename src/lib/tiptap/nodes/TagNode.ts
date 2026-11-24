@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { tagHueStyle } from '../../tags/tagHue';
+import { textOf } from '../attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '../tags';
 
 export interface TagOptions {
@@ -43,8 +44,8 @@ export const TagNode = Node.create<TagOptions>({
                 // matching, the index rows) assumes one spelling.
                 parseHTML: (element) => normalizeTagName(element.getAttribute('data-name') ?? ''),
                 renderHTML: (attributes) => {
-                    if (!attributes.name) return {};
-                    return { 'data-name': attributes.name };
+                    const name = textOf(attributes.name);
+                    return name ? { 'data-name': name } : {};
                 },
             },
         };
@@ -57,7 +58,7 @@ export const TagNode = Node.create<TagOptions>({
     // The # in the tag's own hue, picked from its name, so a tag is the same
     // colour wherever it is shown (see tagHue.ts).
     renderHTML({ node, HTMLAttributes }) {
-        const name: string = node.attrs.name ?? '';
+        const name = textOf(node.attrs.name) ?? '';
         return [
             'span',
             mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
@@ -74,6 +75,6 @@ export const TagNode = Node.create<TagOptions>({
     // a copy out of the editor produces. Without this an atom copies as
     // nothing, and a line pasted elsewhere quietly loses its tags.
     renderText({ node }) {
-        return `#${node.attrs.name ?? ''}`;
+        return `#${textOf(node.attrs.name) ?? ''}`;
     },
 });

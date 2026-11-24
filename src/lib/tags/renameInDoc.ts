@@ -1,4 +1,5 @@
 import * as Y from 'yjs';
+import { textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 import { CONTENT_FIELD } from '$lib/editor/contentField';
 
@@ -42,7 +43,9 @@ export function renameTagInFragment(
         // that only knows how to recurse.
         if (child instanceof Y.XmlElement) {
             if (child.nodeName === TAG_NODE_NAME) {
-                if (normalizeTagName(child.getAttribute('name') ?? '') === from) {
+                // Whatever JSON a paired device put there, though Yjs types
+                // an attribute as a string.
+                if (normalizeTagName(textOf(child.getAttribute('name')) ?? '') === from) {
                     child.setAttribute('name', to);
                     changed++;
                 }
