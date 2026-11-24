@@ -99,18 +99,23 @@ describe('an ordinary note', () => {
             );
             const all = [theirs, ours, forced];
 
+            // y-tiptap guesses where the selection is once it has shown a
+            // change made elsewhere, or one undone (see `restoreSelection`).
+            let rendered = false;
+
             for (let step = 0; step < 12; step++) {
                 const before = all.map(({ ydoc }) => bytesOf(ydoc));
                 expect(before[1], `stored, step ${step}`).toBe(before[0]);
                 expect(before[2], `written by us, step ${step}`).toBe(before[0]);
-                const shown = all.map(({ editor }) => ({
-                    doc: editor.state.doc.toJSON(),
-                    selection: editor.state.selection.toJSON(),
-                }));
+                const shown = all.map(({ editor }) => editor.state.doc.toJSON());
                 expect(shown[1]).toEqual(shown[0]);
                 expect(shown[2]).toEqual(shown[0]);
+                const selected = all.map(({ editor }) => editor.state.selection.toJSON());
+                if (!rendered) expect(selected[1]).toEqual(selected[0]);
+                expect(selected[2]).toEqual(selected[1]);
 
                 if (next() < 0.1) {
+                    rendered = true;
                     const peer = copyOf(theirs.ydoc);
                     const at = Math.floor(next() * (contentOf(peer).length + 1));
                     insertValues(contentOf(peer), at, [ordinaryBlock(next)]);
@@ -118,6 +123,7 @@ describe('an ordinary note', () => {
                     for (const { ydoc } of all) Y.applyUpdate(ydoc, update, REMOTE_ORIGIN);
                 } else {
                     const edit = editTo(theirs.editor, next);
+                    rendered ||= edit.name === 'undo' || edit.name === 'redo';
                     for (const { editor } of all) edit.make(editor);
                 }
                 // Yjs groups what is undone by the clock.
@@ -129,6 +135,30 @@ describe('an ordinary note', () => {
             for (const { editor } of all) editor.destroy();
         },
     );
+
+    const change = (ydoc: Y.Doc, edit: (content: Y.XmlFragment) => void) => {
+        const peer = copyOf(ydoc);
+        edit(contentOf(peer));
+        Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(peer), REMOTE_ORIGIN);
+    };
+    const wordsOf = (content: Y.XmlFragment, block: number) =>
+        (content.get(block) as Y.XmlElement).get(0) as Y.XmlText;
+
+    it('keeps the caret in its line when a peer types in one of two alike', () => {
+        const { editor, ydoc } = editorOn(noteOf(para('abc'), para('abc')), 'ours');
+        editor.commands.setTextSelection(3);
+        change(ydoc, (content) => wordsOf(content, 0).insert(3, 'X'));
+        expect(editor.state.selection.toJSON()).toMatchObject({ anchor: 3, head: 3 });
+        editor.destroy();
+    });
+
+    it('keeps the selection when a peer deletes the words its start is in', () => {
+        const { editor, ydoc } = editorOn(noteOf(para('abc'), para('def')), 'ours');
+        editor.commands.setTextSelection({ from: 3, to: 8 });
+        change(ydoc, (content) => wordsOf(content, 0).delete(0, 3));
+        expect(editor.state.selection.toJSON()).toMatchObject({ anchor: 1, head: 5 });
+        editor.destroy();
+    });
 
     it('is read the same without an editor, and only read', () => {
         for (let seed = 0; seed < 200; seed++) {

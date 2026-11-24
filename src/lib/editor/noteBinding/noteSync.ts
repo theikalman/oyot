@@ -5,6 +5,7 @@ import { AllSelection, NodeSelection, Plugin, TextSelection } from '@tiptap/pm/s
 import type { EditorState, Selection, Transaction } from '@tiptap/pm/state';
 import {
     getRelativeSelection,
+    isMisresolvedTextPosition,
     ProsemirrorBinding,
     relativePositionToAbsolutePosition,
     updateYFragment,
@@ -85,6 +86,7 @@ class NoteBinding extends ProsemirrorBinding {
             });
             for (const type of transaction.changed.keys()) this.mapping.delete(type);
             for (const type of transaction.changedParentTypes.keys()) this.mapping.delete(type);
+            if (this.showsUnstored()) this.mapping.clear();
 
             const tr = this.rendered();
             this.restoreSelection(tr);
@@ -211,6 +213,22 @@ class NoteBinding extends ProsemirrorBinding {
         return tr.replace(0, tr.doc.content.size, new Slice(Fragment.from(blocks), 0, 0));
     }
 
+    /**
+     * Whether formatting is shown on what is not words, which Yjs does not
+     * store. y-tiptap since 3.0.7 reads a whole note again at each change made
+     * elsewhere, so it stops showing it then. Reading all of a long note is
+     * slow, so it is done only for this. Otherwise the content is the same, and
+     * once in a while is stored in other items.
+     */
+    private showsUnstored(): boolean {
+        let found = false;
+        this.prosemirrorView.state.doc.descendants((node: ProseMirrorNode) => {
+            found ||= !node.isText && node.marks.length > 0;
+            return !found;
+        });
+        return found;
+    }
+
     // --- the selection -------------------------------------------------------
 
     /**
@@ -232,6 +250,11 @@ class NoteBinding extends ProsemirrorBinding {
         return kept as ProsemirrorBinding['beforeTransactionSelection'];
     }
 
+    /**
+     * Put the selection back where Yjs says it is. y-tiptap has since 3.0.7
+     * looked for a block with the same words when they differ, which moves the
+     * caret to another line when a peer types in one of two that were alike.
+     */
     private restoreSelection(tr: Transaction): void {
         const kept = this.beforeTransactionSelection as KeptSelection | null;
         if (kept === null || kept.anchor === null || kept.head === null) return;
@@ -240,10 +263,15 @@ class NoteBinding extends ProsemirrorBinding {
             return;
         }
         const at = (place: unknown): number | null => {
-            const pos =
-                kept.type === 'place'
-                    ? (place as number)
-                    : relativePositionToAbsolutePosition(this.doc, this.type, place, this.mapping);
+            let pos: number | null;
+            if (kept.type === 'place') pos = place as number;
+            else {
+                pos = relativePositionToAbsolutePosition(this.doc, this.type, place, this.mapping);
+                // Null also where the words up to it, from the start of the
+                // note, are gone, which leaves it at the start.
+                const relative = place as Y.RelativePosition;
+                if (pos === null && isMisresolvedTextPosition(this.doc, relative, 1)) pos = 1;
+            }
             return pos === null ? null : Math.min(Math.max(pos, 0), tr.doc.content.size);
         };
 
