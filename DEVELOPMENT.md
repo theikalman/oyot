@@ -164,6 +164,15 @@ through `Document.prototype`, since a page can shadow its document's own
 properties. See
 [ADR 0043](docs/decisions/0043-show-html-code-blocks-as-pages-while-reading.md).
 
+**A note's attributes hold whatever a paste or a paired device put there,**
+and the code that reads one, Tiptap's and the table package's included, takes
+its type on trust: an object where a number should be made the note throw when
+it was drawn, every time it was opened. So `src/lib/tiptap/attributeTypes.ts`
+fits every attribute to its type where nodes are made, from the Y.Doc and from
+a paste, and the tests hold it to the schema. Do not use ProseMirror's
+`validate` for this. A validator throws, and y-tiptap deletes a node that
+throws while it is being made, on every device.
+
 **Backups are written and read in Rust, and a backup being imported is
 hostile until checked.** `create_local_backup` and `open_local_backup` open
 their dialogs in Rust, like the export. On Android and iOS the dialog returns a

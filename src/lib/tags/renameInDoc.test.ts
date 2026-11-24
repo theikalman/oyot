@@ -116,6 +116,16 @@ describe('renameTagInDoc', () => {
     // Merging two tags is allowed: it is what renaming onto an existing name
     // means. The document ends up showing the chip twice, and the index counts
     // the tag once, because a document carries a tag or it does not.
+    it('passes over a chip whose name is not text, and still renames the rest', () => {
+        for (const name of [['work'], { a: 1 }, { toString: 'x' }, 7, true, null]) {
+            const ydoc = ydocOf([para(tag('work'), tag('other'), tag('work'))]);
+            const line = ydoc.getXmlFragment(CONTENT_FIELD).get(0) as Y.XmlElement;
+            (line.get(0) as Y.XmlElement).setAttribute('name', name as unknown as string);
+            expect(renameTagInDoc(ydoc, 'work', 'job')).toBe(1);
+            expect((line.get(2) as Y.XmlElement).getAttribute('name')).toBe('job');
+        }
+    });
+
     it('merges into a tag the document already has', () => {
         const ydoc = ydocOf([para(tag('work'), text(' '), tag('job'))]);
         expect(renameTagInDoc(ydoc, 'work', 'job')).toBe(1);

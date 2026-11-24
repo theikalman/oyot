@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core';
 import type { Node as ProseMirrorNode, ResolvedPos } from '@tiptap/pm/model';
 import type { Selection, Transaction } from '@tiptap/pm/state';
+import { numberOf } from '../attrValues';
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {
@@ -43,14 +44,17 @@ const ITEMS = ['listItem', 'taskItem'];
 
 /** How many steps in `node` is, 0 for one that is not indented. */
 export function indentOf(node: ProseMirrorNode): number {
-    return level(node.attrs.indent);
+    return indentStep(node.attrs.indent);
 }
 
-// A stored indent as a step from 0 to MAX_INDENT. Anything else, from a
-// paste or a document edited by hand, reads as the nearest step there is.
-function level(value: unknown): number {
-    const n = Math.floor(Number(value));
-    return Number.isFinite(n) ? Math.min(Math.max(n, 0), MAX_INDENT) : 0;
+/**
+ * A stored indent as a step from 0 to MAX_INDENT. Any other number, from a
+ * paste or a document edited by hand, reads as the nearest step there is, and
+ * anything that is not a number as none.
+ */
+export function indentStep(value: unknown): number {
+    const n = Math.floor(numberOf(value) ?? 0);
+    return Math.min(Math.max(n, 0), MAX_INDENT);
 }
 
 /** Whether `$pos` is in a paragraph or heading that can be indented. */
@@ -101,7 +105,7 @@ export function shiftIndent(tr: Transaction, by: number, dispatch: boolean): boo
     tr.doc.nodesBetween(from, to, (node, pos, parent) => {
         if (!INDENTABLE.has(node.type.name)) return true;
         if (parent && CONTAINERS.has(parent.type.name)) {
-            const indent = level(indentOf(node) + by);
+            const indent = indentStep(indentOf(node) + by);
             if (indent !== indentOf(node)) changes.push({ pos, indent });
         }
         return false;
@@ -153,11 +157,12 @@ export const Indent = Extension.create({
                         // stores nothing: the collaboration binding writes
                         // every attribute that is not null.
                         default: null,
-                        parseHTML: (element) => level(element.getAttribute('data-indent')) || null,
+                        parseHTML: (element) =>
+                            indentStep(element.getAttribute('data-indent')) || null,
                         // The step is the stylesheet's, which multiplies it
                         // by --indent, so the depth is all a block carries.
                         renderHTML: (attributes) => {
-                            const indent = level(attributes.indent);
+                            const indent = indentStep(attributes.indent);
                             if (indent === 0) return {};
                             return { 'data-indent': String(indent), style: `--indent: ${indent}` };
                         },
