@@ -287,6 +287,16 @@ describe('the indent attribute', () => {
 
     // A note nobody indents is stored exactly as it was before indenting
     // existed, and one that is indented keeps it through the sync layer.
+    it('is none when it is not a number', () => {
+        for (const indent of [[3], { a: 1 }, { toString: 'x' }, true, 'far', NaN, null]) {
+            const node = schema.nodes.paragraph.create({ indent });
+            expect(indentOf(node)).toBe(0);
+            expect(node.type.spec.toDOM!(node)).toEqual(['p', {}, 0]);
+        }
+        expect(indentOf(schema.nodes.paragraph.create({ indent: '3' }))).toBe(3);
+        expect(indentOf(schema.nodes.paragraph.create({ indent: 99 }))).toBe(MAX_INDENT);
+    });
+
     it('is stored only on a block that is indented, and read back from there', () => {
         const ydoc = new Y.Doc();
         const fragment = ydoc.getXmlFragment('content');

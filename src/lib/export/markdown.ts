@@ -1,5 +1,6 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
+import { numberOf, textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 import { UNKNOWN_BLOCK, UNKNOWN_INLINE, unknownLine } from '$lib/tiptap/unknownContent';
 
@@ -92,7 +93,7 @@ function block(node: ProseMirrorNode, options: MarkdownOptions): string | null {
             return text ? text.split('\n').map(escapeLineStart).join('\n') : '';
         }
         case 'heading': {
-            const level = Math.min(Math.max(Number(node.attrs.level) || 1, 1), 6);
+            const level = Math.min(Math.max(numberOf(node.attrs.level) ?? 1, 1), 6);
             return `${'#'.repeat(level)} ${headingText(inline(node, options))}`;
         }
         case 'blockquote':
@@ -135,8 +136,8 @@ function codeBlock(node: ProseMirrorNode): string {
 function list(node: ProseMirrorNode, options: MarkdownOptions): string {
     const ordered = node.type.name === 'orderedList';
     // Checked for a number rather than for truth: a list can start at 0.
-    const first = Number(node.attrs.start);
-    const start = ordered && Number.isFinite(first) ? first : 1;
+    const first = numberOf(node.attrs.start);
+    const start = ordered && first !== null ? first : 1;
     const items: string[] = [];
 
     node.forEach((item, _offset, index) => {
@@ -346,7 +347,7 @@ function inlineNode(node: ProseMirrorNode, options: MarkdownOptions): string {
         case 'image':
             return image(node, options);
         case TAG_NODE_NAME: {
-            const name = normalizeTagName(String(node.attrs.name ?? ''));
+            const name = normalizeTagName(textOf(node.attrs.name) ?? '');
             // Not underlined: `>#name` does not open a tag to the importer,
             // which only takes a `#` after a space, a bracket or emphasis.
             return name ? withMarks(`#${name}`, node, ['underline']) : '';

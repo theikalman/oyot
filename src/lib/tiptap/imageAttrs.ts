@@ -48,9 +48,6 @@ export function describedAlt(alt: unknown): string {
 export function altFor(src: unknown, alt: unknown, description: string): string | null {
     const text = description.replace(/\s+/g, ' ').trim();
     if (text) return text;
-    const hash = attachmentHash(
-        typeof src === 'string' ? src : null,
-        typeof alt === 'string' ? alt : null,
-    );
+    const hash = attachmentHash(src, alt);
     return hash ? `oyot:${hash}` : null;
 }

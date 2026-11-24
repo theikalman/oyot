@@ -12,6 +12,7 @@ import { TagNode } from '$lib/tiptap/nodes/TagNode';
 import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
 import { Indent } from '$lib/tiptap/extensions/Indent';
 import { UnknownBlock, UnknownInline, UnknownMark } from '$lib/tiptap/nodes/UnknownContent';
+import { AttributeTypes } from '$lib/tiptap/extensions/AttributeTypes';
 
 /**
  * What a document is made of: every extension that contributes a node or a
@@ -56,5 +57,7 @@ export function createContentExtensions(): Extensions {
         UnknownBlock,
         UnknownInline,
         UnknownMark,
+        // What those attributes may hold, whatever a paste or a peer put there.
+        AttributeTypes,
     ];
 }

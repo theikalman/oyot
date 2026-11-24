@@ -24,15 +24,17 @@ function safeDecode(s: string): string {
 //   - oyot-attachment://<hash>                             (current)
 //   - alt="oyot:<hash>"                                    (every version)
 //   - .../attachments/<hash>.<ext> baked asset URL         (legacy regression)
-export function attachmentHash(src: string | null | undefined, alt?: string | null): string | null {
-    if (src && src.startsWith(ATTACHMENT_SCHEME)) {
+// Takes the attributes as the node holds them: an address is text, so one
+// that is anything else names nothing.
+export function attachmentHash(src: unknown, alt?: unknown): string | null {
+    if (typeof src === 'string' && src.startsWith(ATTACHMENT_SCHEME)) {
         return src.slice(ATTACHMENT_SCHEME.length).toLowerCase() || null;
     }
-    if (alt && alt.startsWith('oyot:')) {
+    if (typeof alt === 'string' && alt.startsWith('oyot:')) {
         const m = alt.slice(5).match(HEX64);
         if (m) return m[1].toLowerCase();
     }
-    if (src) {
+    if (typeof src === 'string') {
         const decoded = safeDecode(src);
         if (decoded.includes('attachments')) {
             const m = decoded.match(HEX64);
@@ -44,6 +46,11 @@ export function attachmentHash(src: string | null | undefined, alt?: string | nu
 
 // A `src` that is neither our scheme nor an inline data URI - i.e. a legacy
 // baked local path that must be rewritten to the portable scheme.
-export function isLegacyBakedSrc(src: string | null | undefined): boolean {
-    return !!src && !src.startsWith(ATTACHMENT_SCHEME) && !src.startsWith('data:');
+export function isLegacyBakedSrc(src: unknown): boolean {
+    return (
+        typeof src === 'string' &&
+        src !== '' &&
+        !src.startsWith(ATTACHMENT_SCHEME) &&
+        !src.startsWith('data:')
+    );
 }
