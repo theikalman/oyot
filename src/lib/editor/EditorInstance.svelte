@@ -29,6 +29,11 @@
     import { JumpTarget, markJumpTarget } from './jumpTarget';
     import { TickWhileReading } from './tickWhileReading';
     import { MermaidDiagrams } from './mermaid/MermaidDiagrams';
+    import {
+        HTML_VIEW_EVENT,
+        HtmlPreviews,
+        type HtmlViewRequest,
+    } from './htmlPreview/HtmlPreviews';
     import { CodeBlockLanguage } from './codeBlockLanguage';
     import { CodeHighlight } from './codeHighlight';
     import { FindInDocument } from './findInDocument';
@@ -44,6 +49,7 @@
         type ImageViewRequest,
     } from '$lib/tiptap/extensions/ResizableImage';
     import ImageLightbox from './ImageLightbox.svelte';
+    import HtmlLightbox from './HtmlLightbox.svelte';
     import ImageAltDialog from './ImageAltDialog.svelte';
 
     // A document being read is still announced as a text box, which is what
@@ -109,6 +115,8 @@
     // written, when there is one.
     let viewing = $state.raw<ImageViewRequest | null>(null);
     let describing = $state.raw<ImageAltRequest | null>(null);
+    // The HTML shown as a page at full size, when there is some.
+    let viewingHtml = $state.raw<HtmlViewRequest | null>(null);
 
     async function initializeEditor() {
         const docId: string | null = document?.id ?? null;
@@ -175,6 +183,7 @@
                 JumpTarget,
                 TickWhileReading,
                 MermaidDiagrams,
+                HtmlPreviews,
                 CodeBlockLanguage,
                 CodeHighlight,
                 FindInDocument,
@@ -206,6 +215,7 @@
         ed.view.dom.addEventListener('click', handleImageClick);
         ed.view.dom.addEventListener(IMAGE_VIEW_EVENT, handleImageView);
         ed.view.dom.addEventListener(IMAGE_ALT_EVENT, handleImageAlt);
+        ed.view.dom.addEventListener(HTML_VIEW_EVENT, handleHtmlView);
 
         // These register into a module-level registry, not into `ed`. They
         // took an editor argument that none of them used.
@@ -406,6 +416,10 @@
         viewing = (e as CustomEvent<ImageViewRequest>).detail;
     }
 
+    function handleHtmlView(e: Event) {
+        viewingHtml = (e as CustomEvent<HtmlViewRequest>).detail;
+    }
+
     function handleImageAlt(e: Event) {
         if (!editor?.isEditable) return;
         describing = (e as CustomEvent<ImageAltRequest>).detail;
@@ -462,6 +476,7 @@
             editor.view.dom.removeEventListener('click', handleImageClick);
             editor.view.dom.removeEventListener(IMAGE_VIEW_EVENT, handleImageView);
             editor.view.dom.removeEventListener(IMAGE_ALT_EVENT, handleImageAlt);
+            editor.view.dom.removeEventListener(HTML_VIEW_EVENT, handleHtmlView);
             // The document-link and tag pickers are mounted on the page, not
             // in the editor, so destroying the editor left one open. On the
             // next page it still took every key typed there, into an editor
@@ -492,6 +507,10 @@
 
 {#if viewing}
     <ImageLightbox src={viewing.src} alt={viewing.alt} onClose={() => (viewing = null)} />
+{/if}
+
+{#if viewingHtml}
+    <HtmlLightbox source={viewingHtml.source} onClose={() => (viewingHtml = null)} />
 {/if}
 
 {#if describing}
@@ -745,6 +764,54 @@
         margin: 0 0 0.5em;
         color: var(--text-secondary);
         font-size: 0.9em;
+    }
+    /* HTML shown as a page while reading, with its code hidden, and above
+       either one the buttons that switch between them (ADR 0043). */
+    .editor-content :global(pre.html-source) {
+        display: none;
+    }
+    .editor-content :global(.html-preview) {
+        margin: 1em 0;
+    }
+    .editor-content :global(.html-preview:has(+ pre:not(.html-source))) {
+        margin-bottom: -0.6em;
+    }
+    .editor-content :global(.html-preview-bar) {
+        display: flex;
+        justify-content: flex-end;
+        gap: 4px;
+        margin-bottom: 4px;
+        user-select: none;
+    }
+    .editor-content :global(.html-preview-bar button) {
+        padding: 3px 8px;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: none;
+        color: var(--text-secondary);
+        font: inherit;
+        font-size: 12px;
+        line-height: 1.4;
+        cursor: pointer;
+    }
+    .editor-content :global(.html-preview-bar button:hover),
+    .editor-content :global(.html-preview-bar button:focus-visible) {
+        background: var(--code-bg);
+        color: var(--text-primary);
+    }
+    .editor-content :global(.html-preview-page) {
+        min-height: 64px;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        box-shadow: 0 0 0 1px var(--border-color);
+        /* A page that sets no background was written for a white one. */
+        background: #fff;
+    }
+    .editor-content :global(.html-preview-page iframe) {
+        display: block;
+        width: 100%;
+        border: 0;
+        color-scheme: light;
     }
     .editor-content :global(blockquote) {
         border-left: 3px solid var(--border-light);
