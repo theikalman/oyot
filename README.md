@@ -36,6 +36,9 @@ and move between paired devices over an encrypted peer-to-peer connection.
   [Mermaid](https://mermaid.js.org) diagram while you read, in the colors of
   your scheme, and as its code while you edit. Every code block shows its
   language in its corner, so you can see which ones will be drawn.
+- **HTML pages.** A code block in ` ```html ` can be seen as the page it makes
+  while you read, in the note or full size. Nothing in it runs, and nothing it
+  names is loaded.
 - **Document links and backlinks.** Link one note to another with `/document`.
   Each note shows what links back to it.
 - **Search.** The Search page, first under Index in the sidebar, finds your

@@ -53,6 +53,7 @@ picked what we picked. Each record is numbered and immutable once accepted
 | [0040](0040-indent-paragraphs-and-headings-a-step-at-a-time.md)             | Indent paragraphs and headings a step at a time                                      | Proposed                                                                         |
 | [0041](0041-align-describe-and-enlarge-images.md)                           | Align, describe and enlarge images                                                   | Proposed                                                                         |
 | [0042](0042-import-html-files-as-editable-notes.md)                         | Import HTML files as editable notes                                                  | Proposed                                                                         |
+| [0043](0043-show-html-code-blocks-as-pages-while-reading.md)                | Show HTML code blocks as pages while reading                                         | Proposed                                                                         |
 
 ## Format
 

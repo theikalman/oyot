@@ -156,6 +156,14 @@ editor. A link keeps its address only in a scheme meant for reading, so
 `save_image`, as a pasted one does. See
 [ADR 0042](docs/decisions/0042-import-html-files-as-editable-notes.md).
 
+**HTML shown as a page is in a frame that can do nothing.** An `html` code block
+is previewed in a frame sandboxed without `allow-scripts`, under the app's
+content security policy and one of its own. The sandbox does allow the app's
+origin, so the two must never be allowed together. Read anything in the frame
+through `Document.prototype`, since a page can shadow its document's own
+properties. See
+[ADR 0043](docs/decisions/0043-show-html-code-blocks-as-pages-while-reading.md).
+
 **Backups are written and read in Rust, and a backup being imported is
 hostile until checked.** `create_local_backup` and `open_local_backup` open
 their dialogs in Rust, like the export. On Android and iOS the dialog returns a
