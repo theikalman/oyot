@@ -16,7 +16,14 @@ import { documentRepository } from '$lib/sync';
 import { base64ToBytes, bytesToBase64 } from '$lib/sync/protocol';
 import { browserCodec, prepareImage, type Codec } from './images';
 import { renderNote, revisionOf } from './noteMarkdown';
-import { appendToNote, createNoteWith, editNote, toggleTodo, type WriteDeps } from './writes';
+import {
+    appendToNote,
+    createNoteFromHtml,
+    createNoteWith,
+    editNote,
+    toggleTodo,
+    type WriteDeps,
+} from './writes';
 
 interface McpRequest {
     id: number;
@@ -44,6 +51,7 @@ const defaultDeps: RelayDeps = {
     createNote: (title) => createNote(title),
     createJournal: (date) => createJournalForDate(date),
     renameNote: (docId, title) => renameDocument(docId, title),
+    saveImage: (imageData, mimeType) => invoke<string>('save_image', { imageData, mimeType }),
 };
 
 /** Answer Rust's requests until the returned function is called. */
@@ -144,6 +152,13 @@ export async function handleMcpRequest(
             return createNoteWith(
                 text(params, 'title'),
                 typeof params.markdown === 'string' ? params.markdown : '',
+                deps,
+            );
+        case 'createNoteFromHtml':
+            return createNoteFromHtml(
+                text(params, 'title'),
+                text(params, 'html'),
+                params.mode === 'editable' ? 'editable' : 'page',
                 deps,
             );
         case 'createJournal':

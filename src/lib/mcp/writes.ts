@@ -7,10 +7,13 @@
 // renaming go through the same actions the sidebar uses, so the lists update
 // as they do for a click.
 
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
 import { extractDocumentIndex } from '$lib/editor/documentIndex';
 import { rootFromYDoc } from '$lib/editor/headlessIndex';
+import type { SaveImage } from '$lib/import/embeddedImages';
 import { applyEdit } from './applyEdit';
+import { htmlNote, type HtmlLosses, type HtmlMode } from './htmlNote';
 import { parseNote, renderNote, revisionOf, type NoteContext } from './noteMarkdown';
 import { planEdit, type EditHunk, type LossyBlock } from './planEdit';
 import { toggleTodoInDoc, type TodoToggle } from './todos';
@@ -31,6 +34,8 @@ export interface WriteDeps {
     createNote(title: string): Promise<{ id: string }>;
     createJournal(date: string): Promise<{ id: string }>;
     renameNote(docId: string, title: string): Promise<{ title: string }>;
+    /** Store a picture that was inside a page, and return its hash. */
+    saveImage: SaveImage;
 }
 
 export type EditResult =
@@ -103,12 +108,20 @@ export async function appendToNote(
     deps: WriteDeps,
 ): Promise<{ status: 'changed' | 'unchanged'; revision: string }> {
     const ctx = await deps.noteContext();
+    const added: ProseMirrorNode[] = [];
+    parseNote(markdown, ctx).forEach((node) => {
+        if (node.type.name !== 'paragraph' || node.content.size > 0) added.push(node);
+    });
+    return appendBlocks(docId, added, deps);
+}
+
+async function appendBlocks(
+    docId: string,
+    added: ProseMirrorNode[],
+    deps: WriteDeps,
+): Promise<{ status: 'changed' | 'unchanged'; revision: string }> {
     const changed = await deps.editDocument(docId, (ydoc) => {
         const root = rootFromYDoc(ydoc);
-        const added: ReturnType<typeof root.child>[] = [];
-        parseNote(markdown, ctx).forEach((node) => {
-            if (node.type.name !== 'paragraph' || node.content.size > 0) added.push(node);
-        });
         if (added.length === 0) return false;
         const blank =
             root.childCount === 1 &&
@@ -159,4 +172,30 @@ export async function createNoteWith(
         return { id, revision };
     }
     return { id, revision: (await current(id, deps)).revision };
+}
+
+/**
+ * A new note made from an HTML page (ADR 0045), and what of the page will not
+ * be seen. The content is built first, so a page that cannot be read makes no
+ * note. `tooLong` says the note is too long to be
+ * read and rewritten whole.
+ */
+export async function createNoteFromHtml(
+    title: string,
+    html: string,
+    mode: HtmlMode,
+    deps: WriteDeps,
+): Promise<{ id: string; revision: string; losses: HtmlLosses; tooLong: boolean }> {
+    const { blocks, losses } = await htmlNote(
+        title,
+        html,
+        mode,
+        await deps.noteContext(),
+        deps.saveImage,
+    );
+    const { id } = await deps.createNote(title);
+    await appendBlocks(id, blocks, deps);
+    const { markdown, revision } = await current(id, deps);
+    const tooLong = new TextEncoder().encode(markdown).length > MAX_EDITABLE_BYTES;
+    return { id, revision, losses, tooLong };
 }
