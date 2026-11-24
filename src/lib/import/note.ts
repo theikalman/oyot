@@ -1,45 +1,61 @@
 import type { Node as ProseMirrorNode, Schema } from '@tiptap/pm/model';
 import { extractDocumentIndex } from '$lib/editor/documentIndex';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
+import { nonEmpty } from './build';
 import { splitFrontMatter, type FrontMatterValue } from './frontMatter';
-import {
-    leadingHeading,
-    oneLine,
-    readMarkdown,
-    type MarkdownDocument,
-    type MarkdownReadOptions,
-} from './markdown';
+import { htmlTitle, parseHtml, readHtml } from './html';
+import { leadingHeading, oneLine, readMarkdown, type NoteLinkTarget } from './markdown';
 
 /**
- * One Markdown file, as a note: what it is called, what it is tagged, and
- * what it says.
+ * One file, as a note: what it is called, what it is tagged, and what it says.
  *
- * The other half of `$lib/export/note`, which writes a note as front matter,
+ * For Markdown, the other half of `$lib/export/note`, which writes a note as front matter,
  * the title again as a heading, and the body. Reading that back has to find
  * the title in either place and not keep it twice, and has to do something
  * sensible with the files other tools write, which put the title in the file
  * name, the front matter or a heading, and the tags in the front matter or in
  * the words.
+ *
+ * HTML says what it is called in its `<title>`, and usually again in a heading.
  */
 
-/** A file as `pick_markdown_files` hands it over. */
-export interface MarkdownFile {
+/** What a file is written in, as Rust worked it out. */
+export type NoteFormat = 'markdown' | 'html';
+
+/** A file as `pick_note_files` hands it over. */
+export interface NoteFile {
     /** What the file was called. Empty when that is not known. */
     name: string;
     text: string;
+    format: NoteFormat;
 }
 
 export interface PreparedNote {
     /** The file it came from. */
     name: string;
+    format: NoteFormat;
     title: string;
     /**
-     * What the note says: the file without its front matter, and without the
-     * heading that became its title.
+     * What the note says: for Markdown, the file without its front matter,
+     * and without the heading that became its title; for HTML, all of it.
      */
     body: string;
     /** The tags its front matter lists, normalized. */
     tags: string[];
+}
+
+/** A note's content, and what in its file could not come in as it was. */
+export interface NoteContent {
+    doc: ProseMirrorNode;
+    /** Images kept as their Markdown, because there was nothing to show. */
+    imagesKeptAsText: number;
+    /** Drawings, players and pictures that had to be left out. */
+    leftOut: number;
+}
+
+export interface NoteReadOptions {
+    /** The note a link in the file points at, when it is being imported too. */
+    noteLink?: (href: string) => NoteLinkTarget | null;
 }
 
 /**
@@ -57,7 +73,17 @@ export interface PreparedNote {
  * only repeats the front matter's title gives none: that heading was written
  * from the title, which is plain words.
  */
-export function prepareNote(file: MarkdownFile): PreparedNote {
+export function prepareNote(file: NoteFile): PreparedNote {
+    return file.format === 'html' ? prepareHtml(file) : prepareMarkdown(file);
+}
+
+function prepareHtml({ name, format, text }: NoteFile): PreparedNote {
+    const title = htmlTitle(parseHtml(text)) || titleFromFileName(name) || 'Untitled';
+    return { name, format, title, body: text, tags: [] };
+}
+
+function prepareMarkdown(file: NoteFile): PreparedNote {
+    const { name, format } = file;
     const text = file.text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
     const { values, body } = splitFrontMatter(text);
     const given = oneLine(stringOf(valueOf(values, 'title')) ?? '');
@@ -66,7 +92,8 @@ export function prepareNote(file: MarkdownFile): PreparedNote {
     const heading = leadingHeading(body, tags);
     if (heading?.text && !given) {
         return {
-            name: file.name,
+            name,
+            format,
             title: heading.text,
             body: withoutLines(body, heading.lines),
             tags: [...new Set([...tags, ...heading.tags])],
@@ -75,19 +102,49 @@ export function prepareNote(file: MarkdownFile): PreparedNote {
     // Compared as read and as written: an older export wrote the title into
     // its heading unescaped, so `Plan *draft*` came back as emphasis.
     if (heading && (sameTitle(heading.text, given) || sameTitle(heading.source, given))) {
-        return { name: file.name, title: given, body: withoutLines(body, heading.lines), tags };
+        return { name, format, title: given, body: withoutLines(body, heading.lines), tags };
     }
     return {
-        name: file.name,
-        title: given || titleFromFileName(file.name) || 'Untitled',
+        name,
+        format,
+        title: given || titleFromFileName(name) || 'Untitled',
         body,
         tags,
     };
 }
 
+/** A prepared note's content, as a document. */
+export function noteDocument(
+    note: PreparedNote,
+    schema: Schema,
+    options: NoteReadOptions = {},
+): NoteContent {
+    return note.format === 'html'
+        ? htmlDocument(note, schema, options)
+        : markdownDocument(note, schema, options);
+}
+
 /**
- * A prepared note's content, as a document.
- *
+ * The heading at the top of a page goes when it only says the note's title,
+ * as it does from a Markdown file. A page has no tags to bring: a `#word` in
+ * one is as likely a colour or a link to a part of it.
+ */
+function htmlDocument(note: PreparedNote, schema: Schema, options: NoteReadOptions): NoteContent {
+    const read = readHtml(parseHtml(note.body), schema, options);
+    const first = read.doc.firstChild;
+    const titled =
+        first?.type.name === 'heading' &&
+        first.attrs.level === 1 &&
+        sameTitle(first.textBetween(0, first.content.size, ' ', ' '), note.title);
+    if (!titled) return read;
+    const rest: ProseMirrorNode[] = [];
+    read.doc.forEach((block, _, index) => {
+        if (index > 0) rest.push(block);
+    });
+    return { ...read, doc: read.doc.type.create(read.doc.attrs, nonEmpty(schema, rest)) };
+}
+
+/**
  * The front matter's tags that the words do not already carry go at the top,
  * as a line of chips. A tag in Oyot is a chip in the text, and there is no
  * list beside a note to put the others in. The exporter lists only the tags a
@@ -95,17 +152,17 @@ export function prepareNote(file: MarkdownFile): PreparedNote {
  * Obsidian and others keep tags in the front matter alone, and those would
  * otherwise be lost.
  */
-export function noteDocument(
+function markdownDocument(
     note: PreparedNote,
     schema: Schema,
-    options: Omit<MarkdownReadOptions, 'knownTags'> = {},
-): MarkdownDocument {
+    options: NoteReadOptions,
+): NoteContent {
     const read = readMarkdown(note.body, schema, { ...options, knownTags: note.tags });
-    return { ...read, doc: withTags(read.doc, note.tags, schema) };
+    return { ...read, doc: withTags(read.doc, note.tags, schema), leftOut: 0 };
 }
 
 /** The extensions a note's file is saved under, which its title leaves off. */
-const NOTE_EXTENSION = /\.(md|markdown|mdown|mkd|mkdn|mdwn|mdtext|mdtxt|txt)$/i;
+const NOTE_EXTENSION = /\.(md|markdown|mdown|mkd|mkdn|mdwn|mdtext|mdtxt|txt|html?|xhtml|xht)$/i;
 
 /** A file's name as a title: without its folder and its extension. */
 export function titleFromFileName(name: string): string {

@@ -106,8 +106,8 @@
 
     {#if notes.length === 0}
         <p class="empty-note">
-            No notes yet. Press the new note button above to start one, or import Markdown files
-            from the menu beside it.
+            No notes yet. Press the new note button above to start one, or import Markdown or HTML
+            files from the menu beside it.
         </p>
     {:else if shown.length === 0}
         <p class="empty-note">No note matches "{filter.trim()}".</p>

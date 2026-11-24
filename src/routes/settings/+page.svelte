@@ -4,7 +4,7 @@
     import { resolve } from '$app/paths';
     import { canSignal, connectedPeers } from '$lib/stores/sync';
     import { exportAllNotes } from '$lib/export';
-    import { markdownImport } from '$lib/import';
+    import { noteImport } from '$lib/import';
     import {
         getBackupSchedule,
         getBackupStatus,
@@ -223,8 +223,8 @@
         }
     }
 
-    // The way back in for what Export writes out, and for Markdown from
-    // anywhere else. Where the notes went is not on this page, so the import
+    // The way back in for what Export writes out, and for Markdown and
+    // HTML from anywhere else. Where the notes went is not on this page, so the import
     // ends there: on the one note, or on the Notes page with the rest, unless
     // the user has gone elsewhere since. Whether an import is running, and how
     // far it has got, is shared with the Notes page, which can start one too.
@@ -232,7 +232,7 @@
     onDestroy(() => (here = false));
 
     async function handleImport() {
-        const result = await markdownImport.start();
+        const result = await noteImport.start();
         if (!here || !result || result.notes.length === 0) return;
         if (result.notes.length === 1) await openDocument(result.notes[0].id);
         else await openNotes();
@@ -266,8 +266,8 @@
                 !!backupSchedule?.paused ||
                 backupStatus?.latestAttempt?.status === 'failed'}
             {exporting}
-            importLabel={markdownImport.label}
-            importing={markdownImport.running}
+            importLabel={noteImport.label}
+            importing={noteImport.running}
             onExport={handleExport}
             onImport={handleImport}
         />
@@ -500,16 +500,16 @@
                         <div class="setting-info">
                             <span class="setting-label">Import notes</span>
                             <span class="setting-desc">
-                                Make a note of each Markdown file you pick, exported from Oyot or
-                                written anywhere else
+                                Make a note of each Markdown or HTML file you pick, exported from
+                                Oyot or written anywhere else
                             </span>
                         </div>
                         <button
                             class="action-btn"
                             onclick={handleImport}
-                            disabled={markdownImport.running}
+                            disabled={noteImport.running}
                         >
-                            {markdownImport.label}
+                            {noteImport.label}
                         </button>
                     </div>
                 </div>

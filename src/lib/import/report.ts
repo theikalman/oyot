@@ -33,7 +33,7 @@ const REASONS: Record<SkipReason, { one: string; many: string }> = {
 };
 
 export function describeImport(result: ImportResult): ImportReport {
-    const { notes, skipped, imagesKeptAsText, missingImages } = result;
+    const { notes, skipped, imagesKeptAsText, leftOut, missingImages } = result;
     const warnings: string[] = [];
 
     const skips: string[] = [];
@@ -45,13 +45,22 @@ export function describeImport(result: ImportResult): ImportReport {
     }
     if (skips.length > 0) warnings.push(skips.join(' '));
 
+    const notShown: string[] = [];
     if (imagesKeptAsText > 0) {
         const were = imagesKeptAsText === 1 ? 'was' : 'were';
-        warnings.push(
+        notShown.push(
             `${count(imagesKeptAsText, 'image')} ${were} kept as text. Oyot cannot bring in ` +
                 'a picture from a file beside a note, or from the web.',
         );
     }
+    if (leftOut > 0) {
+        const [were, them] = leftOut === 1 ? ['was', 'it'] : ['were', 'them'];
+        notShown.push(
+            `${count(leftOut, 'drawing, player or picture', 'drawings, players or pictures')} ` +
+                `${were} left out, because a note has no place for ${them}.`,
+        );
+    }
+    if (notShown.length > 0) warnings.push(notShown.join(' '));
     if (missingImages > 0) {
         const [are, them] = missingImages === 1 ? ['is', 'it'] : ['are', 'them'];
         warnings.push(
@@ -81,6 +90,6 @@ function fileList(files: SkippedFile[]): string {
     return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
 }
 
-function count(n: number, noun: string): string {
-    return `${n} ${noun}${n === 1 ? '' : 's'}`;
+function count(n: number, noun: string, plural = `${noun}s`): string {
+    return `${n} ${n === 1 ? noun : plural}`;
 }

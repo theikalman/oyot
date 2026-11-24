@@ -3,7 +3,7 @@
     import { indexRevision } from '$lib/stores/derivedIndex';
     import { openDocument, openTag } from '$lib/services/navigation';
     import { loadTagsByDocument } from '$lib/services/tags';
-    import { markdownImport } from '$lib/import';
+    import { noteImport } from '$lib/import';
     import { onDestroy } from 'svelte';
     import {
         filterNotes,
@@ -95,7 +95,7 @@
         openMenuId = null;
     }
 
-    // Markdown files in, a note each. The notes join this list as they are
+    // Markdown and HTML files in, a note each. The notes join this list as they are
     // made; one on its own opens, as a new note does, since that is what there
     // is to look at, unless the user has gone elsewhere since.
     // Whether an import is running, and how far it has got, is shared with
@@ -104,7 +104,7 @@
     onDestroy(() => (here = false));
 
     async function handleImport() {
-        const result = await markdownImport.start();
+        const result = await noteImport.start();
         if (here && result?.notes.length === 1) await openDocument(result.notes[0].id);
     }
 </script>
@@ -126,13 +126,13 @@
             <div class="menu phone-menu-list">
                 <button
                     class="menu-item"
-                    disabled={markdownImport.running}
+                    disabled={noteImport.running}
                     onclick={() => {
                         phoneMenu = false;
                         void handleImport();
                     }}
                 >
-                    {markdownImport.label}
+                    {noteImport.label}
                 </button>
             </div>
         {/if}
@@ -180,10 +180,10 @@
                     <button
                         class="btn"
                         onclick={handleImport}
-                        disabled={markdownImport.running}
-                        title="Make a note of each Markdown file you pick"
+                        disabled={noteImport.running}
+                        title="Make a note of each Markdown or HTML file you pick"
                     >
-                        {markdownImport.label}
+                        {noteImport.label}
                     </button>
                     <button class="btn primary" onclick={() => (creating = true)}>
                         <Icon name="plus" size={16} />New note
@@ -193,7 +193,8 @@
 
             {#if notes.length === 0}
                 <p class="note">
-                    No notes yet. Press New note to start one, or Import to bring in Markdown files.
+                    No notes yet. Press New note to start one, or Import to bring in Markdown or
+                    HTML files.
                 </p>
             {:else if shown.length === 0}
                 <p class="note">No note matches "{filter.trim()}".</p>

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
 import { indexFromYDoc, rootFromYDoc } from '$lib/editor/headlessIndex';
 import { importFiles, linkedFileName, type ImportTarget, type PublishedNote } from './importFiles';
+import type { NoteFile } from './note';
 import { blocksOf } from '../../test/blockJson';
 
 const HASH = 'b'.repeat(64);
@@ -43,6 +44,10 @@ class FakeTarget implements ImportTarget {
         this.deleted.push(id);
     }
 
+    async saveImage(): Promise<string> {
+        throw new Error('a Markdown file has no picture to store');
+    }
+
     async heldAttachments(hashes: string[]) {
         return new Set(hashes.filter((hash) => this.held.has(hash)));
     }
@@ -65,7 +70,7 @@ class FakeTarget implements ImportTarget {
     }
 }
 
-const file = (name: string, text: string) => ({ name, text });
+const file = (name: string, text: string): NoteFile => ({ name, text, format: 'markdown' });
 
 /** Ids the test can predict: `note-1` for the first file by name, and so on. */
 function ids(): () => string {

@@ -7,7 +7,7 @@ import { blocksOf } from '../../test/blockJson';
 const schema = contentSchema();
 
 function prepared(text: string, name = 'file.md') {
-    return prepareNote({ name, text });
+    return prepareNote({ name, text, format: 'markdown' });
 }
 
 function content(text: string, name = 'file.md') {

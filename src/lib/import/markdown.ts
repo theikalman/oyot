@@ -1,14 +1,9 @@
 import markdownit, { type MarkdownIt, type StateInline, type Token } from 'markdown-it';
-import {
-    Mark,
-    type Attrs,
-    type Node as ProseMirrorNode,
-    type NodeType,
-    type Schema,
-} from '@tiptap/pm/model';
+import type { Attrs, Mark, Node as ProseMirrorNode, NodeType, Schema } from '@tiptap/pm/model';
 import { ATTACHMENT_SCHEME, attachmentHash } from '$lib/tiptap/attachmentRef';
 import { MISSING_ATTACHMENT_ALT } from '$lib/export/markdown';
 import { MAX_TAG_LENGTH, normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
+import { codeMarks, lists, markSet, nonEmpty, textblocks } from './build';
 
 /**
  * Markdown, read into a document the editor can open.
@@ -271,7 +266,7 @@ const CONTENT_HASH = /^[a-f0-9]{64}$/;
  * encodes it, so `写真.png` reads as that and not as `%E5%86%99...`; in angle
  * brackets when it has a space or a parenthesis, which a bare one cannot.
  */
-function imageMarkdown(src: string, alt: string, title: string): string {
+export function imageMarkdown(src: string, alt: string, title: string): string {
     const shown = markdownParser().normalizeLinkText(src);
     const address = /[\s()]/.test(shown) ? `<${shown}>` : shown;
     const titled = title ? ` "${title.replace(/(["\\])/g, '\\$1')}"` : '';
@@ -409,7 +404,10 @@ class DocumentReader {
     ) {}
 
     document(tokens: Token[]): ProseMirrorNode {
-        return this.schema.topNodeType.create(null, this.nonEmpty(this.blocks(nest(tokens))));
+        return this.schema.topNodeType.create(
+            null,
+            nonEmpty(this.schema, this.blocks(nest(tokens))),
+        );
     }
 
     private blocks(branches: Branch[]): ProseMirrorNode[] {
@@ -426,7 +424,9 @@ class DocumentReader {
                 return this.textblock(nodes.heading, { level }, inlineOf(children));
             }
             case 'blockquote_open':
-                return [nodes.blockquote.create(null, this.nonEmpty(this.blocks(children)))];
+                return [
+                    nodes.blockquote.create(null, nonEmpty(this.schema, this.blocks(children))),
+                ];
             case 'bullet_list_open':
             case 'ordered_list_open':
                 return this.list(token, children);
@@ -448,64 +448,9 @@ class DocumentReader {
         }
     }
 
-    /** At least one block, where the schema requires one. */
-    private nonEmpty(blocks: ProseMirrorNode[]): ProseMirrorNode[] {
-        return blocks.length > 0 ? blocks : [this.schema.nodes.paragraph.create()];
-    }
-
-    /**
-     * A paragraph or a heading, split wherever an image stands in it.
-     *
-     * Markdown puts an image in a line of text, and the editor's image is a
-     * block of its own, so a line with an image in it becomes the words
-     * before it, the image, and the words after.
-     */
+    /** A paragraph or a heading, split wherever an image stands in it. */
     private textblock(type: NodeType, attrs: Attrs | null, tokens: Token[]): ProseMirrorNode[] {
-        const pieces = this.inline(tokens);
-        if (!pieces.some((piece) => piece.isBlock)) return [type.create(attrs, pieces)];
-
-        const out: ProseMirrorNode[] = [];
-        let run: ProseMirrorNode[] = [];
-        const endRun = () => {
-            const words = this.trimmed(run);
-            if (words.length > 0) out.push(type.create(attrs, words));
-            run = [];
-        };
-        for (const piece of pieces) {
-            if (!piece.isBlock) {
-                run.push(piece);
-                continue;
-            }
-            endRun();
-            out.push(piece);
-        }
-        endRun();
-        return out;
-    }
-
-    /** A run of inline nodes without the spaces and breaks at either end. */
-    private trimmed(run: ProseMirrorNode[]): ProseMirrorNode[] {
-        const nodes = [...run];
-        // Trims the node at `index`, and says whether it went entirely, in
-        // which case the next one in has to be looked at too.
-        const trimAway = (index: number, side: 'start' | 'end'): boolean => {
-            const node = nodes[index];
-            if (node.type.name === 'hardBreak') {
-                nodes.splice(index, 1);
-                return true;
-            }
-            if (!node.isText) return false;
-            const text = side === 'start' ? node.text!.trimStart() : node.text!.trimEnd();
-            if (!text) {
-                nodes.splice(index, 1);
-                return true;
-            }
-            nodes[index] = this.schema.text(text, node.marks);
-            return false;
-        };
-        while (nodes.length > 0 && trimAway(0, 'start'));
-        while (nodes.length > 0 && trimAway(nodes.length - 1, 'end'));
-        return nodes;
+        return textblocks(type, attrs, this.inline(tokens));
     }
 
     /**
@@ -664,53 +609,22 @@ class DocumentReader {
         return this.schema.text(imageMarkdown(src, alt, title), markSet(active));
     }
 
-    /**
-     * A list, or several.
-     *
-     * GitHub lets one list mix task items with plain ones, and the editor
-     * cannot: a task list holds only tasks. So a mixed list becomes a run of
-     * lists, one per stretch of items of the same kind, in the same order. An
-     * ordered list split that way keeps counting where it left off.
-     */
+    /** A list, or several: GitHub lets one list mix tasks with plain items. */
     private list(open: Token, items: Branch[]): ProseMirrorNode[] {
-        const { nodes } = this.schema;
         const ordered = open.type === 'ordered_list_open';
         // Checked for a number rather than for truth: a list can start at 0.
         const first = Number(open.attrGet('start') ?? 1);
-        let number = ordered && Number.isFinite(first) ? first : 1;
+        const number = ordered && Number.isFinite(first) ? first : 1;
 
-        const out: ProseMirrorNode[] = [];
-        let task = false;
-        let start = number;
-        let run: ProseMirrorNode[] = [];
-        const endRun = () => {
-            if (run.length === 0) return;
-            if (task) out.push(nodes.taskList.create(null, run));
-            else if (ordered) out.push(nodes.orderedList.create({ start }, run));
-            else out.push(nodes.bulletList.create(null, run));
-            run = [];
-        };
-
-        for (const item of items) {
-            if (item.token.type !== 'list_item_open') continue;
-            const checked = takeTaskMarker(item.children);
-            if (run.length > 0 && (checked !== null) !== task) endRun();
-            if (run.length === 0) {
-                task = checked !== null;
-                start = number;
-            }
-            const blocks =
-                checked !== null ? this.taskBlocks(item.children) : this.blocks(item.children);
-            const content = this.itemContent(blocks);
-            run.push(
-                checked !== null
-                    ? nodes.taskItem.create({ checked }, content)
-                    : nodes.listItem.create(null, content),
-            );
-            number++;
-        }
-        endRun();
-        return out;
+        const read = items
+            .filter((item) => item.token.type === 'list_item_open')
+            .map((item) => {
+                const checked = takeTaskMarker(item.children);
+                const blocks =
+                    checked !== null ? this.taskBlocks(item.children) : this.blocks(item.children);
+                return { checked, blocks };
+            });
+        return lists(this.schema, read, ordered ? number : null);
     }
 
     /**
@@ -730,17 +644,6 @@ class DocumentReader {
                 ? this.blocks(nest(parse(child.token.content, this.knownTags)))
                 : this.block(child),
         );
-    }
-
-    /**
-     * What a list item can hold: a paragraph first, then any blocks. An item
-     * with nothing in it, or one that opens with a heading, a code block or an
-     * image, gets an empty paragraph in front, which is where the editor puts
-     * the caret in an item of its own.
-     */
-    private itemContent(blocks: ProseMirrorNode[]): ProseMirrorNode[] {
-        const { paragraph } = this.schema.nodes;
-        return blocks[0]?.type === paragraph ? blocks : [paragraph.create(), ...blocks];
     }
 
     private codeBlock(token: Token): ProseMirrorNode {
@@ -794,7 +697,8 @@ class DocumentReader {
                             const type =
                                 cell.token.type === 'th_open' ? nodes.tableHeader : nodes.tableCell;
                             const align = cellAlign(cell.token);
-                            const content = this.nonEmpty(
+                            const content = nonEmpty(
+                                this.schema,
                                 this.textblock(nodes.paragraph, null, inlineOf(cell.children)),
                             );
                             return type.create(align ? { align } : null, content);
@@ -852,25 +756,6 @@ function cellAlign(token: Token): 'left' | 'center' | 'right' | null {
     const style = String(token.attrGet('style') ?? '');
     const match = /text-align:\s*(left|center|right)/.exec(style);
     return (match?.[1] as 'left' | 'center' | 'right' | undefined) ?? null;
-}
-
-/** The marks in force, as a set the schema accepts. */
-function markSet(active: readonly Mark[]): readonly Mark[] {
-    let set: readonly Mark[] = Mark.none;
-    for (const mark of active) set = mark.addToSet(set);
-    return set;
-}
-
-/**
- * The marks for inline code.
- *
- * The schema's code mark excludes every other, so adding it drops the rest.
- * A link is the exception: its address is information and code's typeface is
- * not, so inside a link it is the code mark that goes.
- */
-function codeMarks(active: readonly Mark[], schema: Schema): readonly Mark[] {
-    if (active.some((mark) => mark.type.name === 'link')) return markSet(active);
-    return markSet([...active, schema.marks.code.create()]);
 }
 
 function dropLast(active: Mark[], name: string): void {

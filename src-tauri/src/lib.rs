@@ -923,7 +923,7 @@ pub fn run() {
             list_reachable_peers,
             list_export_attachments,
             export_notes,
-            pick_markdown_files,
+            pick_note_files,
             create_local_backup,
             open_local_backup,
             backup_session_read_state,

@@ -3,7 +3,14 @@ import type { ImportResult } from './importFiles';
 import { describeImport } from './report';
 
 function result(overrides: Partial<ImportResult> = {}): ImportResult {
-    return { notes: [], skipped: [], imagesKeptAsText: 0, missingImages: 0, ...overrides };
+    return {
+        notes: [],
+        skipped: [],
+        imagesKeptAsText: 0,
+        leftOut: 0,
+        missingImages: 0,
+        ...overrides,
+    };
 }
 
 const notes = (...titles: string[]) => titles.map((title, i) => ({ id: String(i), title }));
@@ -95,5 +102,26 @@ describe('the most describeImport says', () => {
             }),
         );
         expect(report.warnings).toHaveLength(3);
+    });
+
+    it('counts what was left out, in the same warning as the images kept as text', () => {
+        expect(describeImport(result({ notes: notes('a'), leftOut: 1 })).warnings).toEqual([
+            '1 drawing, player or picture was left out, because a note has no place for it.',
+        ]);
+        const report = describeImport(
+            result({
+                notes: notes('a'),
+                skipped: [{ name: 'b.html', reason: 'failed' }],
+                imagesKeptAsText: 1,
+                leftOut: 2,
+                missingImages: 1,
+            }),
+        );
+        expect(report.warnings).toHaveLength(3);
+        expect(report.warnings[1]).toBe(
+            '1 image was kept as text. Oyot cannot bring in a picture from a file beside a ' +
+                'note, or from the web. 2 drawings, players or pictures were left out, ' +
+                'because a note has no place for them.',
+        );
     });
 });
