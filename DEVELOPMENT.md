@@ -164,6 +164,14 @@ through `Document.prototype`, since a page can shadow its document's own
 properties. See
 [ADR 0043](docs/decisions/0043-show-html-code-blocks-as-pages-while-reading.md).
 
+**A note can hold what this build has no node for, and reading it must not
+change it.** y-tiptap deletes from the Y.Doc whatever it cannot make, which
+syncs, so nothing may read a note through it: use `rootFromYDoc`, or
+`createCollaborationExtension` for an editor. Both go through
+`src/lib/editor/noteBinding`, which shows a placeholder and leaves the content
+stored. See
+[ADR 0044](docs/decisions/0044-keep-content-this-build-cannot-show.md).
+
 **Backups are written and read in Rust, and a backup being imported is
 hostile until checked.** `create_local_backup` and `open_local_backup` open
 their dialogs in Rust, like the export. On Android and iOS the dialog returns a

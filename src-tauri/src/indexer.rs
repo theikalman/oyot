@@ -66,7 +66,11 @@ pub struct DocumentIndexInput {
 /// "ask [Groceries] about milk" was stored as "ask about milk". Rows already
 /// written hold the shortened text and would keep it until their document was
 /// next saved, so the bump re-renders them.
-pub const INDEX_VERSION: i64 = 3;
+///
+/// v4 reads content only a newer build can show, where before it was left out
+/// (ADR 0044). An image in such content is in use, and a document indexed
+/// without it would have the image collected.
+pub const INDEX_VERSION: i64 = 4;
 
 /// Record the title only, for paths that change a title without seeing content
 /// (a rename, or materialising a row learned from a peer). Leaves counts,

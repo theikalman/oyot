@@ -28,9 +28,10 @@ function loadIndexer(): Promise<HeadlessIndexer | null> {
     return indexerLoad;
 }
 
-// Never let indexing cost us the content. A document whose schema this build
-// does not recognise is still stored; it just goes unindexed until someone
-// opens it.
+// Never let indexing cost us the content. What this build does not recognise
+// in a document is read as a placeholder, and the document is never changed by
+// reading it (ADR 0044), which matters because `ydoc` can be the open copy. If
+// it cannot be read all the same it is still stored, and goes unindexed.
 function readIndex(indexer: HeadlessIndexer | null, ydoc: Y.Doc): DocumentIndex | null {
     if (!indexer) return null;
     try {

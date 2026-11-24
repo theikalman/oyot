@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
-import { CONTENT_FIELD } from '$lib/editor/contentField';
 import { extractDocumentIndex } from '$lib/editor/documentIndex';
 import { rootFromYDoc } from '$lib/editor/headlessIndex';
-import { taskElementAt, toggleTodoInDoc } from './todos';
+import { taskAt, toggleTodoInDoc } from './todos';
 import { doc, p, t, task, tasks, ydocOf } from './testDocs';
 
 // The shapes taskItems.test.ts pins locateTaskItem to, and one nested deeper,
@@ -28,25 +27,25 @@ function elementText(element: Y.XmlElement): string {
         .join('');
 }
 
-describe('taskElementAt', () => {
+describe('taskAt', () => {
     it('finds the task the index numbered, at every ordinal and depth', () => {
         for (const source of [flat, nested, deep]) {
-            const fragment = ydocOf(source).getXmlFragment(CONTENT_FIELD);
+            const ydoc = ydocOf(source);
             const todos = extractDocumentIndex(source).todos;
             expect(todos.length).toBeGreaterThan(0);
             for (const todo of todos) {
-                const element = taskElementAt(fragment, todo.ordinal);
-                expect(element, `ordinal ${todo.ordinal}`).not.toBeNull();
-                expect(elementText(element!)).toBe(todo.text);
+                const found = taskAt(ydoc, todo.ordinal);
+                expect(found, `ordinal ${todo.ordinal}`).not.toBeNull();
+                expect(elementText(found!.element)).toBe(todo.text);
             }
-            expect(taskElementAt(fragment, todos.length)).toBeNull();
+            expect(taskAt(ydoc, todos.length)).toBeNull();
         }
     });
 
     it('finds nothing at an ordinal that is not one', () => {
-        const fragment = ydocOf(flat).getXmlFragment(CONTENT_FIELD);
+        const ydoc = ydocOf(flat);
         for (const ordinal of [-1, 0.5, Number.NaN]) {
-            expect(taskElementAt(fragment, ordinal)).toBeNull();
+            expect(taskAt(ydoc, ordinal)).toBeNull();
         }
     });
 });
@@ -89,7 +88,7 @@ describe('toggleTodoInDoc', () => {
         Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
 
         expect(toggleTodoInDoc(a, 1, 'call the bank', true)).toBe('changed');
-        const item = taskElementAt(b.getXmlFragment(CONTENT_FIELD), 1)!;
+        const item = taskAt(b, 1)!.element;
         ((item.get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(13, ' today');
 
         Y.applyUpdate(a, Y.encodeStateAsUpdate(b));

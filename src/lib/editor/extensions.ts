@@ -11,6 +11,7 @@ import { DocumentLinkNode } from '$lib/tiptap/nodes/DocumentLinkNode';
 import { TagNode } from '$lib/tiptap/nodes/TagNode';
 import { ResizableImage } from '$lib/tiptap/extensions/ResizableImage';
 import { Indent } from '$lib/tiptap/extensions/Indent';
+import { UnknownBlock, UnknownInline, UnknownMark } from '$lib/tiptap/nodes/UnknownContent';
 
 /**
  * What a document is made of: every extension that contributes a node or a
@@ -51,5 +52,9 @@ export function createContentExtensions(): Extensions {
         TagNode,
         // An attribute on paragraphs and headings, so part of the schema.
         Indent,
+        // What stands for content only another build knows.
+        UnknownBlock,
+        UnknownInline,
+        UnknownMark,
     ];
 }
