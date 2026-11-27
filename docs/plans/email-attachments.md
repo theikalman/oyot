@@ -10,7 +10,7 @@ Every platform the app runs on: desktop and phones.
 
 ## Status (2026-11-27)
 
-Steps 1 to 6 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
+Steps 1 to 7 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
 files inside an email are listed with a Save button, the cap is 32 MB, and
 body search, drop and paste, MCP reading and the export round trip are all in.
 
@@ -171,8 +171,9 @@ So:
 - Markdown import turns a link to `attachments/<hash>.eml` or
   `oyot-attachment://<hash>` whose hash is a content hash back into a chip,
   with the link text as its subject, beside `storedImage` in
-  `import/markdown.ts`. Sender and date are filled in from `read_email` when
-  the bytes are on the device.
+  `import/markdown.ts`. The sender and date are shown in its tooltip, read from the email by
+  `email_summary` once the bytes are here, and not written into the note,
+  since opening a note never changes it (ADR 0044).
 - MCP's note Markdown writes it as `[Subject](oyot-attachment://<hash>)`,
   the same link the archive falls back to, and reads that back as the chip.
   This matters beyond reading: an MCP edit rewrites a note from its Markdown,

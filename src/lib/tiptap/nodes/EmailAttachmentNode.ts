@@ -36,6 +36,19 @@ async function isHeld(hash: string): Promise<boolean> {
     }
 }
 
+async function headersOf(
+    hash: string,
+): Promise<{ from: string | null; date: string | null } | null> {
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke<{ from: string | null; date: string | null } | null>('email_summary', {
+            hash,
+        });
+    } catch {
+        return null;
+    }
+}
+
 /** What a chip says when the email has no subject. */
 export const NO_SUBJECT = '(no subject)';
 
@@ -143,7 +156,17 @@ export const EmailAttachmentNode = Node.create({
                 if (!alive) return;
                 dom.classList.toggle('email-attachment-pending', !held);
                 dom.title = held ? tooltip : [tooltip, NOT_HERE_YET].filter(Boolean).join('\n');
-                if (held) return;
+                if (held) {
+                    // A chip read back from Markdown has only its subject. Its
+                    // sender and date are shown from the email itself, and not
+                    // written into the note: opening a note never changes it
+                    // (ADR 0044), and the email is where they are kept anyway.
+                    if (!tooltip) {
+                        const read = await headersOf(hash);
+                        if (alive && read) dom.title = emailTooltip(read.from, read.date);
+                    }
+                    return;
+                }
                 const { onAttachmentReady, requestAttachment } = await import('../attachments');
                 if (!alive) return;
                 requestAttachment(hash);

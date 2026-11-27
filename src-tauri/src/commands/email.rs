@@ -348,6 +348,25 @@ pub async fn read_email(
         .map(Some)
 }
 
+/// The headers a chip shows, read from an email this device holds. For a
+/// chip that came without them, as one read back from Markdown does. `None`
+/// while the email is not here.
+#[tauri::command]
+pub async fn email_summary(
+    state: tauri::State<'_, AppState>,
+    hash: String,
+) -> Result<Option<EmailSummary>, String> {
+    let Some((mime, bytes)) = read_attachment_bytes(&state.db, &state.data_dir, &hash)? else {
+        return Ok(None);
+    };
+    if !attachment_types::is_email(&mime) {
+        return Err("that attachment is not an email".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || Some(summarize(&bytes)))
+        .await
+        .map_err(|e| format!("reading the email stopped unexpectedly: {e}"))
+}
+
 /// What the preview shows of an email.
 pub fn view_of(bytes: &[u8]) -> Result<EmailView, String> {
     let message = mail_parser::MessageParser::new()
@@ -1013,11 +1032,16 @@ Inside.\r\n\
     #[test]
     fn an_emails_words_are_its_text_not_its_markup() {
         let html = b"From: a@example.com\r\nSubject: S\r\nContent-Type: text/html\r\n\r\n\
-<style>.x{color:red}</style><p>Hello <b>there</b></p>\r\n";
+<style>.x{color:red}</style><p>Hello <b>there</b></p><script>steal()</script>\r\n";
         let (subject, body) = search_text(html);
         assert_eq!(subject.as_deref(), Some("S"));
         assert!(body.contains("Hello there"), "{body:?}");
         assert!(!body.contains('<'), "{body:?}");
+        assert!(
+            !body.contains("color:red"),
+            "a style is not words: {body:?}"
+        );
+        assert!(!body.contains("steal"), "a script is not words: {body:?}");
     }
 
     #[test]

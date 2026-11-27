@@ -934,6 +934,7 @@ pub fn run() {
             pick_and_import_image,
             pick_and_import_email,
             read_email,
+            email_summary,
             save_email_part,
             save_email,
             accept_dropped_emails,
