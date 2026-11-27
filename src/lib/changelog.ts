@@ -36,6 +36,50 @@ export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
 
 export const RELEASES: Release[] = [
     {
+        version: '0.0.38-alpha',
+        date: '2026-11-27',
+        summary:
+            'Emails can be attached to notes, HTML files can be imported, and HTML code blocks are shown as pages while reading.',
+        changes: [
+            {
+                kind: 'added',
+                text: 'An email (.eml) can be attached to a note with Attach Email in the / menu, or by pasting or dropping it. Click it to read it over the note, and save any file it carries.',
+            },
+            {
+                kind: 'added',
+                text: 'Search finds a note by the subject and words of an email attached to it.',
+            },
+            {
+                kind: 'added',
+                text: 'Import takes an HTML file and makes a note of it.',
+            },
+            {
+                kind: 'added',
+                text: 'An html code block is shown as the page it makes while you read a note, with a button to switch to its code and one to view it full size. Its scripts do not run and its links do not open.',
+            },
+            {
+                kind: 'added',
+                text: 'AI assistants can save an HTML page as a note, and read an email attached to one.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Dropping a picture from your file manager onto a note on a computer now adds it, instead of doing nothing.',
+            },
+            {
+                kind: 'fixed',
+                text: 'Opening a note no longer deletes content a newer version of Oyot wrote. It is kept and shown as a placeholder.',
+            },
+            {
+                kind: 'fixed',
+                text: 'A note holding a damaged attribute, from a paste or another device, now opens instead of failing every time.',
+            },
+            {
+                kind: 'security',
+                text: 'Tiptap, markdown-it and prosemirror-view are updated, fixing a way crafted attributes could become live page attributes and a slow parse of crafted Markdown links.',
+            },
+        ],
+    },
+    {
         version: '0.0.37-alpha',
         date: '2026-11-22',
         summary:
