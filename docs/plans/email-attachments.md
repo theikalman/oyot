@@ -10,9 +10,20 @@ Every platform the app runs on: desktop and phones.
 
 ## Status (2026-11-27)
 
-Steps 1 to 7 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
-files inside an email are listed with a Save button, the cap is 32 MB, and
-body search, drop and paste, MCP reading and the export round trip are all in.
+All eight steps done on `feat/email-store`, recorded in
+[ADR 0046](../decisions/0046-attach-emails-to-notes.md). Differences from the
+plan below:
+
+- MCP writes an email as `[Subject](oyot-attachment://<hash>)`, the same link
+  the archive falls back to, with no `email:` prefix.
+- Drops from the system share `commands/dropped.rs` with pictures (#104).
+- A chip read back from an archive shows its sender and date from the email,
+  and does not write them into the note.
+- The changelog gets its entry with the version bump, as `changelog.ts` asks.
+
+Still to do before ADR 0046 is accepted: release ADR 0044 first; try the
+picker, a drop from the file manager and the preview in the running app on
+Linux, and the picker, Back and the preview on Android.
 
 ## What already works
 

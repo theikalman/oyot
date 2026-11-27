@@ -119,12 +119,24 @@ is nothing for a caller to supply. Plugin ACLs constrain the webview, not
 Rust. Avoid reaching for `@tauri-apps/plugin-fs` in the frontend; add a
 command instead.
 
-**Attachments are raster only, decided by their content.** Every entry point
-goes through `store_attachment`, which identifies the type from the bytes
-themselves, rejects anything that is not PNG, JPEG, GIF or WebP, and enforces
-the 10MB cap. A declared type that disagrees with the content is an error. SVG
-is excluded on purpose: it can carry script, and an attachment from a peer is
-rendered in the webview.
+**Attachments are pictures and emails, decided by their content.** Every entry
+point goes through `store_attachment`, which identifies the type from the bytes
+themselves and rejects anything that is not PNG, JPEG, GIF, WebP or an email.
+Each type has its own cap, 10 MB for a picture and 32 MB for an email, kept in
+`attachment_types.rs` with the sniffing, which the sync session shares. A
+declared type that disagrees with the content is an error. SVG is excluded on
+purpose: it can carry script, and an attachment from a peer is rendered in the
+webview.
+
+**An email is read in Rust and never loaded by the page.** `read_email` parses
+it and hands the page headers, a body and a list of files; the HTML body is
+shown in the frame below, and `get_local_blob_url` gives no asset address for
+an email. A file it carries is written by `save_email_part` through a native
+save dialog, under a name reduced to a plain one, and never opened. Files
+dropped from the system arrive as window events with their paths, which
+`commands/dropped.rs` holds behind a one-time token; the page names the drop by
+the token and never by a path. See
+[ADR 0046](docs/decisions/0046-attach-emails-to-notes.md).
 
 **Writing out is the same shape as reading in.** Exporting notes
 (`export_notes`) takes rendered Markdown from the webview and does every
