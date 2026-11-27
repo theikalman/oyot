@@ -339,6 +339,174 @@ fn part_name(part: &MessagePart<'_>) -> String {
     "Unnamed file".to_string()
 }
 
+// --- saving a file an email carries ------------------------------------
+
+/// The longest file name suggested to the save dialog, in characters.
+const MAX_FILE_NAME_CHARS: usize = 180;
+
+/// Save one of the files an email carries where the user chooses.
+///
+/// Rust opens the save dialog and writes the file, so neither where it goes
+/// nor what is in it passes through the webview, which renders content from
+/// peers. Nothing is opened: handing a file from a peer to whatever the
+/// system opens it with is the user's to do, from where they saved it.
+///
+/// Returns the name it was saved under, or `None` when the user cancels.
+#[tauri::command]
+pub async fn save_email_part(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    hash: String,
+    index: usize,
+) -> Result<Option<String>, String> {
+    let Some((mime, bytes)) = read_attachment_bytes(&state.db, &state.data_dir, &hash)? else {
+        return Err("this email is not on this device yet".to_string());
+    };
+    if !attachment_types::is_email(&mime) {
+        return Err("that attachment is not an email".to_string());
+    }
+    let (name, contents) = tauri::async_runtime::spawn_blocking(move || part_of(&bytes, index))
+        .await
+        .map_err(|e| format!("reading the email stopped unexpectedly: {e}"))??;
+    let suggested = safe_file_name(&name);
+
+    // Blocking, which is why this command is async: Tauri runs an async
+    // command off the main thread, which is where the plugin requires this
+    // call to be.
+    let Some(destination) = app
+        .dialog()
+        .file()
+        .set_file_name(&suggested)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let saved_as = picked::file_name(&destination).unwrap_or(suggested);
+
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || write_file(&handle, &destination, &contents))
+        .await
+        .map_err(|e| format!("saving the file stopped unexpectedly: {e}"))??;
+    Ok(Some(saved_as))
+}
+
+/// The name and the bytes of the `index`-th file an email carries, counted
+/// as `view_of` lists them.
+fn part_of(bytes: &[u8], index: usize) -> Result<(String, Vec<u8>), String> {
+    let message = mail_parser::MessageParser::new()
+        .parse(bytes)
+        .ok_or_else(|| "this email could not be read".to_string())?;
+    let part = message
+        .attachments()
+        .nth(index)
+        .ok_or_else(|| "this email has no such file".to_string())?;
+    Ok((part_name(&part), part.decoded().into_owned()))
+}
+
+/// Write the file where the dialog said.
+fn write_file(app: &AppHandle, destination: &FilePath, contents: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    match destination {
+        // Beside it first and renamed over it, so the destination is only
+        // ever the old file or the whole new one.
+        FilePath::Path(path) => write_to_path(path, contents),
+        // A phone's content URI, which cannot be written beside and renamed.
+        FilePath::Url(_) => {
+            use tauri_plugin_fs::{FsExt, OpenOptions};
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            let mut output = app
+                .fs()
+                .open(destination.clone(), options)
+                .map_err(|e| format!("could not open the chosen file: {e}"))?;
+            output
+                .write_all(contents)
+                .and_then(|_| output.flush())
+                .map_err(|e| format!("could not save the file: {e}"))
+        }
+    }
+}
+
+/// Write beside the destination first and rename over it, so the
+/// destination is only ever the old file or the whole new one.
+fn write_to_path(path: &std::path::Path, contents: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let partial = path.with_file_name(format!(".{name}.partial"));
+    let result = (|| -> std::io::Result<()> {
+        let mut output = std::fs::File::create(&partial)?;
+        output.write_all(contents)?;
+        output.sync_all()?;
+        // Closed before the rename, which Windows refuses on an open file.
+        drop(output);
+        std::fs::rename(&partial, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    // The name only: the error reaches the webview, and the folder is the
+    // user's to know, not the page's.
+    result.map_err(|e| format!("could not save {name}: {e}"))
+}
+
+/// A name a file can be saved under on any system, from whatever an email
+/// called it.
+///
+/// Only a name: anything before the last slash of either kind is dropped, so
+/// `../../x` suggests `x` and never a folder. Characters no system allows, or
+/// that Windows gives a meaning to, become `_`. Names Windows reserves for
+/// devices are prefixed, leading dots (a hidden file) and trailing dots and
+/// spaces (which Windows drops) are taken off, and a long name is shortened
+/// keeping its extension.
+pub fn safe_file_name(name: &str) -> String {
+    let last = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = last
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches(['.', ' '])
+        .to_string();
+    if trimmed.is_empty() || trimmed.chars().all(|c| c == '_') {
+        return "file".to_string();
+    }
+
+    let stem = trimmed.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    let named = if reserved {
+        format!("_{trimmed}")
+    } else {
+        trimmed
+    };
+
+    if named.chars().count() <= MAX_FILE_NAME_CHARS {
+        return named;
+    }
+    // Keep a short extension, and as much of the rest as fits before it.
+    let (base, ext) = match named.rsplit_once('.') {
+        Some((base, ext)) if !base.is_empty() && ext.chars().count() <= 10 => {
+            (base.to_string(), format!(".{ext}"))
+        }
+        _ => (named.clone(), String::new()),
+    };
+    let keep = MAX_FILE_NAME_CHARS - ext.chars().count();
+    format!("{}{ext}", base.chars().take(keep).collect::<String>())
+}
+
 /// A header as a note keeps it: on one line, trimmed, and not too long.
 fn header_text(value: &str) -> Option<String> {
     let line = value.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -480,9 +648,7 @@ Content-Disposition: inline\r\n\
         assert!(html.contains("https://tracker.example/p.gif"));
     }
 
-    #[test]
-    fn files_and_forwarded_emails_are_listed() {
-        let email = b"From: Ana <ana@example.com>\r\n\
+    const FILES: &[u8] = b"From: Ana <ana@example.com>\r\n\
 Subject: Files\r\n\
 MIME-Version: 1.0\r\n\
 Content-Type: multipart/mixed; boundary=\"m\"\r\n\
@@ -506,7 +672,10 @@ Subject: Earlier note\r\n\
 \r\n\
 Inside.\r\n\
 --m--\r\n";
-        let view = view_of(email).unwrap();
+
+    #[test]
+    fn files_and_forwarded_emails_are_listed() {
+        let view = view_of(FILES).unwrap();
         assert_eq!(view.text.as_deref().map(str::trim), Some("Attached."));
         assert_eq!(
             view.parts,
@@ -538,5 +707,86 @@ Inside.\r\n\
         assert!(view.html.unwrap().contains("cid:pic@x"));
         assert_eq!(view.parts.len(), 1);
         assert_eq!(view.parts[0].mime, "image/svg+xml");
+    }
+
+    // --- saving ----------------------------------------------------------
+
+    #[test]
+    fn a_file_is_saved_as_the_email_carries_it() {
+        let (name, bytes) = part_of(FILES, 0).unwrap();
+        assert_eq!(name, "report.pdf");
+        assert_eq!(bytes, b"%PDF-1.4");
+
+        let (name, bytes) = part_of(FILES, 1).unwrap();
+        assert_eq!(name, "Earlier note.eml");
+        assert!(bytes.starts_with(b"From: Bo <bo@example.com>"), "{bytes:?}");
+    }
+
+    #[test]
+    fn a_file_past_the_last_is_refused() {
+        assert_eq!(
+            part_of(FILES, 2).unwrap_err(),
+            "this email has no such file"
+        );
+    }
+
+    // An email names its files, and the email is a peer's: the name must not
+    // say where the file goes.
+    #[test]
+    fn a_name_is_only_ever_a_name() {
+        assert_eq!(
+            safe_file_name("../../.ssh/authorized_keys"),
+            "authorized_keys"
+        );
+        assert_eq!(safe_file_name("..\\..\\Windows\\evil.dll"), "evil.dll");
+        assert_eq!(safe_file_name("/etc/passwd"), "passwd");
+        assert_eq!(safe_file_name(".bashrc"), "bashrc");
+        assert_eq!(safe_file_name("../"), "file");
+        assert_eq!(safe_file_name(".."), "file");
+        assert_eq!(safe_file_name(""), "file");
+    }
+
+    #[test]
+    fn a_name_has_nothing_a_system_refuses() {
+        assert_eq!(safe_file_name("a:b*c?.pdf"), "a_b_c_.pdf");
+        assert_eq!(safe_file_name("line\nbreak.txt"), "line_break.txt");
+        assert_eq!(safe_file_name("report.pdf. . "), "report.pdf");
+        assert_eq!(safe_file_name("CON.txt"), "_CON.txt");
+        assert_eq!(safe_file_name("com1"), "_com1");
+        assert_eq!(safe_file_name("console.txt"), "console.txt");
+        assert_eq!(safe_file_name("Café plans.pdf"), "Café plans.pdf");
+        assert_eq!(safe_file_name("***"), "file");
+    }
+
+    #[test]
+    fn a_long_name_keeps_its_extension() {
+        let long = format!("{}.pdf", "x".repeat(500));
+        let safe = safe_file_name(&long);
+        assert_eq!(safe.chars().count(), MAX_FILE_NAME_CHARS);
+        assert!(safe.ends_with("x.pdf"));
+    }
+
+    #[test]
+    fn a_saved_file_replaces_one_there_whole() {
+        let dir = std::env::temp_dir().join(format!("oyot-email-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("report.pdf");
+        std::fs::write(&path, b"old").unwrap();
+
+        write_to_path(&path, b"%PDF-1.4").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"%PDF-1.4");
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(left.len(), 1, "no partial file is left behind");
+    }
+
+    #[test]
+    fn a_failed_save_says_the_name_and_not_the_folder() {
+        let path = std::env::temp_dir()
+            .join(format!("oyot-missing-{}", uuid::Uuid::new_v4()))
+            .join("report.pdf");
+        let error = write_to_path(&path, b"x").unwrap_err();
+        assert!(error.starts_with("could not save report.pdf"), "{error}");
+        assert!(!error.contains("oyot-missing"), "{error}");
     }
 }

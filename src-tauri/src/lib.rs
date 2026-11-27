@@ -897,6 +897,7 @@ pub fn run() {
             pick_and_import_image,
             pick_and_import_email,
             read_email,
+            save_email_part,
             cleanup_orphaned_images,
             list_unindexed_documents,
             get_attachment_info,

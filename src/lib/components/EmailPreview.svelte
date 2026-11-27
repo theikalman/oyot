@@ -3,7 +3,8 @@
     import { createFrame, fitToWholePage } from '$lib/editor/htmlPreview/frame';
     import { onAttachmentReady, requestAttachment } from '$lib/tiptap/attachments';
     import { NO_SUBJECT } from '$lib/tiptap/nodes/EmailAttachmentNode';
-    import { fileSize, headerLines, type EmailView } from '$lib/email/view';
+    import { fileSize, headerLines, type EmailPart, type EmailView } from '$lib/email/view';
+    import { toasts } from '$lib/services/toast';
 
     interface Props {
         hash: string;
@@ -19,6 +20,8 @@
     let view = $state<EmailView | null>(null);
     let failure = $state('');
     let closeButton = $state<HTMLButtonElement | null>(null);
+    /** The file being saved, so its button cannot be pressed twice. */
+    let saving = $state<number | null>(null);
 
     const title = $derived(view?.subject ?? subject ?? NO_SUBJECT);
 
@@ -62,6 +65,26 @@
     }
 
     /** The email's own HTML, in a frame that runs nothing (ADR 0043). */
+    /**
+     * Save one of the email's files. Rust asks where and writes it, so the
+     * page never holds the path or the bytes.
+     */
+    async function save(part: EmailPart): Promise<void> {
+        if (saving !== null) return;
+        saving = part.index;
+        try {
+            const savedAs = await invoke<string | null>('save_email_part', {
+                hash,
+                index: part.index,
+            });
+            if (savedAs) toasts.success(`Saved ${savedAs}`);
+        } catch (error) {
+            toasts.error(typeof error === 'string' ? error : `Could not save ${part.name}`);
+        } finally {
+            saving = null;
+        }
+    }
+
     function showPage(holder: HTMLElement, html: string) {
         const frame = createFrame(html);
         frame.title = 'Email';
@@ -158,6 +181,15 @@
                                     >
                                     <span class="file-name">{part.name}</span>
                                     <span class="file-size">{fileSize(part.size)}</span>
+                                    <button
+                                        class="file-save"
+                                        type="button"
+                                        disabled={saving !== null}
+                                        aria-label={`Save ${part.name}`}
+                                        onclick={() => save(part)}
+                                    >
+                                        {saving === part.index ? 'Saving…' : 'Save'}
+                                    </button>
                                 </li>
                             {/each}
                         </ul>
@@ -328,6 +360,28 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+
+    .file-save {
+        flex: none;
+        padding: 4px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+
+    .file-save:hover:not(:disabled),
+    .file-save:focus-visible {
+        background: var(--bg-hover);
+    }
+
+    .file-save:disabled {
+        cursor: default;
+        opacity: 0.6;
     }
 
     .file-size {
