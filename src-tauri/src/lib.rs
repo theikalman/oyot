@@ -769,7 +769,10 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![desktop::HIDDEN_FLAG]),
         ))
-        .on_window_event(desktop::close::on_window_event);
+        .on_window_event(|window, event| {
+            desktop::close::on_window_event(window, event);
+            commands::dropped::on_window_event(window, event);
+        });
 
     builder
         .setup(|app| {
@@ -813,6 +816,7 @@ pub fn run() {
             ));
             app.manage(state);
             app.manage(BackupState::default());
+            app.manage(commands::dropped::DroppedFiles::default());
             // Whatever remote destinations this build has credentials for
             // (ADR 0025). None, in a build without them.
             app.manage(crate::backup::remote::Providers::for_this_build(
@@ -894,6 +898,7 @@ pub fn run() {
             save_keyboard_shortcuts,
             save_image,
             pick_and_import_image,
+            accept_dropped_files,
             cleanup_orphaned_images,
             list_unindexed_documents,
             get_attachment_info,
