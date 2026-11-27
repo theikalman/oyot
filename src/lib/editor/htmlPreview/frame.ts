@@ -82,6 +82,28 @@ export function fitToPage(frame: HTMLIFrameElement): void {
 }
 
 /**
+ * Keep a frame as tall as its whole page, with no limit, as its width
+ * changes: for a page read on its own, which scrolls with what is around it
+ * rather than inside itself.
+ */
+export function fitToWholePage(frame: HTMLIFrameElement, minHeight = MIN_HEIGHT): void {
+    let width = -1;
+    const fit = () => {
+        const page = pageIn(frame);
+        if (!page) return;
+        width = frame.clientWidth;
+        // Measured short, so a page that fills its window is as tall as what
+        // is in it rather than as tall as it was last time.
+        frame.style.height = `${minHeight}px`;
+        frame.style.height = `${Math.max(page.scrollHeight, minHeight)}px`;
+    };
+    frame.addEventListener('load', fit);
+    new ResizeObserver(() => {
+        if (frame.isConnected && frame.clientWidth !== width) fit();
+    }).observe(frame);
+}
+
+/**
  * The root of the page in a frame.
  *
  * Asked for through `Document.prototype`, because a page can name an element

@@ -6,9 +6,12 @@
 //! shows of an email is what this module parses out of it.
 
 use crate::attachment_types::{self, EMAIL_MIME, MAX_EMAIL_BYTES};
-use crate::commands::attachments::{announce_image, store_attachment};
+use crate::commands::attachments::{announce_image, read_attachment_bytes, store_attachment};
 use crate::commands::picked;
 use crate::db::AppState;
+use base64::Engine;
+use mail_parser::{AddressList, Mailbox, Message, MessagePart};
+use std::collections::HashSet;
 use std::io::Read;
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -122,15 +125,7 @@ pub fn summarize(bytes: &[u8]) -> EmailSummary {
     let from = message
         .from()
         .and_then(|list| list.first())
-        .and_then(|mailbox| {
-            let name = mailbox.name().map(str::trim).filter(|s| !s.is_empty());
-            let address = mailbox.address().map(str::trim).filter(|s| !s.is_empty());
-            match (name, address) {
-                (Some(name), Some(address)) => Some(format!("{name} <{address}>")),
-                (Some(only), None) | (None, Some(only)) => Some(only.to_string()),
-                (None, None) => None,
-            }
-        });
+        .and_then(mailbox_text);
     EmailSummary {
         subject: message.subject().and_then(header_text),
         from: from.as_deref().and_then(header_text),
@@ -139,6 +134,209 @@ pub fn summarize(bytes: &[u8]) -> EmailSummary {
             .filter(|date| date.is_valid())
             .map(|date| date.to_rfc3339()),
     }
+}
+
+/// A mailbox as `Name <address>`, or whichever of the two it has.
+fn mailbox_text(mailbox: Mailbox<'_>) -> Option<String> {
+    let name = mailbox.name().map(str::trim).filter(|s| !s.is_empty());
+    let address = mailbox.address().map(str::trim).filter(|s| !s.is_empty());
+    match (name, address) {
+        (Some(name), Some(address)) => Some(format!("{name} <{address}>")),
+        (Some(only), None) | (None, Some(only)) => Some(only.to_string()),
+        (None, None) => None,
+    }
+}
+
+// --- reading an email ----------------------------------------------------
+
+/// The most of an email's pictures put into its page. Each is base64 inside
+/// the HTML handed to the page, a third larger again, so a picture past this
+/// is listed as a file instead.
+const MAX_INLINED_BYTES: usize = 16 * 1024 * 1024;
+
+/// The pictures an email's page may show from inside it: the raster types
+/// the attachment store takes, so not SVG.
+const INLINE_IMAGE_TYPES: [&str; 5] = ["png", "jpeg", "jpg", "gif", "webp"];
+
+/// An email as the preview shows it.
+///
+/// Plain data only. The HTML is the email's own, hostile, and shown by the
+/// page in a frame that runs nothing (ADR 0043); everything else is set as
+/// text.
+#[derive(Debug, serde::Serialize)]
+pub struct EmailView {
+    pub subject: Option<String>,
+    pub from: Option<String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub date: Option<String>,
+    /// The HTML body, with the pictures it carries put in as `data:`
+    /// addresses. None for an email that has none.
+    pub html: Option<String>,
+    /// The text body, given only when there is no HTML one.
+    pub text: Option<String>,
+    /// The files it carries.
+    pub parts: Vec<EmailPart>,
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct EmailPart {
+    /// Where it is among the email's attachments, to ask for it by.
+    pub index: usize,
+    pub name: String,
+    pub mime: String,
+    pub size: u64,
+}
+
+/// An email this device holds, read for the preview. `None` while its bytes
+/// have not arrived from another device.
+#[tauri::command]
+pub async fn read_email(
+    state: tauri::State<'_, AppState>,
+    hash: String,
+) -> Result<Option<EmailView>, String> {
+    let Some((mime, bytes)) = read_attachment_bytes(&state.db, &state.data_dir, &hash)? else {
+        return Ok(None);
+    };
+    if !attachment_types::is_email(&mime) {
+        return Err("that attachment is not an email".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || view_of(&bytes))
+        .await
+        .map_err(|e| format!("reading the email stopped unexpectedly: {e}"))?
+        .map(Some)
+}
+
+/// What the preview shows of an email.
+pub fn view_of(bytes: &[u8]) -> Result<EmailView, String> {
+    let message = mail_parser::MessageParser::new()
+        .parse(bytes)
+        .ok_or_else(|| "this email could not be read".to_string())?;
+    let summary = summarize(bytes);
+
+    // `html_bodies` makes HTML of a text body too, so whether there is an
+    // HTML body is asked of the parts.
+    let has_html = message
+        .html_body()
+        .any(|part| part.is_content_type("text", "html"));
+    let mut inlined = HashSet::new();
+    let (html, text) = if has_html {
+        let html = message.html_bodies().collect::<Vec<_>>().join("\n");
+        (Some(with_pictures(&message, html, &mut inlined)), None)
+    } else {
+        let text = message.text_bodies().collect::<Vec<_>>().join("\n\n");
+        (None, Some(text))
+    };
+
+    let parts = message
+        .attachments()
+        .enumerate()
+        .filter(|(_, part)| !inlined.contains(&part.id()))
+        .map(|(index, part)| EmailPart {
+            index,
+            name: part_name(&part),
+            mime: part_type(&part),
+            size: part.decoded_len() as u64,
+        })
+        .collect();
+
+    Ok(EmailView {
+        subject: summary.subject,
+        from: summary.from,
+        to: addresses(message.to()),
+        cc: addresses(message.cc()),
+        date: summary.date,
+        html,
+        text,
+        parts,
+    })
+}
+
+fn addresses(list: Option<AddressList<'_>>) -> Vec<String> {
+    list.map(|list| list.mailboxes().filter_map(mailbox_text).collect())
+        .unwrap_or_default()
+}
+
+/// The HTML with the email's own pictures in it.
+///
+/// A picture the HTML names by `cid:` takes the place of that address. One
+/// the HTML does not name, but which the email shows as part of its body, is
+/// put after it, which is where a mail client shows one. Remote pictures are
+/// left as they are, for the frame's policy to refuse, as a mail client does
+/// by default: they are how a sender learns an email was opened.
+fn with_pictures(message: &Message<'_>, mut html: String, inlined: &mut HashSet<u32>) -> String {
+    let mut budget = MAX_INLINED_BYTES;
+    let mut seen = HashSet::new();
+    let mut after = String::new();
+    for part in message.html_body().chain(message.attachments()) {
+        if !seen.insert(part.id()) || !is_inline_picture(&part) {
+            continue;
+        }
+        let named = part
+            .content_id()
+            .map(|id| id.trim().trim_start_matches('<').trim_end_matches('>'))
+            .filter(|id| !id.is_empty())
+            .map(|id| format!("cid:{id}"));
+        let referenced = named.as_deref().is_some_and(|name| html.contains(name));
+        if !referenced && !part.in_html_body() {
+            continue;
+        }
+        let bytes = part.decoded();
+        if bytes.len() > budget {
+            continue;
+        }
+        budget -= bytes.len();
+        let uri = format!(
+            "data:{};base64,{}",
+            part_type(&part),
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        match named {
+            Some(name) if referenced => html = html.replace(&name, &uri),
+            _ => after.push_str(&format!("<p><img src=\"{uri}\" alt=\"\"></p>")),
+        }
+        inlined.insert(part.id());
+    }
+    html + &after
+}
+
+fn is_inline_picture(part: &MessagePart<'_>) -> bool {
+    part.content_type().is_some_and(|ct| {
+        ct.ctype().eq_ignore_ascii_case("image")
+            && ct.subtype().is_some_and(|sub| {
+                INLINE_IMAGE_TYPES
+                    .iter()
+                    .any(|allowed| sub.eq_ignore_ascii_case(allowed))
+            })
+    })
+}
+
+fn part_type(part: &MessagePart<'_>) -> String {
+    match part.content_type() {
+        Some(ct) => match ct.subtype() {
+            Some(sub) => format!("{}/{}", ct.ctype(), sub).to_ascii_lowercase(),
+            None => ct.ctype().to_ascii_lowercase(),
+        },
+        None => "application/octet-stream".to_string(),
+    }
+}
+
+/// What a file in an email is called: its own name, a forwarded email's
+/// subject, or what it is.
+fn part_name(part: &MessagePart<'_>) -> String {
+    if let Some(name) = part.attachment_name().and_then(header_text) {
+        return name;
+    }
+    if let Some(subject) = part
+        .nested()
+        .and_then(|nested| nested.subject().and_then(header_text))
+    {
+        return format!("{subject}.eml");
+    }
+    if part.is_message() {
+        return "Forwarded email.eml".to_string();
+    }
+    "Unnamed file".to_string()
 }
 
 /// A header as a note keeps it: on one line, trimmed, and not too long.
@@ -212,5 +410,133 @@ See you there.\r\n";
         let big = [b'x'; 64];
         assert!(read_capped(&big[..], 63).is_err());
         assert_eq!(read_capped(&big[..], 64).unwrap().len(), 64);
+    }
+
+    // --- reading ---------------------------------------------------------
+
+    /// A one-pixel PNG, base64, as an email carries it.
+    const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+    fn related(html: &str, cid: &str) -> Vec<u8> {
+        format!(
+            "From: Ana <ana@example.com>\r\n\
+To: Bo <bo@example.com>, cy@example.com\r\n\
+Cc: Di <di@example.com>\r\n\
+Subject: Pictures\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/related; boundary=\"r\"\r\n\
+\r\n\
+--r\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+{html}\r\n\
+--r\r\n\
+Content-Type: image/png\r\n\
+Content-Transfer-Encoding: base64\r\n\
+Content-ID: <{cid}>\r\n\
+Content-Disposition: inline\r\n\
+\r\n\
+{PIXEL}\r\n\
+--r--\r\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_text_email_is_read_as_text() {
+        let view = view_of(EMAIL).unwrap();
+        assert_eq!(view.subject.as_deref(), Some("Café plans"));
+        assert_eq!(view.to, vec!["you@example.com"]);
+        assert!(view.cc.is_empty());
+        assert_eq!(view.html, None);
+        assert_eq!(view.text.as_deref().map(str::trim), Some("See you there."));
+        assert!(view.parts.is_empty());
+    }
+
+    #[test]
+    fn a_picture_named_by_cid_is_put_in_the_page() {
+        let view = view_of(&related("<p>Look</p><img src=\"cid:pic@x\">", "pic@x")).unwrap();
+        let html = view.html.unwrap();
+        assert!(
+            html.contains(&format!("src=\"data:image/png;base64,{PIXEL}\"")),
+            "{html}"
+        );
+        assert!(!html.contains("cid:"));
+        assert!(view.parts.is_empty(), "a picture in the page is not a file");
+        assert_eq!(view.to, vec!["Bo <bo@example.com>", "cy@example.com"]);
+        assert_eq!(view.cc, vec!["Di <di@example.com>"]);
+    }
+
+    // Remote pictures are how a sender learns an email was opened. The page's
+    // policy refuses them; nothing here makes them local.
+    #[test]
+    fn a_remote_picture_is_left_for_the_page_to_refuse() {
+        let view = view_of(&related(
+            "<img src=\"https://tracker.example/p.gif\">",
+            "unused@x",
+        ))
+        .unwrap();
+        let html = view.html.unwrap();
+        assert!(html.contains("https://tracker.example/p.gif"));
+    }
+
+    #[test]
+    fn files_and_forwarded_emails_are_listed() {
+        let email = b"From: Ana <ana@example.com>\r\n\
+Subject: Files\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"m\"\r\n\
+\r\n\
+--m\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Attached.\r\n\
+--m\r\n\
+Content-Type: application/pdf; name=\"report.pdf\"\r\n\
+Content-Disposition: attachment; filename=\"report.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+JVBERi0xLjQ=\r\n\
+--m\r\n\
+Content-Type: message/rfc822\r\n\
+Content-Disposition: attachment\r\n\
+\r\n\
+From: Bo <bo@example.com>\r\n\
+Subject: Earlier note\r\n\
+\r\n\
+Inside.\r\n\
+--m--\r\n";
+        let view = view_of(email).unwrap();
+        assert_eq!(view.text.as_deref().map(str::trim), Some("Attached."));
+        assert_eq!(
+            view.parts,
+            vec![
+                EmailPart {
+                    index: 0,
+                    name: "report.pdf".into(),
+                    mime: "application/pdf".into(),
+                    size: 8,
+                },
+                EmailPart {
+                    index: 1,
+                    name: "Earlier note.eml".into(),
+                    mime: "message/rfc822".into(),
+                    size: view.parts[1].size,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_picture_the_page_may_not_show_is_a_file() {
+        // SVG is never put in the page, which would let a peer's email carry
+        // a script-bearing document into it, so it is listed instead.
+        let svg = String::from_utf8(related("<img src=\"cid:pic@x\">", "pic@x"))
+            .unwrap()
+            .replace("Content-Type: image/png", "Content-Type: image/svg+xml");
+        let view = view_of(svg.as_bytes()).unwrap();
+        assert!(view.html.unwrap().contains("cid:pic@x"));
+        assert_eq!(view.parts.len(), 1);
+        assert_eq!(view.parts[0].mime, "image/svg+xml");
     }
 }

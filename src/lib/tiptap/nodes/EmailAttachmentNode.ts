@@ -20,6 +20,22 @@ export interface EmailViewRequest {
     subject: string | null;
 }
 
+/** Added to a chip's tooltip while the email is still on its way. */
+const NOT_HERE_YET = 'Not on this device yet';
+
+async function isHeld(hash: string): Promise<boolean> {
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const info = await invoke<{ is_fully_downloaded: boolean } | null>('get_attachment_info', {
+            hash,
+        });
+        return info?.is_fully_downloaded === true;
+    } catch {
+        // Not knowing is not the same as missing: show it as it is.
+        return true;
+    }
+}
+
 /** What a chip says when the email has no subject. */
 export const NO_SUBJECT = '(no subject)';
 
@@ -89,7 +105,8 @@ export const EmailAttachmentNode = Node.create({
             const dom = document.createElement('span');
             dom.setAttribute('data-type', 'email-attachment');
             dom.className = 'email-attachment';
-            dom.title = emailTooltip(textOf(node.attrs.from), textOf(node.attrs.date));
+            const tooltip = emailTooltip(textOf(node.attrs.from), textOf(node.attrs.date));
+            dom.title = tooltip;
 
             const icon = document.createElement('span');
             icon.className = 'email-attachment-icon';
@@ -114,7 +131,34 @@ export const EmailAttachmentNode = Node.create({
                 );
             });
 
-            return { dom };
+            // Whether this device holds the email yet. Looked up here, and the
+            // Tauri and sync modules loaded only now, so that the schema this
+            // node is part of can be read without either: the index and the
+            // MCP tools build it with no page around them.
+            let alive = true;
+            let stopWaiting = () => {};
+            const showHeld = async () => {
+                if (!hash) return;
+                const held = await isHeld(hash);
+                if (!alive) return;
+                dom.classList.toggle('email-attachment-pending', !held);
+                dom.title = held ? tooltip : [tooltip, NOT_HERE_YET].filter(Boolean).join('\n');
+                if (held) return;
+                const { onAttachmentReady, requestAttachment } = await import('../attachments');
+                if (!alive) return;
+                requestAttachment(hash);
+                stopWaiting();
+                stopWaiting = onAttachmentReady(hash, () => void showHeld());
+            };
+            void showHeld();
+
+            return {
+                dom,
+                destroy: () => {
+                    alive = false;
+                    stopWaiting();
+                },
+            };
         };
     },
 });

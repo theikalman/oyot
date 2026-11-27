@@ -10,7 +10,7 @@ Every platform the app runs on: desktop and phones.
 
 ## Status (2026-11-27)
 
-Steps 1 and 2 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
+Steps 1 to 3 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
 files inside an email are listed with a Save button, the cap is 32 MB, and
 body search, drop and paste, MCP reading and the export round trip are all in.
 

@@ -20,6 +20,8 @@
     import CloseNoticeDialog from '$lib/components/CloseNoticeDialog.svelte';
     import { rememberWorkspacePath } from '$lib/components/SettingsShell.svelte';
     import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
+    import EmailPreview from '$lib/components/EmailPreview.svelte';
+    import { closeEmail } from '$lib/services/navigation';
     import { switcher } from '$lib/switcher/switcher.svelte';
     import '../app.css';
 
@@ -149,6 +151,17 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {@render children()}
+
+<!-- Over whatever page opened it, as a step in the history: see `openEmail`. -->
+{#if page.state.email}
+    {#key page.state.email.hash}
+        <EmailPreview
+            hash={page.state.email.hash}
+            subject={page.state.email.subject}
+            onClose={closeEmail}
+        />
+    {/key}
+{/if}
 
 <QuickSwitcher />
 
