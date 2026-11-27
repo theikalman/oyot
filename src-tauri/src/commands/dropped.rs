@@ -14,13 +14,16 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::attachment_types::MAX_EMAIL_BYTES;
 use crate::commands::attachments::{import_image_bytes, StoredImage, MAX_IMAGE_BYTES};
+use crate::commands::email::{import_email, AttachedEmail};
 use crate::db::AppState;
 
 /// The kinds of file a note takes from a drop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropKind {
     Image,
+    Email,
 }
 
 /// The kind a dropped file is taken as, by its name. Only a first sort, to
@@ -29,6 +32,7 @@ pub fn kind_of(path: &Path) -> Option<DropKind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" => Some(DropKind::Image),
+        "eml" => Some(DropKind::Email),
         _ => None,
     }
 }
@@ -114,6 +118,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 #[derive(Default, serde::Serialize)]
 pub struct DroppedResult {
     pub images: Vec<StoredImage>,
+    pub emails: Vec<AttachedEmail>,
     /// Why each one that was not stored was not, by its file name.
     pub failed: Vec<String>,
 }
@@ -144,6 +149,16 @@ pub async fn accept_dropped_files(
                     .and_then(|bytes| import_image_bytes(&state, &bytes));
                 match stored {
                     Ok(image) => result.images.push(image),
+                    Err(e) => result.failed.push(format!("{name}: {e}")),
+                }
+            }
+            Some(DropKind::Email) => {
+                let stored = std::fs::File::open(&path)
+                    .map_err(|e| format!("could not open it: {e}"))
+                    .and_then(|file| read_capped(file, MAX_EMAIL_BYTES))
+                    .and_then(|bytes| import_email(&state, &bytes));
+                match stored {
+                    Ok(email) => result.emails.push(email),
                     Err(e) => result.failed.push(format!("{name}: {e}")),
                 }
             }
@@ -205,11 +220,22 @@ mod tests {
     }
 
     #[test]
-    fn images_are_known_by_their_name_whatever_its_case() {
+    fn files_are_known_by_their_name_whatever_its_case() {
         for name in ["a.png", "a.PNG", "a.jpg", "a.Jpeg", "a.gif", "a.webp"] {
             assert_eq!(kind_of(Path::new(name)), Some(DropKind::Image), "{name}");
         }
-        for name in ["a.svg", "a.txt", "a", "png", "a.png.exe", ".png"] {
+        for name in ["a.eml", "a.EML"] {
+            assert_eq!(kind_of(Path::new(name)), Some(DropKind::Email), "{name}");
+        }
+        for name in [
+            "a.svg",
+            "a.txt",
+            "a",
+            "png",
+            "a.png.exe",
+            ".png",
+            "a.eml.txt",
+        ] {
             assert_eq!(kind_of(Path::new(name)), None, "{name}");
         }
     }
@@ -218,7 +244,7 @@ mod tests {
     fn only_files_a_note_takes_are_kept_from_a_drop() {
         let dir = std::env::temp_dir().join(format!("oyot-drop-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("folder.png")).unwrap();
-        for name in ["one.png", "notes.txt", "two.JPG"] {
+        for name in ["one.png", "notes.txt", "two.JPG", "mail.eml"] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
         let dropped = [
@@ -227,13 +253,21 @@ mod tests {
             "folder.png",
             "missing.png",
             "two.JPG",
+            "mail.eml",
         ]
         .map(|n| dir.join(n));
 
         let kept = droppable(&dropped);
         std::fs::remove_dir_all(&dir).unwrap();
 
-        assert_eq!(kept, vec![dir.join("one.png"), dir.join("two.JPG")]);
+        assert_eq!(
+            kept,
+            vec![
+                dir.join("one.png"),
+                dir.join("two.JPG"),
+                dir.join("mail.eml")
+            ]
+        );
     }
 
     #[test]

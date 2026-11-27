@@ -64,6 +64,7 @@ url = "2"
 # the same bytes, which the interop test in crdt.rs checks both ways. Upgrade
 # it, or Yjs in the webview, only with that test run.
 yrs = "0.28"
+mail-parser = { version = "1.0.1", features = ["full_encoding"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.5"

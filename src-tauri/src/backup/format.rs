@@ -6,7 +6,7 @@
 //! sync manifest or the command structs, which are free to change between
 //! releases in ways a file on someone's disk is not.
 
-use crate::commands::attachments::MAX_IMAGE_BYTES;
+use crate::attachment_types::MAX_ATTACHMENT_BYTES;
 use serde::{Deserialize, Serialize};
 
 /// What `manifest.json` says the file is.
@@ -46,8 +46,8 @@ pub struct Limits {
     pub max_json_bytes: u64,
     /// One document's Yjs state.
     pub max_state_bytes: u64,
-    /// One image. The attachment store refuses anything larger, so a bigger
-    /// one could not be imported anyway.
+    /// One attachment, of the largest type the store takes. The store holds
+    /// each type to its own cap, so a bigger one could not be imported anyway.
     pub max_attachment_bytes: u64,
     /// Every entry together, uncompressed.
     pub max_total_bytes: u64,
@@ -58,7 +58,7 @@ impl Limits {
         max_entries: 250_000,
         max_json_bytes: 64 * 1024 * 1024,
         max_state_bytes: 64 * 1024 * 1024,
-        max_attachment_bytes: MAX_IMAGE_BYTES as u64,
+        max_attachment_bytes: MAX_ATTACHMENT_BYTES as u64,
         max_total_bytes: 32 * 1024 * 1024 * 1024,
     };
 }

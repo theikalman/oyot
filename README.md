@@ -39,6 +39,11 @@ and move between paired devices over an encrypted peer-to-peer connection.
 - **HTML pages.** A code block in ` ```html ` can be seen as the page it makes
   while you read, in the note or full size. Nothing in it runs, and nothing it
   names is loaded.
+- **Emails.** Attach a `.eml` file to a note with `/email`, or paste or drop
+  one in. It sits on the line with its subject, opens over the note to be
+  read, with its files to save, and syncs with your notes. Nothing in it runs,
+  and nothing it names is loaded from the web. Search finds a note by what its
+  emails say.
 - **Document links and backlinks.** Link one note to another with `/document`.
   Each note shows what links back to it.
 - **Search.** The Search page, first under Index in the sidebar, finds your

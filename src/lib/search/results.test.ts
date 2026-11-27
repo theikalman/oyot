@@ -30,6 +30,17 @@ describe('documentResults', () => {
         ...over,
     });
 
+    it('says which attached email the words were found in', () => {
+        const [own, inEmail, untitled] = documentResults([
+            hit({ id: 'a' }),
+            hit({ id: 'b', in_email: 'Quarterly report' }),
+            hit({ id: 'c', in_email: '' }),
+        ]);
+        expect(own.inEmail).toBeNull();
+        expect(inEmail.inEmail).toBe('Quarterly report');
+        expect(untitled.inEmail).toBe('(no subject)');
+    });
+
     it('keeps the order the index ranked the hits in', () => {
         const results = documentResults([hit({ id: 'b' }), hit({ id: 'a' })]);
         expect(results.map((r) => r.key)).toEqual(['b', 'a']);

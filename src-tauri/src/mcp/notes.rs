@@ -1,5 +1,5 @@
-//! The tools that read a note or an image, which need the page (ADR 0037,
-//! decisions 6 and 10).
+//! The tools that read a note, an image or an email, which need the page
+//! (ADR 0037, decisions 6 and 10).
 //!
 //! What can be checked in SQL is checked here first, so the page is only
 //! asked about notes that exist and images a live note holds. An image goes
@@ -8,8 +8,10 @@
 
 use super::imagesize;
 use super::tools::{day, iso, tool, Answer, Args, Context, ImageBlock};
+use crate::attachment_types;
 use crate::commands::attachments::{has_attachment, read_attachment_bytes};
 use crate::commands::documents::format_journal_date;
+use crate::commands::email;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use rmcp::model::Tool;
@@ -77,12 +79,13 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             "read_attachment",
-            "Look at one image in a note: an oyot-attachment://<hash>, or an \
-             oyot-inline-image://<n> with the id of the note it is in.",
+            "Look at one image, or read one email, in a note: an \
+             oyot-attachment://<hash> (an email is a link to one, named by its \
+             subject), or an oyot-inline-image://<n> with the id of the note it is in.",
             json!({
                 "type": "object",
                 "properties": {
-                    "ref": { "type": "string", "description": "The image's address, or its hash." },
+                    "ref": { "type": "string", "description": "The image's or the email's address, or its hash." },
                     "note_id": { "type": "string", "description": "The note an inline image is in." }
                 },
                 "required": ["ref"]
@@ -377,13 +380,18 @@ impl Target {
             });
         }
         Err(format!(
-            "{raw:?} is not an image. Use an {ATTACHMENT_SCHEME}<hash> or {INLINE_SCHEME}<n> from read_note."
+            "{raw:?} is not an image or an email. Use an {ATTACHMENT_SCHEME}<hash> or {INLINE_SCHEME}<n> from read_note."
         ))
     }
 }
 
 async fn read_attachment(ctx: &Arc<Context>, args: &Args) -> Result<Answer, String> {
     let target = Target::parse(args.required_str("ref")?, args.optional_str("note_id")?)?;
+    if let Target::Attachment(hash) = &target {
+        if let Some(answer) = read_email(ctx, hash).await? {
+            return Ok(answer);
+        }
+    }
     let fitted = fetch_image(ctx, &target, RESULT_IMAGE_BUDGET).await?;
     let address = target.address();
     let mut answer = Answer::new(
@@ -399,6 +407,138 @@ async fn read_attachment(ctx: &Arc<Context>, args: &Args) -> Result<Answer, Stri
     );
     answer.images.push(fitted.block(&address, 1));
     Ok(answer)
+}
+
+/// An email, as text, when the attachment is one. `None` for anything else,
+/// which is read as an image.
+///
+/// Parsed in Rust, like the preview's, and given as plain text: the
+/// headers, the body as words (HTML reduced to its text), and the files it
+/// carries. Held to the same rules as an image: only one a live note holds,
+/// and only once this device has it.
+async fn read_email(ctx: &Arc<Context>, hash: &str) -> Result<Option<Answer>, String> {
+    let address = address_of(hash);
+    let (mime, held) = {
+        let hash = hash.to_string();
+        ctx.sql(move |db| {
+            let mime: Option<String> = db
+                .query_row(
+                    "SELECT mime_type FROM attachments WHERE hash = ?1",
+                    params![&hash],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            Ok((mime, attachment_held(db, &hash)?))
+        })
+        .await?
+    };
+    if !mime.as_deref().is_some_and(attachment_types::is_email) {
+        return Ok(None);
+    }
+    match held {
+        Held::NotInANote => return Err(format!("No note holds the email {address}.")),
+        Held::NotHere => {
+            (ctx.fetch_attachment)(hash);
+            return Err(format!(
+                "{address} is not on this device yet. Oyot has asked the user's other devices \
+                 for it; try again in a minute."
+            ));
+        }
+        Held::Here => {}
+    }
+    let read = {
+        let ctx = ctx.clone();
+        let hash = hash.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            read_attachment_bytes(&ctx.db, &ctx.data_dir, &hash)
+                .and_then(|read| read.ok_or_else(|| "not on this device".to_string()))
+                .and_then(|(_, bytes)| email_answer(&address_of(&hash), &bytes))
+        })
+        .await
+        .map_err(|e| e.to_string())??
+    };
+    Ok(Some(read))
+}
+
+fn address_of(hash: &str) -> String {
+    format!("{ATTACHMENT_SCHEME}{hash}")
+}
+
+/// An email as an assistant reads it.
+fn email_answer(address: &str, bytes: &[u8]) -> Result<Answer, String> {
+    let view = email::view_of(bytes)?;
+    let (_, body) = email::search_text(bytes);
+
+    let mut text = format!("Email {address}\n");
+    let subject = view.subject.as_deref().unwrap_or("(no subject)");
+    text.push_str(&format!("Subject: {subject}\n"));
+    if let Some(from) = &view.from {
+        text.push_str(&format!("From: {from}\n"));
+    }
+    if !view.to.is_empty() {
+        text.push_str(&format!("To: {}\n", view.to.join(", ")));
+    }
+    if !view.cc.is_empty() {
+        text.push_str(&format!("Cc: {}\n", view.cc.join(", ")));
+    }
+    if let Some(date) = &view.date {
+        text.push_str(&format!("Date: {date}\n"));
+    }
+
+    let body = body.trim();
+    let truncated = body.len() > MAX_MARKDOWN;
+    let shown = if truncated {
+        let mut cut = MAX_MARKDOWN;
+        while !body.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        &body[..cut]
+    } else {
+        body
+    };
+    text.push('\n');
+    text.push_str(if shown.is_empty() {
+        "(no message)"
+    } else {
+        shown
+    });
+    text.push('\n');
+    if truncated {
+        text.push_str(&format!(
+            "\n[Cut short: the message is {} KB, and only the first {} KB is shown.]\n",
+            body.len() / 1000,
+            MAX_MARKDOWN / 1000
+        ));
+    }
+    if !view.parts.is_empty() {
+        text.push_str("\nFiles in it (the user can save them from the email in Oyot):\n");
+        for part in &view.parts {
+            text.push_str(&format!(
+                "- {} ({}, {} bytes)\n",
+                part.name, part.mime, part.size
+            ));
+        }
+    }
+
+    Ok(Answer::new(
+        text,
+        json!({
+            "ref": address,
+            "kind": "email",
+            "subject": view.subject,
+            "from": view.from,
+            "to": view.to,
+            "cc": view.cc,
+            "date": view.date,
+            "truncated": truncated,
+            "files": view.parts.iter().map(|part| json!({
+                "name": part.name,
+                "mime": part.mime,
+                "size": part.size,
+            })).collect::<Vec<_>>(),
+        }),
+    ))
 }
 
 /// An image ready to send.

@@ -65,6 +65,7 @@ const READ_AS: Record<string, Record<string, Readings>> = {
     tableCell: asCell,
     tableHeader: asCell,
     documentLink: { targetId: asText(), title: asText() },
+    emailAttachment: { src: asText(), subject: asText(), from: asText(), date: asText() },
     tag: { name: asText() },
     link: {
         href: asText(),
@@ -169,6 +170,10 @@ describe('fitAttributes', () => {
             ['image', { width: '50%', height: 'auto' }],
             ['tableCell', { colspan: 2, rowspan: 3, colwidth: [100, 0], align: 'right' }],
             ['documentLink', { targetId: 'id', title: 'Title' }],
+            [
+                'emailAttachment',
+                { src: 'oyot-attachment://h', subject: 'S', from: 'F', date: '2026-11-03' },
+            ],
             ['tag', { name: 'work' }],
             ['link', { href: 'https://a.example', target: null, rel: null, class: 'c' }],
         ];

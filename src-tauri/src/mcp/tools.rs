@@ -253,15 +253,27 @@ fn search_notes(db: &Connection, args: &Args) -> Result<Answer, String> {
             "- {} ({}, id {})\n",
             hit.title, hit.doc_type, hit.id
         ));
+        if let Some(subject) = &hit.in_email {
+            let subject = if subject.is_empty() {
+                "(no subject)"
+            } else {
+                subject
+            };
+            text.push_str(&format!("  in an attached email, {subject:?}\n"));
+        }
         if !snippet.is_empty() {
             text.push_str(&format!("  {snippet}\n"));
         }
-        results.push(json!({
+        let mut result = json!({
             "id": hit.id,
             "title": hit.title,
             "type": hit.doc_type,
             "snippet": snippet,
-        }));
+        });
+        if let Some(subject) = &hit.in_email {
+            result["inEmail"] = json!(subject);
+        }
+        results.push(result);
     }
     Ok(Answer {
         images: Vec::new(),

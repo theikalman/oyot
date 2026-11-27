@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Editor } from '@tiptap/core';
 import { toasts } from '$lib/services/toast';
-import { insertImagesAt } from './ImageCommand';
+import { emailNodeFor, type AttachedEmail } from './EmailCommand';
+import { ATTACHMENT_SCHEME } from '../attachmentRef';
 
 /** What Rust says of files dropped on the window (`FilesDropped`). */
 export interface FilesDropped {
@@ -59,18 +60,38 @@ export async function acceptDroppedFiles(
     const at = dropPosition(editor, drop.x, drop.y, area);
     if (at === null) return;
     try {
-        const result = await invoke<{ images: { hash: string }[]; failed: string[] }>(
-            'accept_dropped_files',
-            { token: drop.token },
-        );
-        insertImagesAt(
-            editor,
-            result.images.map((image) => image.hash),
-            at,
-        );
+        const result = await invoke<{
+            images: { hash: string }[];
+            emails: AttachedEmail[];
+            failed: string[];
+        }>('accept_dropped_files', { token: drop.token });
+        insertDropped(editor, result.images, result.emails, at);
         for (const reason of result.failed) toasts.error(reason);
     } catch (error) {
         console.error('Failed to add dropped files:', error);
         toasts.error(typeof error === 'string' ? error : 'Failed to add dropped files');
     }
+}
+
+/**
+ * Put what one drop stored into a note at `at`, in one step: the emails as
+ * chips on the line, then the pictures, which are blocks of their own and
+ * so go after it. One step, so one undo takes the whole drop back.
+ */
+export function insertDropped(
+    editor: Editor,
+    images: { hash: string }[],
+    emails: AttachedEmail[],
+    at: number,
+): void {
+    const chips = emails.flatMap((email, i) =>
+        i === 0 ? [emailNodeFor(email)] : [{ type: 'text', text: ' ' }, emailNodeFor(email)],
+    );
+    const pictures = images.map(({ hash }) => ({
+        type: 'image',
+        attrs: { src: `${ATTACHMENT_SCHEME}${hash}`, alt: `oyot:${hash}` },
+    }));
+    const content = [...chips, ...pictures];
+    if (content.length === 0) return;
+    editor.chain().focus().insertContentAt(at, content).run();
 }

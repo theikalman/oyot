@@ -19,6 +19,7 @@
         registerTodoCommand,
         registerTagCommand,
         registerImageCommand,
+        registerEmailCommand,
         registerEmojiCommand,
     } from '$lib/tiptap';
     import { createCollaborationExtension } from './yjs';
@@ -38,6 +39,7 @@
     import { CodeBlockLanguage } from './codeBlockLanguage';
     import { CodeHighlight } from './codeHighlight';
     import { FindInDocument } from './findInDocument';
+    import { EmailFiles } from '$lib/tiptap/extensions/EmailFiles';
     import { listen } from '@tauri-apps/api/event';
     import {
         acceptDroppedFiles,
@@ -47,6 +49,8 @@
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
+    import { openEmail } from '$lib/services/navigation';
+    import { EMAIL_VIEW_EVENT, type EmailViewRequest } from '$lib/tiptap/nodes/EmailAttachmentNode';
     import { documentRepository } from '$lib/sync';
     import {
         IMAGE_ALT_EVENT,
@@ -195,6 +199,7 @@
                 CodeBlockLanguage,
                 CodeHighlight,
                 FindInDocument,
+                EmailFiles,
                 // The keys the user gave shortcuts, ahead of the editor's own.
                 CustomShortcuts.configure({
                     bindings: () => customShortcuts.bindings,
@@ -224,6 +229,7 @@
         ed.view.dom.addEventListener(IMAGE_VIEW_EVENT, handleImageView);
         ed.view.dom.addEventListener(IMAGE_ALT_EVENT, handleImageAlt);
         ed.view.dom.addEventListener(HTML_VIEW_EVENT, handleHtmlView);
+        ed.view.dom.addEventListener(EMAIL_VIEW_EVENT, handleEmailView);
 
         // These register into a module-level registry, not into `ed`. They
         // took an editor argument that none of them used.
@@ -232,6 +238,7 @@
         registerTodoCommand();
         registerTagCommand();
         registerImageCommand();
+        registerEmailCommand();
         registerEmojiCommand();
 
         // The only thing that schedules a save. Tiptap's `onUpdate` used to do
@@ -424,6 +431,11 @@
         viewing = (e as CustomEvent<ImageViewRequest>).detail;
     }
 
+    function handleEmailView(e: Event) {
+        const { hash, subject } = (e as CustomEvent<EmailViewRequest>).detail;
+        openEmail(hash, subject);
+    }
+
     function handleHtmlView(e: Event) {
         viewingHtml = (e as CustomEvent<HtmlViewRequest>).detail;
     }
@@ -494,6 +506,7 @@
             editor.view.dom.removeEventListener(IMAGE_VIEW_EVENT, handleImageView);
             editor.view.dom.removeEventListener(IMAGE_ALT_EVENT, handleImageAlt);
             editor.view.dom.removeEventListener(HTML_VIEW_EVENT, handleHtmlView);
+            editor.view.dom.removeEventListener(EMAIL_VIEW_EVENT, handleEmailView);
             // The document-link and tag pickers are mounted on the page, not
             // in the editor, so destroying the editor left one open. On the
             // next page it still took every key typed there, into an editor
@@ -880,6 +893,46 @@
     }
     .editor-content :global(.document-link-title) {
         font-weight: 500;
+    }
+
+    /* An email reads as a linked note does, an object in the sentence that
+       opens something, with an envelope where the note's icon would be. */
+    .editor-content :global(.email-attachment) {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        max-width: 100%;
+        background-color: var(--accent-bg);
+        color: var(--accent-color);
+        padding: 1px 8px 1px 6px;
+        border-radius: 7px;
+        font-size: 0.94em;
+        font-weight: 500;
+        cursor: pointer;
+        vertical-align: bottom;
+        transition: background-color 0.2s;
+    }
+
+    .editor-content :global(.email-attachment:hover) {
+        background-color: var(--accent-bg-hover);
+    }
+
+    /* Still on its way from another device: there, but not yet openable. */
+    .editor-content :global(.email-attachment-pending) {
+        opacity: 0.55;
+    }
+
+    .editor-content :global(.email-attachment-icon) {
+        display: inline-flex;
+        flex: none;
+        width: 16px;
+        height: 16px;
+    }
+
+    .editor-content :global(.email-attachment-title) {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     /* A tag reads as one object in the middle of a sentence: rounded, quiet,

@@ -2,6 +2,8 @@ export { commandRegistry } from './CommandRegistry';
 export type { SlashCommand, CommandSuggestion, CommandSelectProps } from './CommandRegistry';
 export { DocumentLinkNode } from './nodes/DocumentLinkNode';
 export { TagNode } from './nodes/TagNode';
+export { EmailAttachmentNode, EMAIL_NODE_NAME } from './nodes/EmailAttachmentNode';
+export { registerEmailCommand } from './commands/EmailCommand';
 export { registerDocumentLinkCommand, searchDocuments } from './commands/DocumentLinkCommand';
 export { registerDateCommand } from './commands/DateCommand';
 export { registerTodoCommand } from './commands/TodoCommand';

@@ -920,3 +920,109 @@ async fn a_page_that_cannot_be_a_note_is_refused_before_the_page_is_asked() {
     }
     assert!(s.page.methods().is_empty());
 }
+
+// --- emails ----------------------------------------------------------------
+
+const MAIL: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const MAIL_MISSING: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const MAIL_ORPHAN: &str = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+const EMAIL: &[u8] = b"From: Ana <ana@example.com>\r\n\
+To: Bo <bo@example.com>\r\n\
+Subject: Quarterly report\r\n\
+Date: Tue, 3 Nov 2026 09:12:00 +0000\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"m\"\r\n\
+\r\n\
+--m\r\n\
+Content-Type: text/html\r\n\
+\r\n\
+<p>Revenue <b>grew</b>.</p><script>steal()</script>\r\n\
+--m\r\n\
+Content-Type: application/pdf; name=\"report.pdf\"\r\n\
+Content-Disposition: attachment; filename=\"report.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+JVBERi0xLjQ=\r\n\
+--m--\r\n";
+
+/// An email stored for note n1, one n1 holds that this device does not have,
+/// and one held that no note holds.
+fn with_emails(setup: &Setup) {
+    std::fs::write(setup.data_dir.join("attachments/d.eml"), EMAIL).unwrap();
+    std::fs::write(setup.data_dir.join("attachments/f.eml"), EMAIL).unwrap();
+    let db = setup.ctx.db.lock();
+    db.execute(
+        "INSERT INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at)
+         VALUES (?1, 'message/rfc822', 'attachments/d.eml', 1, 0),
+                (?2, 'message/rfc822', NULL, 0, 0),
+                (?3, 'message/rfc822', 'attachments/f.eml', 1, 0)",
+        params![MAIL, MAIL_MISSING, MAIL_ORPHAN],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO document_attachments (document_id, hash) VALUES ('n1', ?1), ('n1', ?2)",
+        params![MAIL, MAIL_MISSING],
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn an_email_is_read_as_text() {
+    let s = setup(Access::ReadOnly);
+    with_emails(&s);
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+
+    let result = client
+        .call(
+            "read_attachment",
+            json!({ "ref": format!("oyot-attachment://{MAIL}") }),
+        )
+        .await;
+    assert_eq!(result["isError"], false, "{result}");
+    let shown = text(&result);
+    assert!(shown.starts_with(&format!("Email oyot-attachment://{MAIL}\nSubject: Quarterly report\nFrom: Ana <ana@example.com>\nTo: Bo <bo@example.com>\n")), "{shown}");
+    assert!(shown.contains("Revenue grew."), "{shown}");
+    assert!(
+        !shown.contains("<p>") && !shown.contains("<b>"),
+        "markup is reduced to words: {shown}"
+    );
+    assert!(
+        shown.contains("- report.pdf (application/pdf, 8 bytes)"),
+        "{shown}"
+    );
+    assert_eq!(result["structuredContent"]["kind"], "email");
+    assert_eq!(
+        result["structuredContent"]["files"][0]["name"],
+        "report.pdf"
+    );
+    assert!(
+        result["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|block| block["type"] == "text"),
+        "an email is not sent as an image"
+    );
+    assert!(s.page.methods().is_empty(), "the page was not needed");
+}
+
+#[tokio::test]
+async fn an_email_not_here_yet_is_asked_for_and_one_no_note_holds_is_not_read() {
+    let s = setup(Access::ReadOnly);
+    with_emails(&s);
+    let (mut client, _) = connected_to(s.ctx.clone()).await;
+
+    let missing = client
+        .call("read_attachment", json!({ "ref": MAIL_MISSING }))
+        .await;
+    assert_eq!(missing["isError"], true);
+    assert!(text(&missing).contains("not on this device yet"));
+    assert_eq!(*s.fetched.lock(), vec![MAIL_MISSING.to_string()]);
+
+    let orphan = client
+        .call("read_attachment", json!({ "ref": MAIL_ORPHAN }))
+        .await;
+    assert_eq!(orphan["isError"], true);
+    assert!(text(&orphan).contains("No note holds the email"));
+}

@@ -1,4 +1,4 @@
-import { goto } from '$app/navigation';
+import { goto, pushState } from '$app/navigation';
 import { resolve } from '$app/paths';
 
 // Opening a document is a navigation, so the URL says what is open, the back
@@ -72,4 +72,19 @@ export function openHelp(): Promise<void> {
 // user's words and may hold spaces.
 export function openTag(name: string): Promise<void> {
     return goto(resolve('/tags/[name]', { name }));
+}
+
+// An email from a note's chip, over the note it is in.
+//
+// A step in the history without leaving the page (shallow routing), so the
+// note stays mounted under it, scrolled and with its caret where they were,
+// and the back button, Android's included, closes the email rather than the
+// note. See docs/plans/email-attachments.md, decision 6.
+export function openEmail(hash: string, subject: string | null): void {
+    pushState('', { email: { hash, subject } });
+}
+
+// Close the email: the step back to the note it was opened from.
+export function closeEmail(): void {
+    history.back();
 }

@@ -93,16 +93,6 @@ function insertImageNode(editor: Editor, hash: string): void {
         .run();
 }
 
-/** Put stored images into a note at `at`, one after another. */
-export function insertImagesAt(editor: Editor, hashes: string[], at: number): void {
-    if (hashes.length === 0) return;
-    const content = hashes.map((hash) => ({
-        type: 'image',
-        attrs: { src: `${ATTACHMENT_SCHEME}${hash}`, alt: `oyot:${hash}` },
-    }));
-    editor.chain().focus().insertContentAt(at, content).run();
-}
-
 function validateFileSize(blob: Blob): boolean {
     if (blob.size > MAX_IMAGE_SIZE) {
         toasts.error('Image is too large. Maximum size is 10MB.');

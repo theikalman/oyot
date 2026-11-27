@@ -1074,11 +1074,93 @@ fn a_piece_claiming_an_image_over_the_limit_is_refused() {
         hash: "huge".into(),
         mime: "image/png".into(),
         offset: 0,
-        total: MAX_IMAGE_BYTES + 1,
+        total: crate::attachment_types::MAX_IMAGE_BYTES as u64 + 1,
         data: vec![0; 10],
     };
     session.handle(&b, huge, 0);
     assert!(b.attachment("huge").is_none());
+}
+
+fn manifest_of(hash: &str, mime: &str, size: u64) -> Message {
+    Message::AttachManifest {
+        items: vec![AttachmentEntry {
+            hash: hash.into(),
+            mime: mime.into(),
+            size,
+        }],
+    }
+}
+
+// An email is larger than any picture the store takes, and its own cap is
+// what it is held to.
+#[test]
+fn an_email_over_the_image_cap_is_still_pulled() {
+    let b = FakeRepo::default();
+    let mut session = Session::new();
+    session.start(&b, 0);
+    let size = crate::attachment_types::MAX_IMAGE_BYTES as u64 + 1;
+
+    let outs = session.handle(&b, manifest_of("mail", "message/rfc822", size), 0);
+    assert_eq!(needs(&outs), 1);
+
+    session.handle(
+        &b,
+        Message::AttachPiece {
+            hash: "mail".into(),
+            mime: "message/rfc822".into(),
+            offset: 0,
+            total: size,
+            data: vec![b'x'; 10],
+        },
+        1,
+    );
+    assert!(
+        session.incoming.contains_key("mail"),
+        "the transfer is under way, not refused"
+    );
+}
+
+// Pulling what this build cannot store only to refuse it, on every
+// connection, is what an older build does with an email. This build does
+// not do the same with whatever comes after.
+#[test]
+fn a_type_this_build_does_not_store_is_not_pulled() {
+    let b = FakeRepo::default();
+    let mut session = Session::new();
+    session.start(&b, 0);
+
+    assert_eq!(
+        needs(&session.handle(&b, manifest_of("page", "text/html", 4), 0)),
+        0
+    );
+    assert_eq!(
+        needs(&session.handle(&b, manifest_of("svg", "image/svg+xml", 4), 0)),
+        0
+    );
+    let too_big = crate::attachment_types::MAX_EMAIL_BYTES as u64 + 1;
+    assert_eq!(
+        needs(&session.handle(&b, manifest_of("huge", "message/rfc822", too_big), 0)),
+        0
+    );
+}
+
+#[test]
+fn a_piece_of_a_type_this_build_does_not_store_is_refused() {
+    let b = FakeRepo::default();
+    let mut session = Session::new();
+    session.start(&b, 0);
+    session.handle(
+        &b,
+        Message::AttachPiece {
+            hash: "page".into(),
+            mime: "text/html".into(),
+            offset: 0,
+            total: 4,
+            data: b"<p/>".to_vec(),
+        },
+        0,
+    );
+    assert!(b.attachment("page").is_none());
 }
 
 #[test]

@@ -2,6 +2,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
 import { numberOf, textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
+import { EMAIL_NODE_NAME, NO_SUBJECT } from '$lib/tiptap/nodes/EmailAttachmentNode';
 import { UNKNOWN_BLOCK, UNKNOWN_INLINE, unknownLine } from '$lib/tiptap/unknownContent';
 
 /**
@@ -354,6 +355,8 @@ function inlineNode(node: ProseMirrorNode, options: MarkdownOptions): string {
         }
         case 'documentLink':
             return withMarks(documentLink(node, options), node);
+        case EMAIL_NODE_NAME:
+            return withMarks(emailLink(node, options), node);
         case UNKNOWN_INLINE:
             return escapeInline(unknownLine(node) || UNKNOWN_CONTENT);
         default:
@@ -375,6 +378,22 @@ function documentLink(node: ProseMirrorNode, options: MarkdownOptions): string {
     const label = escapeInline(title || 'Untitled');
     const path = targetId ? options.notePath(targetId) : null;
     return path ? `[${label}](${encodeLinkTarget(path)})` : label;
+}
+
+/**
+ * An email, as a link to its file, named by its subject.
+ *
+ * The file when the archive holds it, and `oyot-attachment://<hash>`
+ * otherwise, which the importer reads back as the email either way. The
+ * sender and date are not written: a reader has the file, and Oyot reads them
+ * from it again.
+ */
+function emailLink(node: ProseMirrorNode, options: MarkdownOptions): string {
+    const label = escapeInline(textOf(node.attrs.subject) || NO_SUBJECT);
+    const hash = attachmentHash(node.attrs.src);
+    if (!hash) return label;
+    const path = options.attachmentPath(hash) ?? `oyot-attachment://${hash}`;
+    return `[${label}](${encodeLinkTarget(path)})`;
 }
 
 function markedText(node: ProseMirrorNode): string {

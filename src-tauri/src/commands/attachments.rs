@@ -3,26 +3,12 @@ use crate::indexer;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
+use crate::attachment_types::{self, extension_for, kind_name, max_bytes_for, sniff};
+
 /// Largest image we will take in, from disk or from a paste. Mirrors the
 /// check the editor does before it calls in, and is the backstop for the peer
 /// transfer path, which has no UI in front of it.
-pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-
-/// The image types we store, and the extension each is written with.
-///
-/// Raster only, deliberately. SVG is a script-bearing document, and an
-/// attachment arrives from a peer and is rendered in the webview, so accepting
-/// it would let a peer run script in the app's origin. Nothing in the editor
-/// produces SVG: the picker filters it out and paste/drop yields raster.
-fn ext_for_mime(mime_type: &str) -> Option<&'static str> {
-    match mime_type {
-        "image/png" => Some("png"),
-        "image/jpeg" | "image/jpg" => Some("jpg"),
-        "image/gif" => Some("gif"),
-        "image/webp" => Some("webp"),
-        _ => None,
-    }
-}
+pub use crate::attachment_types::MAX_IMAGE_BYTES;
 
 /// The file an attachment is written as outside the app.
 ///
@@ -31,42 +17,16 @@ fn ext_for_mime(mime_type: &str) -> Option<&'static str> {
 /// command and the Markdown links inside the archive are named by one
 /// function rather than two that have to agree.
 pub fn export_filename(hash: &str, mime_type: &str) -> Option<String> {
-    Some(format!("{hash}.{}", ext_for_mime(mime_type)?))
+    Some(format!("{hash}.{}", extension_for(mime_type)?))
 }
 
 fn filename_for(hash: &str, mime_type: &str) -> Result<String, String> {
-    let ext =
-        ext_for_mime(mime_type).ok_or_else(|| format!("unsupported image type: {mime_type}"))?;
+    let ext = extension_for(mime_type)
+        .ok_or_else(|| format!("unsupported attachment type: {mime_type}"))?;
     Ok(format!("{hash}.{ext}"))
 }
 
-/// The image type the bytes actually are, by magic number.
-///
-/// Every declared type in this module arrives from somewhere that could be
-/// wrong about it: a filename extension, a webview Blob, or a peer's
-/// manifest. The bytes cannot be wrong about themselves. Without this a peer
-/// could store arbitrary content as `<hash>.png`; the asset protocol serves
-/// by extension and an `<img>` will not execute it, so this is defence in
-/// depth, but it costs a dozen lines.
-fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
-    const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF];
-
-    if bytes.starts_with(PNG) {
-        return Some("image/png");
-    }
-    if bytes.starts_with(JPEG) {
-        return Some("image/jpeg");
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return Some("image/gif");
-    }
-    // RIFF container, with the form type at offset 8.
-    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        return Some("image/webp");
-    }
-    None
-}
+const UNSUPPORTED_DATA: &str = "unsupported attachment data: only PNG, JPEG, GIF, WebP and emails";
 
 fn mime_for_extension(path: &std::path::Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
@@ -82,7 +42,7 @@ fn mime_for_extension(path: &std::path::Path) -> Option<&'static str> {
 /// Write bytes into the attachment store and record the row. Shared by every
 /// entry point so the size cap, the type allowlist and the content address are
 /// enforced in exactly one place.
-fn store_attachment(
+pub(crate) fn store_attachment(
     state: &AppState,
     bytes: &[u8],
     mime_type: &str,
@@ -99,23 +59,26 @@ pub(crate) fn store_attachment_at(
     bytes: &[u8],
     mime_type: &str,
 ) -> Result<StoredImage, String> {
+    // The declared type sets the cap, so nothing larger than its type allows
+    // is read for what it is. A type the store does not take stops here.
+    let cap = max_bytes_for(mime_type)
+        .ok_or_else(|| format!("unsupported attachment type: {mime_type}"))?;
+    let kind = kind_name(mime_type);
     if bytes.is_empty() {
-        return Err("image is empty".to_string());
+        return Err(format!("{kind} is empty"));
     }
-    if bytes.len() > MAX_IMAGE_BYTES {
+    if bytes.len() > cap {
         return Err(format!(
-            "image is {} bytes, over the {} byte limit",
-            bytes.len(),
-            MAX_IMAGE_BYTES
+            "{kind} is {} bytes, over the {cap} byte limit",
+            bytes.len()
         ));
     }
 
     // The bytes decide the type, not the caller. A declared type that
     // disagrees means the caller is wrong or lying, and either way this is
     // not something to store under a name that misdescribes it.
-    let detected = sniff_image_mime(bytes)
-        .ok_or_else(|| "unsupported image data: only PNG, JPEG, GIF and WebP".to_string())?;
-    if ext_for_mime(mime_type) != ext_for_mime(detected) {
+    let detected = sniff(bytes).ok_or_else(|| UNSUPPORTED_DATA.to_string())?;
+    if extension_for(mime_type) != extension_for(detected) {
         return Err(format!(
             "content is {detected}, which does not match the declared {mime_type}"
         ));
@@ -139,6 +102,15 @@ pub(crate) fn store_attachment_at(
     )
     .map_err(|e| e.to_string())?;
 
+    // An email's words, for search. Every way an email arrives comes through
+    // here: the picker, sync and a restore. Not being searchable is no reason
+    // to lose the email, so a failure is only reported.
+    if attachment_types::is_email(mime_type) {
+        if let Err(e) = crate::commands::email::index_email_text(&db, &hash, bytes) {
+            warn_log!("[email] could not index {hash} for search: {e}");
+        }
+    }
+
     Ok(StoredImage {
         hash,
         mime_type: mime_type.to_string(),
@@ -153,9 +125,16 @@ pub(crate) fn store_checked_attachment(
     state: &AppState,
     bytes: &[u8],
 ) -> Result<StoredImage, String> {
-    let mime_type = sniff_image_mime(bytes)
-        .ok_or_else(|| "unsupported image data: only PNG, JPEG, GIF and WebP".to_string())?;
-    store_attachment(state, bytes, mime_type)
+    store_checked_attachment_at(&state.db, &state.data_dir, bytes)
+}
+
+fn store_checked_attachment_at(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+    bytes: &[u8],
+) -> Result<StoredImage, String> {
+    let mime_type = sniff(bytes).ok_or_else(|| UNSUPPORTED_DATA.to_string())?;
+    store_attachment_at(db, data_dir, bytes, mime_type)
 }
 
 /// Every attachment this device holds in full whose file is actually there.
@@ -186,7 +165,7 @@ pub(crate) fn held_attachments(
         .collect())
 }
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct StoredImage {
     pub hash: String,
     pub mime_type: String,
@@ -256,7 +235,7 @@ pub async fn pick_and_import_image(
 /// without waiting for their next connection. Sent before the note that
 /// embeds it is saved: a peer that fetches it first has it ready when the
 /// note arrives.
-fn announce_image(state: &AppState, image: &StoredImage) {
+pub(crate) fn announce_image(state: &AppState, image: &StoredImage) {
     crate::sync::announce(
         &state.app_handle,
         crate::sync::protocol::Message::AttachManifest {
@@ -293,6 +272,11 @@ pub fn save_image(
     mime_type: String,
 ) -> Result<String, String> {
     use base64::Engine;
+    // Pictures only: an email comes in by its own command, which can tell it
+    // where it came from.
+    if !attachment_types::is_image(&mime_type) {
+        return Err(format!("unsupported image type: {mime_type}"));
+    }
     let image_bytes = base64::engine::general_purpose::STANDARD
         .decode(&image_data)
         .map_err(|e| e.to_string())?;
@@ -363,8 +347,16 @@ pub fn unreferenced_attachments(db: &Connection) -> Result<Vec<(String, String)>
 /// because an unindexed document's images look unreferenced.
 #[tauri::command]
 pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32, String> {
+    collect_orphans(&state.db, &state.data_dir)
+}
+
+/// `cleanup_orphaned_images`, given the database and the data directory.
+fn collect_orphans(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+) -> Result<i32, String> {
     let orphaned = {
-        let db = state.db.lock();
+        let db = db.lock();
         if !unindexed_document_ids(&db)?.is_empty() {
             trace!("[cmd] cleanup_orphaned_images skipped, documents still to index");
             return Ok(0);
@@ -376,19 +368,22 @@ pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32,
     }
 
     for (_, path) in &orphaned {
-        let full_path = state.data_dir.join(path);
+        let full_path = data_dir.join(path);
         if full_path.exists() {
             let _ = std::fs::remove_file(&full_path);
         }
     }
 
-    let db = state.db.lock();
+    let db = db.lock();
     let mut removed = 0;
     for (hash, _) in &orphaned {
         // The row goes with the file. Leaving it would keep the attachment in
         // our manifest with no bytes behind it.
         removed += db
             .execute("DELETE FROM attachments WHERE hash = ?", params![hash])
+            .map_err(|e| e.to_string())?;
+        // And an email's words with it, which no note can be found by now.
+        db.execute("DELETE FROM email_search WHERE hash = ?", params![hash])
             .map_err(|e| e.to_string())?;
     }
 
@@ -431,26 +426,38 @@ pub struct AttachmentInfoResponse {
     pub is_fully_downloaded: bool,
 }
 
+/// Where an image's bytes are on this device, for the page to show it.
+///
+/// Images only. The page shows an email through what Rust parses out of it,
+/// never by loading the stored file, so nothing in the webview has a use for
+/// an email's address in the asset protocol.
 #[tauri::command]
 pub fn get_local_blob_url(
     state: tauri::State<'_, AppState>,
     hash: String,
 ) -> Result<Option<String>, String> {
     let db = state.db.lock();
-    let result = db.query_row(
-        "SELECT local_path FROM attachments WHERE hash = ? AND is_fully_downloaded = 1",
-        params![&hash],
-        |row| row.get::<_, String>(0),
-    );
+    Ok(local_image_path(&db, &state.data_dir, &hash)?
+        .map(|path| path.to_string_lossy().to_string()))
+}
 
-    match result {
-        Ok(relative_path) => {
-            let full_path = state.data_dir.join(relative_path);
-            Ok(Some(full_path.to_string_lossy().to_string()))
-        }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.to_string()),
-    }
+fn local_image_path(
+    db: &Connection,
+    data_dir: &std::path::Path,
+    hash: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let row: Option<(String, String)> = db
+        .query_row(
+            "SELECT mime_type, local_path FROM attachments \
+             WHERE hash = ? AND is_fully_downloaded = 1 AND local_path IS NOT NULL",
+            params![hash],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(row
+        .filter(|(mime_type, _)| attachment_types::is_image(mime_type))
+        .map(|(_, relative_path)| data_dir.join(relative_path)))
 }
 
 // --- peer-to-peer attachment transfer -------------------------------------
@@ -615,40 +622,134 @@ mod tests {
         v
     }
 
-    #[test]
-    fn the_bytes_decide_the_image_type() {
-        assert_eq!(sniff_image_mime(&png(b"rest")), Some("image/png"));
-        assert_eq!(
-            sniff_image_mime(&[0xFF, 0xD8, 0xFF, 0xE0]),
-            Some("image/jpeg")
-        );
-        assert_eq!(sniff_image_mime(b"GIF89a....."), Some("image/gif"));
+    const EMAIL: &[u8] = b"From: Ana <ana@example.com>\r\n\
+Subject: Quarterly report\r\n\
+Date: Tue, 3 Nov 2026 09:12:00 +0000\r\n\
+\r\n\
+The numbers are in.\r\n";
 
-        let mut webp = b"RIFF".to_vec();
-        webp.extend_from_slice(&[0, 0, 0, 0]);
-        webp.extend_from_slice(b"WEBP");
-        assert_eq!(sniff_image_mime(&webp), Some("image/webp"));
-    }
-
-    // The case this exists for: a peer, or anything rendering in the webview,
-    // declaring an image type for content that is not an image at all.
-    #[test]
-    fn content_that_is_not_an_image_is_refused_whatever_it_claims() {
-        assert_eq!(
-            sniff_image_mime(b"<svg xmlns=\"...\"><script/></svg>"),
-            None
-        );
-        assert_eq!(sniff_image_mime(b"<!doctype html>"), None);
-        assert_eq!(sniff_image_mime(b""), None);
-        assert_eq!(sniff_image_mime(b"RIFF1234NOPE"), None);
+    /// A database and a data directory of their own, for the store.
+    fn store() -> (parking_lot::Mutex<Connection>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("oyot-attachments-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        (parking_lot::Mutex::new(db()), dir)
     }
 
     #[test]
-    fn a_truncated_header_is_not_mistaken_for_an_image() {
-        // Shorter than every magic number here, so nothing may index past it.
-        assert_eq!(sniff_image_mime(&[0x89, b'P']), None);
-        assert_eq!(sniff_image_mime(b"RIFF"), None);
-        assert_eq!(sniff_image_mime(b"GIF8"), None);
+    fn an_email_is_stored_as_eml() {
+        let (db, dir) = store();
+        let stored = store_attachment_at(&db, &dir, EMAIL, "message/rfc822").unwrap();
+
+        assert_eq!(stored.mime_type, "message/rfc822");
+        assert_eq!(stored.hash, sha256_hex(EMAIL));
+        let file = dir.join(format!("attachments/{}.eml", stored.hash));
+        assert_eq!(std::fs::read(file).unwrap(), EMAIL);
+        assert_eq!(
+            export_filename(&stored.hash, &stored.mime_type),
+            Some(format!("{}.eml", stored.hash))
+        );
+    }
+
+    // What a peer, or a script in the webview, could try: a page declared as
+    // an email, an email declared as a picture, or a type the store does not
+    // take at all.
+    #[test]
+    fn a_declared_type_the_bytes_disagree_with_is_refused() {
+        let (db, dir) = store();
+        let page = b"<!doctype html><script>alert(1)</script>";
+
+        assert!(store_attachment_at(&db, &dir, page, "message/rfc822").is_err());
+        assert!(store_attachment_at(&db, &dir, EMAIL, "image/png").is_err());
+        assert!(store_attachment_at(&db, &dir, &png(b"x"), "message/rfc822").is_err());
+        assert!(store_attachment_at(&db, &dir, EMAIL, "text/html").is_err());
+        assert!(store_attachment_at(&db, &dir, page, "image/svg+xml").is_err());
+        let written = std::fs::read_dir(dir.join("attachments"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(written, 0, "nothing refused is written");
+    }
+
+    #[test]
+    fn each_type_is_held_to_its_own_cap() {
+        let (db, dir) = store();
+
+        // Over the image cap, under the email one.
+        let mut big_email = EMAIL.to_vec();
+        big_email.resize(MAX_IMAGE_BYTES + 1, b'x');
+        assert!(store_attachment_at(&db, &dir, &big_email, "message/rfc822").is_ok());
+
+        let mut big_image = png(b"");
+        big_image.resize(MAX_IMAGE_BYTES + 1, 0);
+        let refused = store_attachment_at(&db, &dir, &big_image, "image/png").unwrap_err();
+        assert!(refused.starts_with("image is"), "{refused}");
+
+        let mut huge_email = EMAIL.to_vec();
+        huge_email.resize(attachment_types::MAX_EMAIL_BYTES + 1, b'x');
+        let refused = store_attachment_at(&db, &dir, &huge_email, "message/rfc822").unwrap_err();
+        assert!(refused.starts_with("email is"), "{refused}");
+    }
+
+    #[test]
+    fn an_empty_email_is_refused() {
+        let (db, dir) = store();
+        let refused = store_attachment_at(&db, &dir, b"", "message/rfc822").unwrap_err();
+        assert_eq!(refused, "email is empty");
+    }
+
+    // A restore names nothing by type: the archive's file name decides
+    // nothing, and the bytes are read for what they are.
+    #[test]
+    fn a_restored_email_is_stored_as_an_email() {
+        let (db, dir) = store();
+        let stored = store_checked_attachment_at(&db, &dir, EMAIL).unwrap();
+        assert_eq!(stored.mime_type, "message/rfc822");
+
+        let page = b"<!doctype html><script>alert(1)</script>";
+        assert!(store_checked_attachment_at(&db, &dir, page).is_err());
+    }
+
+    #[test]
+    fn a_stored_email_is_searchable_and_collected_with_its_words() {
+        let (db, dir) = store();
+        let stored = store_attachment_at(&db, &dir, EMAIL, "message/rfc822").unwrap();
+        let rows = |db: &Connection| -> i64 {
+            db.query_row(
+                "SELECT COUNT(*) FROM email_search WHERE hash = ?1",
+                params![&stored.hash],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(rows(&db.lock()), 1);
+
+        // Stored again, as a second device's copy arrives: still one row.
+        store_attachment_at(&db, &dir, EMAIL, "message/rfc822").unwrap();
+        assert_eq!(rows(&db.lock()), 1);
+
+        // Held by no note, and no document is left unindexed, so it goes,
+        // and its words with it.
+        update_document_index(&db.lock(), "d1", "One", &index_with(&[])).unwrap();
+        assert!(collect_orphans(&db, &dir).unwrap() >= 1);
+        assert_eq!(rows(&db.lock()), 0);
+        assert!(!dir
+            .join(format!("attachments/{}.eml", stored.hash))
+            .exists());
+    }
+
+    // The page never loads an email's file, so it is never told where one is.
+    #[test]
+    fn only_an_image_has_an_address_for_the_page() {
+        let (db, dir) = store();
+        let email = store_attachment_at(&db, &dir, EMAIL, "message/rfc822").unwrap();
+        let image = store_attachment_at(&db, &dir, &png(b"x"), "image/png").unwrap();
+
+        let db = db.lock();
+        assert_eq!(local_image_path(&db, &dir, &email.hash).unwrap(), None);
+        assert_eq!(
+            local_image_path(&db, &dir, &image.hash).unwrap(),
+            Some(dir.join(format!("attachments/{}.png", image.hash)))
+        );
+        assert_eq!(local_image_path(&db, &dir, "nothing").unwrap(), None);
     }
 
     #[test]

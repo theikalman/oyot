@@ -143,6 +143,14 @@
                         of it do not open.
                     </li>
                     <li>
+                        <strong>Emails can go in a note.</strong> Type <code>/email</code> and
+                        choose Attach Email to pick a <code>.eml</code> file, or paste or drop one onto
+                        the note. It sits on the line with its subject. Click it to read the email over
+                        the note, and save the files it carries; Close, Escape or Back returns to the
+                        note. Pictures from the web are not loaded, and nothing in the email runs. Search
+                        finds a note by what its emails say.
+                    </li>
+                    <li>
                         <strong>There is nothing to save.</strong> What you write is saved as you type.
                     </li>
                     <li>

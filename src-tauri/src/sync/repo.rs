@@ -212,8 +212,8 @@ impl Repo for SqliteRepo {
         attachments::read_attachment_bytes(&self.db, &self.data_dir, hash)
     }
 
-    /// Held to its hash, then stored with the checks every image gets: the
-    /// size cap, and the type read from the bytes.
+    /// Held to its hash, then stored with the checks every attachment gets:
+    /// the cap for its type, and the type read from the bytes.
     fn save_attachment(&self, hash: &str, mime: &str, bytes: &[u8]) -> Result<(), String> {
         let actual = attachments::sha256_hex(bytes);
         if actual != hash {

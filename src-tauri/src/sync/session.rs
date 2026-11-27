@@ -23,6 +23,7 @@
 
 use super::protocol::{pin_stamp, AttachmentEntry, ManifestEntry, Message};
 use super::reconcile::{reconcile, Reconciliation};
+use crate::attachment_types::max_bytes_for;
 use std::collections::{HashMap, VecDeque};
 
 /// Document pulls in flight at once, so a peer with hundreds of divergent
@@ -41,9 +42,6 @@ const SLOWEST_USEFUL_RATE: u64 = 50;
 const MAX_ATTACH_ATTEMPTS: u32 = 2;
 /// The size of one piece of an image on the wire.
 pub const PIECE_BYTES: usize = 256 * 1024;
-/// The largest image this app stores (`commands::attachments::MAX_IMAGE_BYTES`).
-/// A piece claiming a larger whole is refused before anything is buffered.
-const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Everything a session reads and changes. The app's is the database
 /// (`repo.rs`); the tests' is in memory.
@@ -521,6 +519,13 @@ impl Session {
             if self.is_attach_tracked(&item.hash) {
                 continue;
             }
+            // A type this build does not store, or more of one than it
+            // stores, would only be refused once it had all arrived, and
+            // asked for again on every connection after.
+            match max_bytes_for(&item.mime) {
+                Some(cap) if item.size <= cap as u64 => {}
+                _ => continue,
+            }
             match repo.has_attachment(&item.hash) {
                 Ok(true) => continue,
                 Ok(false) => {}
@@ -614,8 +619,12 @@ impl Session {
         data: Vec<u8>,
         now: i64,
     ) {
-        if total > MAX_IMAGE_BYTES {
-            warn_log!("[sync] refusing attachment {hash}: {total} bytes is over the limit");
+        // The declared type sets the cap, so a piece claiming a larger whole
+        // is refused before anything is buffered. The store checks the type
+        // against the bytes once they are all here.
+        let fits = max_bytes_for(&mime).is_some_and(|cap| total <= cap as u64);
+        if !fits {
+            warn_log!("[sync] refusing attachment {hash}: {total} bytes of {mime} is not stored");
             self.incoming.remove(&hash);
             self.attach_in_flight.remove(&hash);
             self.attach_pump(now);

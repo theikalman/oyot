@@ -3,6 +3,7 @@ import type { Attrs, Mark, Node as ProseMirrorNode, NodeType, Schema } from '@ti
 import { ATTACHMENT_SCHEME, attachmentHash } from '$lib/tiptap/attachmentRef';
 import { MISSING_ATTACHMENT_ALT } from '$lib/export/markdown';
 import { MAX_TAG_LENGTH, normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
+import { EMAIL_NODE_NAME, NO_SUBJECT } from '$lib/tiptap/nodes/EmailAttachmentNode';
 import { codeMarks, lists, markSet, nonEmpty, textblocks } from './build';
 
 /**
@@ -71,6 +72,18 @@ export interface MarkdownReadOptions {
      * stood for.
      */
     imageSource?: (src: string) => string;
+    /**
+     * The sender and date of an email this caller already knows, by hash.
+     * Markdown keeps only an email's subject, so a caller reading back what
+     * it wrote of a note gives the rest back here.
+     */
+    emailDetails?: (hash: string) => EmailDetails | null;
+}
+
+/** What a note keeps of an email beside its subject. */
+export interface EmailDetails {
+    from: string | null;
+    date: string | null;
 }
 
 export interface MarkdownDocument {
@@ -259,6 +272,25 @@ export function storedImage(src: string, alt: string): StoredImage | null {
 
 const CONTENT_HASH = /^[a-f0-9]{64}$/;
 
+/** An email's address as Oyot stores it, or as the exporter names its file. */
+const EMAIL_LINK =
+    /^(?:oyot-attachment:\/\/([a-f0-9]{64})|(?:[^?#]*\/)?attachments\/([a-f0-9]{64})\.eml)$/i;
+
+/** The hash of the email a link names, or null when it names none. */
+export function emailHashOf(href: string): string | null {
+    const match = EMAIL_LINK.exec(safeDecodeUri(href.trim()));
+    const hash = match?.[1] ?? match?.[2];
+    return hash ? hash.toLowerCase() : null;
+}
+
+function safeDecodeUri(value: string): string {
+    try {
+        return decodeURI(value);
+    } catch {
+        return value;
+    }
+}
+
 /**
  * An image as Markdown writes it, for one kept as text.
  *
@@ -293,6 +325,7 @@ export function readMarkdown(
         knownTags,
         options.noteLinkLabelIsTitle ?? false,
         options.imageSource ?? ((src) => src),
+        options.emailDetails ?? (() => null),
     );
     const doc = reader.document(parse(markdown, knownTags));
     doc.check();
@@ -401,6 +434,7 @@ class DocumentReader {
         private readonly knownTags: readonly string[],
         private readonly labelIsTitle: boolean,
         private readonly imageSource: (src: string) => string,
+        private readonly emailDetails: (hash: string) => EmailDetails | null,
     ) {}
 
     document(tokens: Token[]): ProseMirrorNode {
@@ -512,6 +546,30 @@ class DocumentReader {
                     break;
                 case 'link_open': {
                     const href = String(token.attrGet('href') ?? '');
+                    const email = schema.nodes[EMAIL_NODE_NAME] ? emailHashOf(href) : null;
+                    if (email) {
+                        // An email is a link to its file, named by its subject,
+                        // which is how the exporter writes one. The words are
+                        // the subject, whatever they are, so the email stays
+                        // one thing in the note.
+                        const close = closingLink(tokens, i);
+                        const words = oneLine(plainText(tokens.slice(i + 1, close)));
+                        const details = this.emailDetails(email);
+                        out.push(
+                            schema.nodes[EMAIL_NODE_NAME].create(
+                                {
+                                    src: `${ATTACHMENT_SCHEME}${email}`,
+                                    subject: words && words !== NO_SUBJECT ? words : null,
+                                    from: details?.from ?? null,
+                                    date: details?.date ?? null,
+                                },
+                                null,
+                                markSet(active),
+                            ),
+                        );
+                        i = close;
+                        break;
+                    }
                     const target = href ? this.noteLink(href) : null;
                     if (!target) {
                         const title = String(token.attrGet('title') ?? '');
