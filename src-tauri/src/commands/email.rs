@@ -74,6 +74,147 @@ pub async fn pick_and_import_email(
     Ok(Some(attached))
 }
 
+/// Store an email the page already holds in memory: a paste, or a drop the
+/// page was given the file of (a phone; a computer's drops come by
+/// `on_window_event`). The bytes come as the request's body, not as base64
+/// in JSON, which for 32 MB would be 43 MB of string.
+///
+/// Checked exactly as a picked file is: the size, and that it is an email.
+#[tauri::command]
+pub async fn save_email(
+    state: tauri::State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<AttachedEmail, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the email's bytes".to_string());
+    };
+    if bytes.len() > MAX_EMAIL_BYTES {
+        return Err(format!(
+            "this email is over the {} MB limit",
+            MAX_EMAIL_BYTES / (1024 * 1024)
+        ));
+    }
+    import_email(&state, bytes)
+}
+
+// --- files dropped on the window ---------------------------------------
+
+/// The emails last dropped on the window, until the page says where they go.
+///
+/// On a computer Tauri takes a dropped file for itself, so the page never
+/// sees it, and the window event that reports it carries its path. The path
+/// came from the system, so it may be read; one the page handed over may not
+/// (see `pick_and_import_image`). So the paths stay here, and the page names
+/// the drop by a token it cannot have made up, and only once.
+#[derive(Default)]
+pub struct DroppedEmails(parking_lot::Mutex<Option<(String, Vec<std::path::PathBuf>)>>);
+
+impl DroppedEmails {
+    /// Hold a drop's emails in place of any before, and the token for them.
+    fn hold(&self, paths: Vec<std::path::PathBuf>) -> String {
+        let token = uuid::Uuid::new_v4().to_string();
+        *self.0.lock() = Some((token.clone(), paths));
+        token
+    }
+
+    /// The emails of the drop `token` names, once. A token for any other
+    /// drop leaves the one waiting where it is.
+    fn take(&self, token: &str) -> Result<Vec<std::path::PathBuf>, String> {
+        let mut pending = self.0.lock();
+        match pending.take() {
+            Some((held, paths)) if held == token => Ok(paths),
+            other => {
+                *pending = other;
+                Err("those files are no longer waiting to be added".to_string())
+            }
+        }
+    }
+}
+
+/// What the page is told of a drop with emails in it.
+#[derive(Clone, serde::Serialize)]
+pub struct EmailsDropped {
+    pub token: String,
+    pub count: usize,
+    /// Where they were dropped, in the page's own pixels.
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Told to the page when emails are dropped on the window.
+pub const EMAILS_DROPPED_EVENT: &str = "emails-dropped";
+
+/// Hear files dropped on the window, keep the emails among them, and ask the
+/// page whether they were dropped somewhere that takes them.
+pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    use tauri::{DragDropEvent, Emitter, Manager, WindowEvent};
+    let WindowEvent::DragDrop(DragDropEvent::Drop { paths, position }) = event else {
+        return;
+    };
+    let emails: Vec<_> = paths.iter().filter(|p| is_eml(p)).cloned().collect();
+    if emails.is_empty() {
+        return;
+    }
+    let count = emails.len();
+    let token = window.state::<DroppedEmails>().hold(emails);
+    let at = position.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
+    let told = window.emit(
+        EMAILS_DROPPED_EVENT,
+        EmailsDropped {
+            token,
+            count,
+            x: at.x,
+            y: at.y,
+        },
+    );
+    if let Err(e) = told {
+        warn_log!("[email] could not tell the page about a drop: {e}");
+    }
+}
+
+fn is_eml(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("eml"))
+        && path.is_file()
+}
+
+/// What came of storing dropped emails.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct DroppedResult {
+    pub emails: Vec<AttachedEmail>,
+    /// Why each one that was not stored was not, by its file name.
+    pub failed: Vec<String>,
+}
+
+/// Store the emails of the drop `token` names. The page calls this when they
+/// were dropped on a note, and not otherwise, so nothing dropped elsewhere is
+/// stored or offered to paired devices.
+#[tauri::command]
+pub async fn accept_dropped_emails(
+    state: tauri::State<'_, AppState>,
+    dropped: tauri::State<'_, DroppedEmails>,
+    token: String,
+) -> Result<DroppedResult, String> {
+    let paths = dropped.take(&token)?;
+    let mut result = DroppedResult::default();
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "an email".to_string());
+        let stored = std::fs::File::open(&path)
+            .map_err(|e| format!("could not open {name}: {e}"))
+            .and_then(|file| read_capped(file, MAX_EMAIL_BYTES))
+            .and_then(|bytes| import_email(&state, &bytes));
+        match stored {
+            Ok(email) => result.emails.push(email),
+            Err(e) => result.failed.push(format!("{name}: {e}")),
+        }
+    }
+    Ok(result)
+}
+
 /// Read a picked file, refusing it once it is longer than an email may be
 /// rather than reading all of it first. A phone's content URI may say nothing
 /// of its size until it is read.
@@ -912,5 +1053,54 @@ Inside.\r\n\
             })
             .unwrap();
         assert!(body.contains("See you there"));
+    }
+
+    // --- drops -----------------------------------------------------------
+
+    // The page names a drop by a token it was told, and the paths stay here,
+    // so nothing the page says can make Rust read a file of its choosing.
+    #[test]
+    fn a_drop_is_taken_by_its_own_token_and_only_once() {
+        let dropped = DroppedEmails::default();
+        let token = dropped.hold(vec!["/tmp/a.eml".into()]);
+
+        assert!(dropped.take("made-up").is_err());
+        assert_eq!(
+            dropped.take(&token).unwrap(),
+            vec![std::path::PathBuf::from("/tmp/a.eml")],
+            "a wrong token leaves the drop waiting"
+        );
+        assert!(dropped.take(&token).is_err(), "and it is taken once");
+    }
+
+    #[test]
+    fn a_later_drop_replaces_one_never_taken() {
+        let dropped = DroppedEmails::default();
+        let first = dropped.hold(vec!["/tmp/a.eml".into()]);
+        let second = dropped.hold(vec!["/tmp/b.eml".into()]);
+
+        assert!(dropped.take(&first).is_err());
+        assert_eq!(dropped.take(&second).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_eml_files_are_held_from_a_drop() {
+        let dir = std::env::temp_dir().join(format!("oyot-drop-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("folder.eml")).unwrap();
+        for name in ["a.eml", "B.EML", "c.png", "d.eml.txt"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let held: Vec<_> = [
+            "a.eml",
+            "B.EML",
+            "c.png",
+            "d.eml.txt",
+            "folder.eml",
+            "gone.eml",
+        ]
+        .iter()
+        .filter(|name| is_eml(&dir.join(name)))
+        .collect();
+        assert_eq!(held, vec![&"a.eml", &"B.EML"]);
     }
 }

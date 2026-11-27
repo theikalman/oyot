@@ -774,7 +774,9 @@ pub fn run() {
         // whatever a phone's dialog returns. No capability grants its
         // commands, so the webview still has no filesystem access.
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_os::init());
+        .plugin(tauri_plugin_os::init())
+        // Emails dropped on the window, until the page says where they go.
+        .manage(commands::email::DroppedEmails::default());
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let builder = builder
@@ -795,7 +797,10 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![desktop::HIDDEN_FLAG]),
         ))
-        .on_window_event(desktop::close::on_window_event);
+        .on_window_event(|window, event| {
+            desktop::close::on_window_event(window, event);
+            commands::email::on_window_event(window, event);
+        });
 
     builder
         .setup(|app| {
@@ -930,6 +935,8 @@ pub fn run() {
             pick_and_import_email,
             read_email,
             save_email_part,
+            save_email,
+            accept_dropped_emails,
             cleanup_orphaned_images,
             list_unindexed_documents,
             get_attachment_info,

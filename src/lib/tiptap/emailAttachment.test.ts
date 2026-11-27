@@ -6,7 +6,7 @@ import { emailHashOf, readMarkdown } from '$lib/import/markdown';
 import { renderNote } from '$lib/mcp/noteMarkdown';
 import { planEdit } from '$lib/mcp/planEdit';
 import { ctx, doc, p, t } from '$lib/mcp/testDocs';
-import { emailNodeFor } from './commands/EmailCommand';
+import { emailNodeFor, isEmailFile } from './commands/EmailCommand';
 import { EMAIL_NODE_NAME, emailTooltip } from './nodes/EmailAttachmentNode';
 
 const HASH = 'e'.repeat(64);
@@ -96,5 +96,12 @@ describe('an email in a note', () => {
         expect(tooltip.split('\n')).toHaveLength(2);
         expect(tooltip.startsWith('Ana <ana@example.com>\n')).toBe(true);
         expect(emailTooltip(null, 'not a date')).toBe('');
+    });
+
+    it('is told from other files by its name or its type', () => {
+        expect(isEmailFile(new File([''], 'Report.EML'))).toBe(true);
+        expect(isEmailFile(new File([''], 'saved', { type: 'message/rfc822' }))).toBe(true);
+        expect(isEmailFile(new File([''], 'report.eml.txt'))).toBe(false);
+        expect(isEmailFile(new File([''], 'photo.png', { type: 'image/png' }))).toBe(false);
     });
 });

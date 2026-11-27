@@ -10,7 +10,7 @@ Every platform the app runs on: desktop and phones.
 
 ## Status (2026-11-27)
 
-Steps 1 to 5 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
+Steps 1 to 6 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
 files inside an email are listed with a Save button, the cap is 32 MB, and
 body search, drop and paste, MCP reading and the export round trip are all in.
 
@@ -274,5 +274,10 @@ Steps 4 to 7 depend on 1 to 3 and not on each other.
   make it large. Cap the total inlined and show the rest as files if it is
   a problem.
 
+- **Pictures dropped from the system on a computer never reach the page.**
+  Tauri's drop handler claims every file drop on desktop (it returns `true`
+  in `tauri-runtime-wry`), so `ResizableImage`'s drop handler only ever sees
+  drags from inside a page. Emails get round this through the window's drop
+  event (step 6); pictures could do the same.
 - **Search results from emails could crowd out notes.** A long newsletter
   matches many words. Rank a match in an email below one in the note itself.

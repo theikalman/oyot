@@ -39,11 +39,80 @@ export async function attachEmailFromFile(editor: Editor): Promise<void> {
         // `pick_and_import_image` for why.
         const attached = await invoke<AttachedEmail | null>('pick_and_import_email');
         if (!attached) return; // cancelled
-        editor.chain().focus().insertContent(emailNodeFor(attached)).run();
+        insertEmails(editor, [attached]);
     } catch (error) {
         console.error('Failed to attach email:', error);
         toasts.error(typeof error === 'string' ? error : 'Failed to attach email');
     }
+}
+
+/** Whether a file the page was given is an email. */
+export function isEmailFile(file: File): boolean {
+    return file.type === 'message/rfc822' || /\.eml$/i.test(file.name);
+}
+
+/**
+ * Attach emails the page holds as files: pasted, or dropped where the page
+ * is given the file. Each goes to Rust as its bytes, which checks it as it
+ * checks a picked one.
+ */
+export async function attachEmailFiles(editor: Editor, files: File[], at?: number): Promise<void> {
+    const attached: AttachedEmail[] = [];
+    for (const file of files) {
+        try {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            attached.push(await invoke<AttachedEmail>('save_email', bytes));
+        } catch (error) {
+            console.error('Failed to attach email:', error);
+            toasts.error(
+                `${file.name}: ${typeof error === 'string' ? error : 'could not attach it'}`,
+            );
+        }
+    }
+    insertEmails(editor, attached, at);
+}
+
+/** What Rust tells the page of emails dropped on the window. */
+export interface EmailsDropped {
+    token: string;
+    count: number;
+    x: number;
+    y: number;
+}
+
+/**
+ * Attach emails dropped on the window from the system, when they were
+ * dropped on this editor while it can be written in. On a computer the page
+ * never sees such a file: Rust holds its path until the page says where it
+ * goes, by the token it was told.
+ */
+export async function attachDroppedEmails(editor: Editor, drop: EmailsDropped): Promise<void> {
+    if (!editor.isEditable) return;
+    const under = document.elementFromPoint(drop.x, drop.y);
+    if (!under || !editor.view.dom.contains(under)) return;
+    const at = editor.view.posAtCoords({ left: drop.x, top: drop.y })?.pos;
+    try {
+        const result = await invoke<{ emails: AttachedEmail[]; failed: string[] }>(
+            'accept_dropped_emails',
+            { token: drop.token },
+        );
+        insertEmails(editor, result.emails, at);
+        for (const reason of result.failed) toasts.error(reason);
+    } catch (error) {
+        console.error('Failed to attach dropped emails:', error);
+        toasts.error(typeof error === 'string' ? error : 'Failed to attach email');
+    }
+}
+
+/** Put emails into a note, at `at` or where the caret is, one after another. */
+export function insertEmails(editor: Editor, emails: AttachedEmail[], at?: number): void {
+    if (emails.length === 0) return;
+    const content = emails.flatMap((email, i) =>
+        i === 0 ? [emailNodeFor(email)] : [{ type: 'text', text: ' ' }, emailNodeFor(email)],
+    );
+    const chain = editor.chain().focus();
+    if (at === undefined) chain.insertContent(content).run();
+    else chain.insertContentAt(at, content).run();
 }
 
 /** The node that holds an email in a note. */

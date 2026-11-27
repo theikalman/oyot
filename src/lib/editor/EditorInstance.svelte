@@ -39,6 +39,9 @@
     import { CodeBlockLanguage } from './codeBlockLanguage';
     import { CodeHighlight } from './codeHighlight';
     import { FindInDocument } from './findInDocument';
+    import { EmailFiles } from '$lib/tiptap/extensions/EmailFiles';
+    import { attachDroppedEmails, type EmailsDropped } from '$lib/tiptap/commands/EmailCommand';
+    import { listen } from '@tauri-apps/api/event';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -192,6 +195,7 @@
                 CodeBlockLanguage,
                 CodeHighlight,
                 FindInDocument,
+                EmailFiles,
                 // The keys the user gave shortcuts, ahead of the editor's own.
                 CustomShortcuts.configure({
                     bindings: () => customShortcuts.bindings,
@@ -475,7 +479,16 @@
         }
     });
 
+    // Emails dropped on the window from the system, which on a computer never
+    // reach the page as files: Rust says where they landed, and they are
+    // taken if that is this editor. Heard once for the component, whichever
+    // document it is showing.
+    const stopHearingDrops = listen<EmailsDropped>('emails-dropped', (event) => {
+        if (editor) void attachDroppedEmails(editor, event.payload);
+    }).catch(() => null);
+
     onDestroy(() => {
+        void stopHearingDrops.then((stop) => stop?.());
         cancelFocus?.();
 
         if (ydoc && currentDocId) {
