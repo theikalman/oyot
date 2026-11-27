@@ -72,38 +72,6 @@ export async function attachEmailFiles(editor: Editor, files: File[], at?: numbe
     insertEmails(editor, attached, at);
 }
 
-/** What Rust tells the page of emails dropped on the window. */
-export interface EmailsDropped {
-    token: string;
-    count: number;
-    x: number;
-    y: number;
-}
-
-/**
- * Attach emails dropped on the window from the system, when they were
- * dropped on this editor while it can be written in. On a computer the page
- * never sees such a file: Rust holds its path until the page says where it
- * goes, by the token it was told.
- */
-export async function attachDroppedEmails(editor: Editor, drop: EmailsDropped): Promise<void> {
-    if (!editor.isEditable) return;
-    const under = document.elementFromPoint(drop.x, drop.y);
-    if (!under || !editor.view.dom.contains(under)) return;
-    const at = editor.view.posAtCoords({ left: drop.x, top: drop.y })?.pos;
-    try {
-        const result = await invoke<{ emails: AttachedEmail[]; failed: string[] }>(
-            'accept_dropped_emails',
-            { token: drop.token },
-        );
-        insertEmails(editor, result.emails, at);
-        for (const reason of result.failed) toasts.error(reason);
-    } catch (error) {
-        console.error('Failed to attach dropped emails:', error);
-        toasts.error(typeof error === 'string' ? error : 'Failed to attach email');
-    }
-}
-
 /** Put emails into a note, at `at` or where the caret is, one after another. */
 export function insertEmails(editor: Editor, emails: AttachedEmail[], at?: number): void {
     if (emails.length === 0) return;

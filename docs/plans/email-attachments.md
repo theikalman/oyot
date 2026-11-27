@@ -275,10 +275,9 @@ Steps 4 to 7 depend on 1 to 3 and not on each other.
   make it large. Cap the total inlined and show the rest as files if it is
   a problem.
 
-- **Pictures dropped from the system on a computer never reach the page.**
-  Tauri's drop handler claims every file drop on desktop (it returns `true`
-  in `tauri-runtime-wry`), so `ResizableImage`'s drop handler only ever sees
-  drags from inside a page. Emails get round this through the window's drop
-  event (step 6); pictures could do the same.
+- **Drops from the system go through one path.** Tauri claims every file
+  drop on a computer, so pictures (#104) and emails share
+  `commands/dropped.rs`: one listener, one token, one call, and one step to
+  undo for a drop that holds both.
 - **Search results from emails could crowd out notes.** A long newsletter
   matches many words. Rank a match in an email below one in the note itself.

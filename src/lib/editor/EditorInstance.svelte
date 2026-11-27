@@ -40,8 +40,12 @@
     import { CodeHighlight } from './codeHighlight';
     import { FindInDocument } from './findInDocument';
     import { EmailFiles } from '$lib/tiptap/extensions/EmailFiles';
-    import { attachDroppedEmails, type EmailsDropped } from '$lib/tiptap/commands/EmailCommand';
     import { listen } from '@tauri-apps/api/event';
+    import {
+        acceptDroppedFiles,
+        FILES_DROPPED_EVENT,
+        type FilesDropped,
+    } from '$lib/tiptap/commands/DroppedFiles';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -479,12 +483,12 @@
         }
     });
 
-    // Emails dropped on the window from the system, which on a computer never
+    // Files dropped on the window from the system, which on a computer never
     // reach the page as files: Rust says where they landed, and they are
     // taken if that is this editor. Heard once for the component, whichever
     // document it is showing.
-    const stopHearingDrops = listen<EmailsDropped>('emails-dropped', (event) => {
-        if (editor) void attachDroppedEmails(editor, event.payload);
+    const stopHearingDrops = listen<FilesDropped>(FILES_DROPPED_EVENT, (event) => {
+        if (editor) void acceptDroppedFiles(editor, event.payload, scroller);
     }).catch(() => null);
 
     onDestroy(() => {

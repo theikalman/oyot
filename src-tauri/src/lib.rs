@@ -774,9 +774,7 @@ pub fn run() {
         // whatever a phone's dialog returns. No capability grants its
         // commands, so the webview still has no filesystem access.
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_os::init())
-        // Emails dropped on the window, until the page says where they go.
-        .manage(commands::email::DroppedEmails::default());
+        .plugin(tauri_plugin_os::init());
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let builder = builder
@@ -799,7 +797,7 @@ pub fn run() {
         ))
         .on_window_event(|window, event| {
             desktop::close::on_window_event(window, event);
-            commands::email::on_window_event(window, event);
+            commands::dropped::on_window_event(window, event);
         });
 
     builder
@@ -851,6 +849,7 @@ pub fn run() {
             ));
             app.manage(state);
             app.manage(BackupState::default());
+            app.manage(commands::dropped::DroppedFiles::default());
             // Whatever remote destinations this build has credentials for
             // (ADR 0025). None, in a build without them.
             app.manage(crate::backup::remote::Providers::for_this_build(
@@ -937,7 +936,7 @@ pub fn run() {
             email_summary,
             save_email_part,
             save_email,
-            accept_dropped_emails,
+            accept_dropped_files,
             cleanup_orphaned_images,
             list_unindexed_documents,
             get_attachment_info,
