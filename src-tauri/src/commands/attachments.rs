@@ -269,6 +269,15 @@ fn announce_image(state: &AppState, image: &StoredImage) {
     );
 }
 
+/// Store an image read from a file the system named, such as one dropped on
+/// the window, and tell connected devices. The bytes decide its type; there
+/// is no declared one to check them against.
+pub(crate) fn import_image_bytes(state: &AppState, bytes: &[u8]) -> Result<StoredImage, String> {
+    let stored = store_checked_attachment(state, bytes)?;
+    announce_image(state, &stored);
+    Ok(stored)
+}
+
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);

@@ -38,6 +38,12 @@
     import { CodeBlockLanguage } from './codeBlockLanguage';
     import { CodeHighlight } from './codeHighlight';
     import { FindInDocument } from './findInDocument';
+    import { listen } from '@tauri-apps/api/event';
+    import {
+        acceptDroppedFiles,
+        FILES_DROPPED_EVENT,
+        type FilesDropped,
+    } from '$lib/tiptap/commands/DroppedFiles';
     import { CustomShortcuts } from './customShortcuts';
     import { customShortcuts } from '$lib/keyboard/customShortcuts.svelte';
     import { toasts } from '$lib/services/toast';
@@ -465,7 +471,16 @@
         }
     });
 
+    // Files dropped on the window from the system, which on a computer never
+    // reach the page as files: Rust says where they landed, and they are
+    // taken if that is this editor. Heard once for the component, whichever
+    // document it is showing.
+    const stopHearingDrops = listen<FilesDropped>(FILES_DROPPED_EVENT, (event) => {
+        if (editor) void acceptDroppedFiles(editor, event.payload, scroller);
+    }).catch(() => null);
+
     onDestroy(() => {
+        void stopHearingDrops.then((stop) => stop?.());
         cancelFocus?.();
 
         if (ydoc && currentDocId) {
