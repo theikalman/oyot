@@ -115,6 +115,7 @@ function blocksWith(owner: string, attrs: object): Y.XmlElement[] {
             ];
         case 'documentLink':
         case 'tag':
+        case 'emailAttachment':
             return [element('paragraph', {}, words('words'), element(owner, attrs))];
         case 'link': {
             const text = new Y.XmlText();
@@ -308,6 +309,7 @@ function contextWith(owner: string, attrs: object): unknown[] {
             return ['table', null, 'tableRow', null, owner, attrs, 'paragraph', null];
         case 'documentLink':
         case 'tag':
+        case 'emailAttachment':
             return ['paragraph', null, owner, attrs];
         case 'paragraph':
             // In something, or only its words are taken.
@@ -413,6 +415,7 @@ describe('an ordinary note', () => {
         '<img src="https://a.example/b.png" alt="A picture" title="Title" width="50%" height="auto">',
         '<table><tr><th colwidth="100" colspan="1">h</th><th style="text-align: right">i</th></tr><tr><td colspan="2" colwidth="100,0">j</td></tr><tr><td rowspan="2">k</td><td>l</td></tr><tr><td>m</td></tr></table>',
         '<p>To <span data-type="document-link" data-target-id="id" data-title="A note"></span> and <span data-type="tag" data-name="work"></span></p>',
+        `<p>See <span data-type="email-attachment" data-src="oyot-attachment://${'b'.repeat(64)}" data-subject="Report" data-from="Ana &lt;ana@example.com&gt;" data-date="2026-11-03T09:12:00Z">Report</span></p>`,
         '<blockquote><p>quoted</p></blockquote><hr><p>line<br>break</p>',
         sliceHtml(['blockquote', null, 'heading', { indent: null, level: 3 }]),
     ];

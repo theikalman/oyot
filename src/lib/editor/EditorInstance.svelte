@@ -19,6 +19,7 @@
         registerTodoCommand,
         registerTagCommand,
         registerImageCommand,
+        registerEmailCommand,
         registerEmojiCommand,
     } from '$lib/tiptap';
     import { createCollaborationExtension } from './yjs';
@@ -226,6 +227,7 @@
         registerTodoCommand();
         registerTagCommand();
         registerImageCommand();
+        registerEmailCommand();
         registerEmojiCommand();
 
         // The only thing that schedules a save. Tiptap's `onUpdate` used to do
@@ -865,6 +867,41 @@
     }
     .editor-content :global(.document-link-title) {
         font-weight: 500;
+    }
+
+    /* An email reads as a linked note does, an object in the sentence that
+       opens something, with an envelope where the note's icon would be. */
+    .editor-content :global(.email-attachment) {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        max-width: 100%;
+        background-color: var(--accent-bg);
+        color: var(--accent-color);
+        padding: 1px 8px 1px 6px;
+        border-radius: 7px;
+        font-size: 0.94em;
+        font-weight: 500;
+        cursor: pointer;
+        vertical-align: bottom;
+        transition: background-color 0.2s;
+    }
+
+    .editor-content :global(.email-attachment:hover) {
+        background-color: var(--accent-bg-hover);
+    }
+
+    .editor-content :global(.email-attachment-icon) {
+        display: inline-flex;
+        flex: none;
+        width: 16px;
+        height: 16px;
+    }
+
+    .editor-content :global(.email-attachment-title) {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     /* A tag reads as one object in the middle of a sentence: rounded, quiet,

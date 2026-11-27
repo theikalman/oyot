@@ -105,6 +105,7 @@ const ATTRIBUTES: Record<string, Record<string, Fit>> = {
     tableCell: cell,
     tableHeader: cell,
     documentLink: { targetId: text, title: text },
+    emailAttachment: { src: text, subject: text, from: text, date: text },
     tag: { name: text },
     unknownBlock: { ref: text, text, found: text },
     unknownInline: { ref: text, text, found: text },

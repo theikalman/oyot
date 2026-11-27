@@ -1,5 +1,6 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
+import { EMAIL_NODE_NAME } from '$lib/tiptap/nodes/EmailAttachmentNode';
 import { textOf } from '$lib/tiptap/attrValues';
 import { normalizeTagName, TAG_NODE_NAME } from '$lib/tiptap/tags';
 import {
@@ -187,6 +188,17 @@ export function extractDocumentIndex(doc: ProseMirrorNode): DocumentIndex {
                     // user refers to a note's subject, so searching for one
                     // should find the notes carrying it.
                     parts.push(name);
+                }
+                return false; // atom, nothing inside to walk
+            }
+            case EMAIL_NODE_NAME: {
+                // In use, like an image's. Its subject and sender are how the
+                // user would look for it, so they are searched.
+                const hash = attachmentHash(node.attrs.src);
+                if (hash) attachmentHashes.add(hash);
+                for (const value of [node.attrs.subject, node.attrs.from]) {
+                    const words = textOf(value);
+                    if (words) parts.push(words);
                 }
                 return false; // atom, nothing inside to walk
             }

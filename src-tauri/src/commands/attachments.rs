@@ -42,7 +42,7 @@ fn mime_for_extension(path: &std::path::Path) -> Option<&'static str> {
 /// Write bytes into the attachment store and record the row. Shared by every
 /// entry point so the size cap, the type allowlist and the content address are
 /// enforced in exactly one place.
-fn store_attachment(
+pub(crate) fn store_attachment(
     state: &AppState,
     bytes: &[u8],
     mime_type: &str,
@@ -226,7 +226,7 @@ pub async fn pick_and_import_image(
 /// without waiting for their next connection. Sent before the note that
 /// embeds it is saved: a peer that fetches it first has it ready when the
 /// note arrives.
-fn announce_image(state: &AppState, image: &StoredImage) {
+pub(crate) fn announce_image(state: &AppState, image: &StoredImage) {
     crate::sync::announce(
         &state.app_handle,
         crate::sync::protocol::Message::AttachManifest {

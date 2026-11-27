@@ -10,7 +10,7 @@ Every platform the app runs on: desktop and phones.
 
 ## Status (2026-11-27)
 
-Not started. Scope agreed 2026-11-27: the preview is a page over the note,
+Steps 1 and 2 done on `feat/email-store`. Scope agreed 2026-11-27: the preview is a page over the note,
 files inside an email are listed with a Save button, the cap is 32 MB, and
 body search, drop and paste, MCP reading and the export round trip are all in.
 
@@ -173,10 +173,13 @@ So:
   with the link text as its subject, beside `storedImage` in
   `import/markdown.ts`. Sender and date are filled in from `read_email` when
   the bytes are on the device.
-- MCP's note Markdown writes it as `[email: Subject](oyot-attachment://<hash>)`,
-  and reads that back as the chip. This matters beyond reading: an MCP edit
-  rewrites a note from its Markdown, so without the way back an assistant's
-  edit would turn every chip into a plain link.
+- MCP's note Markdown writes it as `[Subject](oyot-attachment://<hash>)`,
+  the same link the archive falls back to, and reads that back as the chip.
+  This matters beyond reading: an MCP edit rewrites a note from its Markdown,
+  so without the way back an assistant's edit would turn every chip into a
+  plain link. The sender and date are not in the Markdown; the rendered note
+  keeps them by hash and gives them back when an edit is read, as it does an
+  inline image's data.
 - `read_attachment` on an email returns it as text: headers, the text body
   (or the HTML reduced to words) and the list of files, from the same Rust
   parsing as the preview.
@@ -221,8 +224,10 @@ Each is one pull request.
    search query and its results, cleanup with orphan collection.
 6. **Drop and paste.** `save_email`, the paste and drop handlers, and the
    window drop event if Tauri takes drops.
-7. **Import and MCP reading.** Markdown import back to chips, `read_attachment`
-   for emails.
+7. **MCP reading, and details on import.** `read_attachment` for emails, and
+   a chip read back from an archive filling in its sender and date from
+   `read_email` once the bytes are here. Reading links back as chips is
+   already in step 2, since MCP edits need it.
 8. **Docs.** ADR 0046, the help page's slash commands, the changelog.
 
 Steps 4 to 7 depend on 1 to 3 and not on each other.

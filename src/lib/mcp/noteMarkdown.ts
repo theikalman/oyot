@@ -1,8 +1,10 @@
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { contentSchema } from '$lib/editor/headlessIndex';
 import { serializeBlocks, type MarkdownOptions } from '$lib/export/markdown';
-import { readMarkdown, type MarkdownReadOptions } from '$lib/import/markdown';
+import { readMarkdown, type EmailDetails, type MarkdownReadOptions } from '$lib/import/markdown';
 import { attachmentHash } from '$lib/tiptap/attachmentRef';
+import { textOf } from '$lib/tiptap/attrValues';
+import { EMAIL_NODE_NAME } from '$lib/tiptap/nodes/EmailAttachmentNode';
 
 /**
  * A note as an assistant reads and writes it, over MCP (ADR 0037).
@@ -13,6 +15,8 @@ import { attachmentHash } from '$lib/tiptap/attachmentRef';
  * - a link to another note is `oyot://note/<id>`, and its words are read back
  *   as the title its chip held
  * - an attachment is `oyot-attachment://<hash>`, the address the editor stores
+ * - an email is a link to its attachment, named by its subject; its sender
+ *   and date are not in the Markdown, and are given back on the way in
  * - an image held inline as a `data:` URI, which notes written before
  *   attachments were content-addressed still have, is
  *   `oyot-inline-image://<n>`, so a read does not hand an assistant a page of
@@ -50,6 +54,8 @@ export interface RenderedNote {
     /** Inline images by id, the `data:` URI each stands for. */
     inlineImages: ReadonlyMap<string, string>;
     images: NoteImage[];
+    /** Each email's sender and date by hash, which the Markdown leaves out. */
+    emails: ReadonlyMap<string, EmailDetails>;
 }
 
 const ATTACHMENT_ALT = /^oyot:/;
@@ -85,7 +91,27 @@ export function renderNote(root: ProseMirrorNode): RenderedNote {
 
     const blocks = serializeBlocks(tokenized, writeOptions);
     const body = blocks.filter((block) => block.trim().length > 0).join('\n\n');
-    return { markdown: body ? `${body}\n` : '', blocks, inlineImages, images };
+    return {
+        markdown: body ? `${body}\n` : '',
+        blocks,
+        inlineImages,
+        images,
+        emails: emailsIn(root),
+    };
+}
+
+/** Every email in a note, with what the Markdown does not say of it. */
+function emailsIn(root: ProseMirrorNode): Map<string, EmailDetails> {
+    const emails = new Map<string, EmailDetails>();
+    root.descendants((node) => {
+        if (node.type.name !== EMAIL_NODE_NAME) return true;
+        const hash = attachmentHash(node.attrs.src);
+        if (hash && !emails.has(hash)) {
+            emails.set(hash, { from: textOf(node.attrs.from), date: textOf(node.attrs.date) });
+        }
+        return false;
+    });
+    return emails;
 }
 
 /** Read an assistant's Markdown into a document, against what `renderNote` gave it. */
@@ -93,8 +119,9 @@ export function parseNote(
     markdown: string,
     ctx: NoteContext,
     inlineImages: ReadonlyMap<string, string> = new Map(),
+    emails: ReadonlyMap<string, EmailDetails> = new Map(),
 ): ProseMirrorNode {
-    return readMarkdown(markdown, contentSchema(), readOptions(ctx, inlineImages)).doc;
+    return readMarkdown(markdown, contentSchema(), readOptions(ctx, inlineImages, emails)).doc;
 }
 
 /**
@@ -143,8 +170,10 @@ const writeOptions: MarkdownOptions = {
 function readOptions(
     ctx: NoteContext,
     inlineImages: ReadonlyMap<string, string>,
+    emails: ReadonlyMap<string, EmailDetails>,
 ): MarkdownReadOptions {
     return {
+        emailDetails: (hash) => emails.get(hash) ?? null,
         knownTags: ctx.knownTags,
         noteLink: noteLinkOf(ctx),
         noteLinkLabelIsTitle: true,

@@ -1,7 +1,13 @@
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { contentSchema } from '$lib/editor/headlessIndex';
 import { isUnknown } from '$lib/tiptap/unknownContent';
-import { parseNote, renderBlock, renderNote, type NoteContext } from './noteMarkdown';
+import {
+    parseNote,
+    renderBlock,
+    renderNote,
+    type NoteContext,
+    type RenderedNote,
+} from './noteMarkdown';
 
 /**
  * Turn an assistant's rewrite of a whole note into the smallest change to the
@@ -59,7 +65,7 @@ const MAX_COMPARED = 4_000_000;
 
 export function planEdit(current: ProseMirrorNode, markdown: string, ctx: NoteContext): EditPlan {
     const rendered = renderNote(current);
-    const parsed = parseNote(markdown, ctx, rendered.inlineImages);
+    const parsed = parseNote(markdown, ctx, rendered.inlineImages, rendered.emails);
 
     const oldBlocks = visible(rendered.blocks);
     const newNodes: ProseMirrorNode[] = [];
@@ -86,7 +92,7 @@ export function planEdit(current: ProseMirrorNode, markdown: string, ctx: NoteCo
             if (hunk.insert.length === 0 && !holdsUnknown(current.child(i))) continue;
             const md = rendered.blocks[i];
             if (md.trim().length === 0) continue;
-            const losses = lossesOf(current.child(i), md, ctx, rendered.inlineImages);
+            const losses = lossesOf(current.child(i), md, ctx, rendered);
             if (losses.length > 0) lossy.push({ index: i, markdown: md, losses });
         }
     }
@@ -243,9 +249,9 @@ function lossesOf(
     node: ProseMirrorNode,
     markdown: string,
     ctx: NoteContext,
-    inlineImages: ReadonlyMap<string, string>,
+    rendered: Pick<RenderedNote, 'inlineImages' | 'emails'>,
 ): string[] {
-    const back = parseNote(markdown, ctx, inlineImages);
+    const back = parseNote(markdown, ctx, rendered.inlineImages, rendered.emails);
     if (back.childCount === 1 && back.firstChild!.eq(node)) return [];
 
     const losses = new Set<string>();

@@ -7,6 +7,7 @@ pub mod config;
 pub mod connections;
 pub mod desktop;
 pub mod documents;
+pub mod email;
 pub mod export;
 pub mod import;
 pub mod mcp;
@@ -24,6 +25,7 @@ pub use config::{get_keyboard_shortcuts, get_theme, save_keyboard_shortcuts, sav
 pub use connections::*;
 pub use desktop::*;
 pub use documents::*;
+pub use email::*;
 pub use export::*;
 pub use import::*;
 pub use mcp::*;

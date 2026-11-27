@@ -895,6 +895,7 @@ pub fn run() {
             save_keyboard_shortcuts,
             save_image,
             pick_and_import_image,
+            pick_and_import_email,
             cleanup_orphaned_images,
             list_unindexed_documents,
             get_attachment_info,
