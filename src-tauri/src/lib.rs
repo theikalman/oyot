@@ -1,6 +1,7 @@
 #[macro_use]
 mod logging;
 
+mod attachment_types;
 mod backup;
 mod commands;
 mod crdt;
