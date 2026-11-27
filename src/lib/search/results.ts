@@ -24,6 +24,7 @@ import {
 } from '$lib/todos/todoText';
 import type { DocumentSummary } from '$lib/types';
 import { snippetParts, type SnippetPart } from './snippet';
+import { NO_SUBJECT } from '$lib/tiptap/nodes/EmailAttachmentNode';
 
 /** One hit from the full-text index, as `search_documents` returns it. */
 export interface SearchHit {
@@ -34,6 +35,12 @@ export interface SearchHit {
     marked_title: string;
     /** Some of the text around what matched, marked the same way. */
     snippet: string;
+    /**
+     * When the words were found in an email the document holds, not in the
+     * document: that email's subject, '' for none. The snippet is then the
+     * email's.
+     */
+    in_email?: string;
 }
 
 interface ResultBase {
@@ -57,6 +64,8 @@ export interface DocumentResult extends ResultBase {
     titleParts: SnippetPart[];
     /** Some of the text around what matched, marked the same way. */
     snippet: SnippetPart[];
+    /** The subject of the attached email the words were found in, if they were. */
+    inEmail: string | null;
 }
 
 /** A task item, found by its words. */
@@ -88,6 +97,7 @@ export function documentResults(hits: readonly SearchHit[]): DocumentResult[] {
         title: hit.title,
         titleParts: snippetParts(hit.marked_title || hit.title),
         snippet: snippetParts(hit.snippet),
+        inEmail: hit.in_email === undefined ? null : hit.in_email || NO_SUBJECT,
     }));
 }
 

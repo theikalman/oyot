@@ -339,6 +339,83 @@ fn part_name(part: &MessagePart<'_>) -> String {
     "Unnamed file".to_string()
 }
 
+// --- searching what emails say ------------------------------------------
+
+/// The most of an email's words kept for search. Past this is a newsletter's
+/// tail or a pasted log, and the start is what anyone searches for.
+const MAX_SEARCH_TEXT_CHARS: usize = 200_000;
+
+/// What search keeps of an email: its subject, to say which email matched,
+/// and its body as words, HTML reduced to its text.
+pub fn search_text(bytes: &[u8]) -> (Option<String>, String) {
+    let subject = summarize(bytes).subject;
+    let Some(message) = mail_parser::MessageParser::new().parse(bytes) else {
+        return (subject, String::new());
+    };
+    let body = message.text_bodies().collect::<Vec<_>>().join("\n");
+    let body = match body.char_indices().nth(MAX_SEARCH_TEXT_CHARS) {
+        Some((end, _)) => body[..end].to_string(),
+        None => body,
+    };
+    (subject, body)
+}
+
+/// Record what an email says, in place of anything recorded for it before.
+pub(crate) fn index_email_text(
+    db: &rusqlite::Connection,
+    hash: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let (subject, body) = search_text(bytes);
+    // FTS5 has no upsert, so replace the row.
+    db.execute(
+        "DELETE FROM email_search WHERE hash = ?1",
+        rusqlite::params![hash],
+    )
+    .map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO email_search (hash, subject, body) VALUES (?1, ?2, ?3)",
+        rusqlite::params![hash, subject, body],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Index every email this device holds whose words are not recorded yet:
+/// any stored before they were, or whose row was lost. Reads only those.
+pub(crate) fn index_missing_email_text(
+    db: &rusqlite::Connection,
+    data_dir: &std::path::Path,
+) -> Result<usize, String> {
+    let missing: Vec<(String, String)> = {
+        let mut stmt = db
+            .prepare(
+                "SELECT a.hash, a.local_path FROM attachments a
+                  WHERE a.mime_type = ?1 AND a.is_fully_downloaded = 1
+                    AND a.local_path IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM email_search e WHERE e.hash = a.hash)",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![EMAIL_MIME], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(Result::ok).collect()
+    };
+    let mut indexed = 0;
+    for (hash, local_path) in missing {
+        match std::fs::read(data_dir.join(&local_path)) {
+            Ok(bytes) => {
+                index_email_text(db, &hash, &bytes)?;
+                indexed += 1;
+            }
+            Err(e) => warn_log!("[email] could not read {hash} to index it: {e}"),
+        }
+    }
+    Ok(indexed)
+}
+
 // --- saving a file an email carries ------------------------------------
 
 /// The longest file name suggested to the save dialog, in characters.
@@ -788,5 +865,52 @@ Inside.\r\n\
         let error = write_to_path(&path, b"x").unwrap_err();
         assert!(error.starts_with("could not save report.pdf"), "{error}");
         assert!(!error.contains("oyot-missing"), "{error}");
+    }
+
+    // --- search ----------------------------------------------------------
+
+    #[test]
+    fn an_emails_words_are_its_text_not_its_markup() {
+        let html = b"From: a@example.com\r\nSubject: S\r\nContent-Type: text/html\r\n\r\n\
+<style>.x{color:red}</style><p>Hello <b>there</b></p>\r\n";
+        let (subject, body) = search_text(html);
+        assert_eq!(subject.as_deref(), Some("S"));
+        assert!(body.contains("Hello there"), "{body:?}");
+        assert!(!body.contains('<'), "{body:?}");
+    }
+
+    #[test]
+    fn a_long_email_is_searched_by_its_start() {
+        let mut email = b"From: a@example.com\r\nSubject: S\r\n\r\n".to_vec();
+        email.extend(std::iter::repeat_n(b'x', MAX_SEARCH_TEXT_CHARS + 500));
+        let (_, body) = search_text(&email);
+        assert_eq!(body.chars().count(), MAX_SEARCH_TEXT_CHARS);
+    }
+
+    // Emails stored before their words were indexed are found at startup,
+    // and nothing already indexed is read again.
+    #[test]
+    fn emails_not_yet_searchable_are_indexed_once() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure_connection(&db).unwrap();
+        crate::setup_database_tables(&db).unwrap();
+        let dir = std::env::temp_dir().join(format!("oyot-email-index-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("attachments")).unwrap();
+        std::fs::write(dir.join("attachments/h1.eml"), EMAIL).unwrap();
+        db.execute_batch(
+            "INSERT INTO attachments (hash, mime_type, local_path, is_fully_downloaded, created_at)
+                 VALUES ('h1', 'message/rfc822', 'attachments/h1.eml', 1, 1),
+                        ('h2', 'image/png', 'attachments/h2.png', 1, 1);",
+        )
+        .unwrap();
+
+        assert_eq!(index_missing_email_text(&db, &dir).unwrap(), 1);
+        assert_eq!(index_missing_email_text(&db, &dir).unwrap(), 0);
+        let body: String = db
+            .query_row("SELECT body FROM email_search WHERE hash = 'h1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(body.contains("See you there"));
     }
 }

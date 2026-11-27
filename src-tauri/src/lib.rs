@@ -72,6 +72,16 @@ pub fn setup_database_tables(db: &Connection) -> Result<(), String> {
             body
         );
 
+        -- What each email attached to a note says, so a search finds the note
+        -- by it. Keyed by the email's hash, filled when an email is stored,
+        -- and reached through document_attachments, so a note is found by
+        -- an email only while it still holds it.
+        CREATE VIRTUAL TABLE IF NOT EXISTS email_search USING fts5(
+            hash UNINDEXED,
+            subject UNINDEXED,
+            body
+        );
+
         -- Which documents embed which attachments. The only record of what is
         -- still in use, and therefore the only basis for collecting what is
         -- not. Derived from content, so the editor extracts it on save and the
@@ -251,7 +261,7 @@ fn table_exists(db: &Connection, name: &str) -> bool {
 
 /// The schema version `run_migrations` brings a database up to. Bump it in the
 /// same change that adds the migration block.
-pub const SCHEMA_VERSION: i64 = 16;
+pub const SCHEMA_VERSION: i64 = 17;
 
 /// Additive schema migrations, keyed off `PRAGMA user_version`. Each block runs
 /// once and bumps the version. `setup_database_tables` still owns the base
@@ -703,6 +713,21 @@ fn apply_migrations(db: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| format!("Failed to set user_version: {}", e))?;
     }
 
+    // v17: the words of emails attached to notes, for search. Filled as
+    // emails are stored; any held before this are indexed at startup by
+    // `index_missing_email_text`, which needs the data directory.
+    if version < 17 {
+        db.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS email_search USING fts5(
+                 hash UNINDEXED,
+                 subject UNINDEXED,
+                 body
+             );
+             PRAGMA user_version = 17;",
+        )
+        .map_err(|e| format!("Migration v17 failed: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -785,6 +810,13 @@ pub fn run() {
                 let now = chrono::Utc::now().timestamp_millis();
                 if let Err(e) = crate::backup::history::mark_interrupted(&db, now) {
                     warn_log!("[backup] {e}");
+                }
+                // Emails stored before their words were indexed. Usually none,
+                // and only those are read, so this costs a query.
+                if let Err(e) =
+                    crate::commands::email::index_missing_email_text(&db, &state.data_dir)
+                {
+                    warn_log!("[email] {e}");
                 }
             }
             clear_staging(app.handle());

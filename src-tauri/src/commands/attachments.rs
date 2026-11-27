@@ -102,6 +102,15 @@ pub(crate) fn store_attachment_at(
     )
     .map_err(|e| e.to_string())?;
 
+    // An email's words, for search. Every way an email arrives comes through
+    // here: the picker, sync and a restore. Not being searchable is no reason
+    // to lose the email, so a failure is only reported.
+    if attachment_types::is_email(mime_type) {
+        if let Err(e) = crate::commands::email::index_email_text(&db, &hash, bytes) {
+            warn_log!("[email] could not index {hash} for search: {e}");
+        }
+    }
+
     Ok(StoredImage {
         hash,
         mime_type: mime_type.to_string(),
@@ -329,8 +338,16 @@ pub fn unreferenced_attachments(db: &Connection) -> Result<Vec<(String, String)>
 /// because an unindexed document's images look unreferenced.
 #[tauri::command]
 pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32, String> {
+    collect_orphans(&state.db, &state.data_dir)
+}
+
+/// `cleanup_orphaned_images`, given the database and the data directory.
+fn collect_orphans(
+    db: &parking_lot::Mutex<Connection>,
+    data_dir: &std::path::Path,
+) -> Result<i32, String> {
     let orphaned = {
-        let db = state.db.lock();
+        let db = db.lock();
         if !unindexed_document_ids(&db)?.is_empty() {
             trace!("[cmd] cleanup_orphaned_images skipped, documents still to index");
             return Ok(0);
@@ -342,19 +359,22 @@ pub fn cleanup_orphaned_images(state: tauri::State<'_, AppState>) -> Result<i32,
     }
 
     for (_, path) in &orphaned {
-        let full_path = state.data_dir.join(path);
+        let full_path = data_dir.join(path);
         if full_path.exists() {
             let _ = std::fs::remove_file(&full_path);
         }
     }
 
-    let db = state.db.lock();
+    let db = db.lock();
     let mut removed = 0;
     for (hash, _) in &orphaned {
         // The row goes with the file. Leaving it would keep the attachment in
         // our manifest with no bytes behind it.
         removed += db
             .execute("DELETE FROM attachments WHERE hash = ?", params![hash])
+            .map_err(|e| e.to_string())?;
+        // And an email's words with it, which no note can be found by now.
+        db.execute("DELETE FROM email_search WHERE hash = ?", params![hash])
             .map_err(|e| e.to_string())?;
     }
 
@@ -677,6 +697,34 @@ The numbers are in.\r\n";
 
         let page = b"<!doctype html><script>alert(1)</script>";
         assert!(store_checked_attachment_at(&db, &dir, page).is_err());
+    }
+
+    #[test]
+    fn a_stored_email_is_searchable_and_collected_with_its_words() {
+        let (db, dir) = store();
+        let stored = store_attachment_at(&db, &dir, EMAIL, "message/rfc822").unwrap();
+        let rows = |db: &Connection| -> i64 {
+            db.query_row(
+                "SELECT COUNT(*) FROM email_search WHERE hash = ?1",
+                params![&stored.hash],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(rows(&db.lock()), 1);
+
+        // Stored again, as a second device's copy arrives: still one row.
+        store_attachment_at(&db, &dir, EMAIL, "message/rfc822").unwrap();
+        assert_eq!(rows(&db.lock()), 1);
+
+        // Held by no note, and no document is left unindexed, so it goes,
+        // and its words with it.
+        update_document_index(&db.lock(), "d1", "One", &index_with(&[])).unwrap();
+        assert!(collect_orphans(&db, &dir).unwrap() >= 1);
+        assert_eq!(rows(&db.lock()), 0);
+        assert!(!dir
+            .join(format!("attachments/{}.eml", stored.hash))
+            .exists());
     }
 
     // The page never loads an email's file, so it is never told where one is.

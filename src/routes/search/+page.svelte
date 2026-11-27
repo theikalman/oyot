@@ -414,6 +414,11 @@
                                     {heading(result)}
                                 </span>
                             {:else if result.kind === 'document'}
+                                {#if result.inEmail !== null}
+                                    <span class="result-where">
+                                        In an attached email: {result.inEmail}
+                                    </span>
+                                {/if}
                                 {#if result.snippet.length > 0}
                                     <span class="result-snippet">
                                         {@render marked(result.snippet)}

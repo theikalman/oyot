@@ -888,6 +888,11 @@ pub struct SearchHit {
     /// the title matched, the start of the body, with nothing marked; empty
     /// when there is no body.
     pub snippet: String,
+    /// When the words were found in an email the document holds rather than
+    /// in the document itself: that email's subject, empty for one with
+    /// none. `snippet` is then from the email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_email: Option<String>,
 }
 
 /// How many hits a search returns when the caller does not say.
@@ -969,13 +974,76 @@ pub fn run_search(
                     .unwrap_or_else(|| title.clone()),
                 title,
                 snippet: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                in_email: None,
             })
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
 
+    let mut results = results;
+    if results.len() < limit {
+        let more = email_hits(db, &match_query, doc_type, limit)?;
+        for hit in more {
+            if results.len() >= limit {
+                break;
+            }
+            if !results.iter().any(|found| found.id == hit.id) {
+                results.push(hit);
+            }
+        }
+    }
     Ok(results)
+}
+
+/// Documents found by what an email they hold says, best first.
+///
+/// After every document found by its own words, whatever their ranks: a note
+/// that says what was searched for is the likelier answer than one holding an
+/// email that does, and a long newsletter would otherwise crowd notes out.
+/// Through `document_attachments`, so a note is found by an email only while
+/// it still holds it, and a deleted note not at all.
+fn email_hits(
+    db: &Connection,
+    match_query: &str,
+    doc_type: Option<&str>,
+    limit: usize,
+) -> Result<Vec<SearchHit>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT d.id, d.type, d.title, email_search.subject,
+                    snippet(email_search, 2, char(2), char(3), '…', 16) AS snippet
+               FROM email_search
+               JOIN document_attachments r ON r.hash = email_search.hash
+               JOIN documents d ON d.id = r.document_id
+              WHERE email_search MATCH ?1
+                AND d.is_deleted = 0
+                AND (?2 IS NULL OR d.type = ?2)
+              ORDER BY bm25(email_search)
+              LIMIT ?3",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut hits: Vec<SearchHit> = Vec::new();
+    let rows = stmt
+        .query_map(params![match_query, doc_type, limit as i64], |row| {
+            let title: String = row.get(2)?;
+            Ok(SearchHit {
+                id: row.get(0)?,
+                doc_type: row.get(1)?,
+                marked_title: title.clone(),
+                title,
+                snippet: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                in_email: Some(row.get::<_, Option<String>>(3)?.unwrap_or_default()),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    // A note holding two emails that match is one hit, by the better.
+    for hit in rows.filter_map(|r| r.ok()) {
+        if !hits.iter().any(|found| found.id == hit.id) {
+            hits.push(hit);
+        }
+    }
+    Ok(hits)
 }
 
 /// `doc_type` is `"note"` or `"journal"`, or absent for both. `limit` is how
@@ -2234,6 +2302,107 @@ mod tests {
             stamp, 700,
             "the stamp has to survive or LWW cannot order it"
         );
+    }
+
+    const QUARTERLY: &[u8] = b"From: Ana <ana@example.com>\r\n\
+Subject: Quarterly report\r\n\
+Content-Type: text/html\r\n\
+\r\n\
+<p>Revenue grew in the <b>pineapple</b> division.</p>\r\n";
+
+    /// A note that holds an email, as a save and a store would leave it.
+    fn note_holding_email(db: &Connection, id: &str, text: &str, email: &[u8]) -> String {
+        let hash = crate::commands::attachments::sha256_hex(email);
+        crate::commands::email::index_email_text(db, &hash, email).unwrap();
+        crate::indexer::update_document_index(
+            db,
+            id,
+            id,
+            &crate::indexer::DocumentIndexInput {
+                text: text.into(),
+                attachment_hashes: vec![hash.clone()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        hash
+    }
+
+    #[test]
+    fn a_note_is_found_by_what_its_email_says() {
+        let db = db();
+        note_holding_email(&db, "d1", "See the report", QUARTERLY);
+
+        let hits = search(&db, "pineapple").unwrap();
+        assert_eq!(hit_ids(&hits), vec!["d1"]);
+        assert_eq!(hits[0].in_email.as_deref(), Some("Quarterly report"));
+        assert!(
+            hits[0].snippet.contains("\u{2}pineapple\u{3}"),
+            "{:?}",
+            hits[0].snippet
+        );
+        assert!(!hits[0].snippet.contains("<b>"), "HTML is reduced to words");
+    }
+
+    #[test]
+    fn a_note_saying_it_comes_before_one_whose_email_does() {
+        let db = db();
+        // Said again and again in the email, once in the other note.
+        let loud = b"From: a@example.com\r\nSubject: Fruit\r\n\r\n\
+pineapple pineapple pineapple pineapple pineapple\r\n";
+        add_doc(&db, "d2", "note", "Two", 2);
+        note_holding_email(&db, "d1", "nothing here", loud);
+        index_text(
+            &db,
+            "d2",
+            "Two",
+            "a pineapple, once, in a long sentence about other things",
+        );
+
+        let hits = search(&db, "pineapple").unwrap();
+        assert_eq!(hit_ids(&hits), vec!["d2", "d1"]);
+        assert_eq!(hits[0].in_email, None);
+    }
+
+    #[test]
+    fn a_note_found_both_ways_is_one_hit_by_its_own_words() {
+        let db = db();
+        note_holding_email(&db, "d1", "pineapple notes", QUARTERLY);
+
+        let hits = search(&db, "pineapple").unwrap();
+        assert_eq!(hit_ids(&hits), vec!["d1"]);
+        assert_eq!(hits[0].in_email, None);
+    }
+
+    #[test]
+    fn a_note_is_not_found_by_an_email_it_no_longer_holds() {
+        let db = db();
+        note_holding_email(&db, "d1", "See the report", QUARTERLY);
+        index_text(&db, "d1", "One", "The report is gone");
+
+        assert!(search(&db, "pineapple").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_note_is_not_found_by_its_email() {
+        let db = db();
+        note_holding_email(&db, "d1", "See the report", QUARTERLY);
+        tombstone_document(&db, "d1", 900).unwrap();
+
+        assert!(search(&db, "pineapple").unwrap().is_empty());
+    }
+
+    #[test]
+    fn email_hits_respect_the_kind_and_the_limit() {
+        let db = db();
+        note_holding_email(&db, "d1", "a", QUARTERLY);
+        add_doc(&db, "j1", "journal", "2026-11-27", 2);
+        note_holding_email(&db, "j1", "b", QUARTERLY);
+
+        let notes = run_search(&db, "pineapple", Some("note"), 10).unwrap();
+        assert_eq!(hit_ids(&notes), vec!["d1"]);
+        assert_eq!(run_search(&db, "pineapple", None, 1).unwrap().len(), 1);
+        assert_eq!(run_search(&db, "pineapple", None, 10).unwrap().len(), 2);
     }
 
     #[test]
