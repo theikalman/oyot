@@ -5,6 +5,8 @@
     import type { TagSummary } from '$lib/tiptap/tags';
     import WorkspaceShell from '$lib/components/WorkspaceShell.svelte';
     import { tagHueStyle } from '$lib/tags/tagHue';
+    import { sortTags, TAG_ORDER_LABELS, TAG_ORDERS } from '$lib/tags/tagOrder';
+    import { tagOrder } from '$lib/tags/tagOrder.svelte';
 
     // Every tag any note or journal carries, on one page.
     //
@@ -27,13 +29,15 @@
     // Filtered here rather than by re-querying: the whole list is already in
     // hand, and one person's tags are not a corpus worth paging.
     let shown = $derived(
-        tags.tags.filter((tag: TagSummary) => tag.name.includes(filter.trim().toLowerCase())),
+        sortTags(
+            tags.tags.filter((tag: TagSummary) => tag.name.includes(filter.trim().toLowerCase())),
+            tagOrder.value,
+        ),
     );
 
     function usage(tag: TagSummary): string {
         return tag.documentCount === 1 ? '1 note' : `${tag.documentCount} notes`;
     }
-    let mostUsed = $derived(Math.max(1, ...tags.tags.map((t) => t.documentCount)));
 </script>
 
 <WorkspaceShell title="Tags">
@@ -50,13 +54,23 @@
                 {/if}
             </p>
             {#if !tags.isEmpty}
-                <input
-                    class="field-input"
-                    type="search"
-                    placeholder="Filter tags"
-                    bind:value={filter}
-                    aria-label="Filter tags"
-                />
+                <div class="page-actions">
+                    <input
+                        class="field-input"
+                        type="search"
+                        placeholder="Filter tags"
+                        bind:value={filter}
+                        aria-label="Filter tags"
+                    />
+                    <label class="sort">
+                        Sort by
+                        <select class="field-input" bind:value={tagOrder.value}>
+                            {#each TAG_ORDERS as order (order)}
+                                <option value={order}>{TAG_ORDER_LABELS[order]}</option>
+                            {/each}
+                        </select>
+                    </label>
+                </div>
             {/if}
         </div>
 
@@ -82,11 +96,6 @@
                             onclick={() => openTag(tag.name)}
                         >
                             <span class="tag-name"><span class="hash">#</span>{tag.name}</span>
-                            <!-- How much it is used, beside the others, in its own hue. -->
-                            <span class="usage-bar" aria-hidden="true"
-                                ><span style="width: {(100 * tag.documentCount) / mostUsed}%"
-                                ></span></span
-                            >
                             <span class="tag-usage">{usage(tag)}</span>
                         </button>
                     </li>
@@ -97,6 +106,18 @@
 </WorkspaceShell>
 
 <style>
+    .sort {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+    }
+
+    .sort select {
+        min-width: 0;
+    }
+
     .note {
         margin: 24px 0;
         font-size: 14px;
@@ -126,14 +147,14 @@
     .tag-row {
         display: flex;
         align-items: center;
-        gap: 14px;
+        gap: 12px;
         width: 100%;
-        height: 42px;
+        height: 32px;
         padding: 0 12px;
         text-align: left;
         background: transparent;
         border: none;
-        border-radius: 10px;
+        border-radius: 8px;
         cursor: pointer;
         color: var(--text-primary);
         font-size: 14px;
@@ -158,34 +179,12 @@
         margin-right: 2px;
     }
 
-    .usage-bar {
-        flex-shrink: 0;
-        width: 96px;
-        height: 4px;
-        border-radius: 2px;
-        background: var(--border-color);
-        overflow: hidden;
-    }
-
-    .usage-bar > span {
-        display: block;
-        height: 100%;
-        border-radius: 2px;
-        background: var(--tag-hue, var(--tag-1));
-    }
-
     .tag-usage {
         flex-shrink: 0;
-        min-width: 70px;
+        min-width: 56px;
         text-align: right;
         font-size: 12.5px;
         color: var(--text-muted);
         font-variant-numeric: tabular-nums;
-    }
-
-    @media (max-width: 480px) {
-        .usage-bar {
-            display: none;
-        }
     }
 </style>
